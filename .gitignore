@@ -1,0 +1,11 @@
+node_modules/
+dist/
+uploads/
+*.log
+.DS_Store
+.env
+data.db
+data.db-shm
+data.db-wal
+.db-backup/
+migrations/

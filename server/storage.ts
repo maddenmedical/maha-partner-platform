@@ -1,0 +1,631 @@
+import {
+  users, sessions, products, priceTiers, orders, orderItems, referrals,
+  videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
+  classSessions, homeworkSubmissions, chatThreads, chatMessages, uploadedFiles,
+  pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps,
+} from "@shared/schema";
+import type {
+  User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
+  Order, InsertOrder, OrderItem, InsertOrderItem, Referral, InsertReferral,
+  Video, InsertVideo, Course, InsertCourse, CourseAccessGrant, InsertCourseAccessGrant,
+  CoursePurchase, InsertCoursePurchase, Module, InsertModule,
+  Cohort, InsertCohort, CohortEnrollment, InsertCohortEnrollment, ClassSession,
+  InsertClassSession, HomeworkSubmission, InsertHomeworkSubmission, ChatThread,
+  InsertChatThread, ChatMessage, InsertChatMessage, UploadedFile, InsertUploadedFile,
+  PushSubscriptionRow, InsertPushSubscription, Announcement, InsertAnnouncement,
+  CaseDiscussion, InsertCaseDiscussion,
+} from "@shared/schema";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Database from "better-sqlite3";
+import { eq, and, desc, asc, gte, gt, lte, isNull, inArray } from "drizzle-orm";
+
+const sqlite = new Database("data.db");
+sqlite.pragma("journal_mode = WAL");
+
+export const db = drizzle(sqlite);
+
+export interface IStorage {
+  // users
+  getUser(id: number): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUserStatus(id: number, status: string): Promise<User | undefined>;
+  listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
+  listAdmins(): Promise<User[]>;
+
+  // sessions
+  createSession(session: Session): Promise<Session>;
+  getSession(token: string): Promise<Session | undefined>;
+  deleteSession(token: string): Promise<void>;
+
+  // products
+  listProducts(): Promise<Product[]>;
+  getProduct(id: number): Promise<Product | undefined>;
+  createProduct(p: InsertProduct): Promise<Product>;
+  updateProduct(id: number, p: Partial<InsertProduct>): Promise<Product | undefined>;
+  deleteProduct(id: number): Promise<void>;
+
+  // price tiers
+  listTiersForProduct(productId: number): Promise<PriceTier[]>;
+  createTier(t: InsertPriceTier): Promise<PriceTier>;
+  deleteTier(id: number): Promise<void>;
+  deleteTiersForProduct(productId: number): Promise<void>;
+
+  // orders
+  createOrder(o: InsertOrder & { status?: string; emailNotified?: boolean; notifiedAt?: number | null; destinationCountry?: string | null; estimatedShippingCost?: number | null; createdAt: number }): Promise<Order>;
+  listOrdersForPartner(partnerId: number): Promise<Order[]>;
+  listAllOrders(): Promise<Order[]>;
+  getOrder(id: number): Promise<Order | undefined>;
+  updateOrderStatus(id: number, status: string): Promise<Order | undefined>;
+  markOrdersNotified(ids: number[], ts: number): Promise<void>;
+  listUnnotifiedOrders(): Promise<Order[]>;
+
+  // order items
+  createOrderItem(oi: InsertOrderItem): Promise<OrderItem>;
+  listItemsForOrder(orderId: number): Promise<OrderItem[]>;
+
+  // referrals
+  createReferral(r: InsertReferral & { createdAt: number }): Promise<Referral>;
+  listReferralsForPartner(partnerId: number): Promise<Referral[]>;
+  listAllReferrals(): Promise<Referral[]>;
+  getReferral(id: number): Promise<Referral | undefined>;
+  updateReferralStatus(id: number, status: string): Promise<Referral | undefined>;
+  markReferralsNotified(ids: number[], ts: number): Promise<void>;
+  listUnnotifiedReferrals(): Promise<Referral[]>;
+
+  // courses
+  listCourses(): Promise<Course[]>;
+  getCourse(id: number): Promise<Course | undefined>;
+  getCourseByName(name: string): Promise<Course | undefined>;
+  createCourse(c: InsertCourse): Promise<Course>;
+  updateCourse(id: number, c: Partial<InsertCourse>): Promise<Course | undefined>;
+  deleteCourse(id: number): Promise<void>;
+
+  // videos (lessons)
+  listVideos(): Promise<Video[]>;
+  listVideosForCourse(courseId: number): Promise<Video[]>;
+  getVideo(id: number): Promise<Video | undefined>;
+  createVideo(v: InsertVideo): Promise<Video>;
+  updateVideo(id: number, v: Partial<InsertVideo>): Promise<Video | undefined>;
+  deleteVideo(id: number): Promise<void>;
+
+  // course access grants (manual admin comps)
+  listGrantsForCourse(courseId: number): Promise<CourseAccessGrant[]>;
+  listGrantsForPartner(partnerId: number): Promise<CourseAccessGrant[]>;
+  getGrant(courseId: number, partnerId: number): Promise<CourseAccessGrant | undefined>;
+  createGrant(g: InsertCourseAccessGrant): Promise<CourseAccessGrant>;
+  deleteGrant(id: number): Promise<void>;
+
+  // course purchases
+  createCoursePurchase(p: InsertCoursePurchase): Promise<CoursePurchase>;
+  updateCoursePurchaseStatus(id: number, status: string): Promise<CoursePurchase | undefined>;
+  getCoursePurchaseBySession(stripeSessionId: string): Promise<CoursePurchase | undefined>;
+  getCompletedPurchase(userId: number, courseId: number): Promise<CoursePurchase | undefined>;
+  listCompletedPurchasesForUser(userId: number): Promise<CoursePurchase[]>;
+  listAllCoursePurchases(): Promise<CoursePurchase[]>;
+
+  // modules
+  listModules(): Promise<Module[]>;
+  createModule(m: InsertModule): Promise<Module>;
+  updateModule(id: number, m: Partial<InsertModule>): Promise<Module | undefined>;
+  deleteModule(id: number): Promise<void>;
+
+  // cohorts
+  listCohorts(): Promise<Cohort[]>;
+  listCohortsForModule(moduleId: number): Promise<Cohort[]>;
+  createCohort(c: InsertCohort): Promise<Cohort>;
+  deleteCohort(id: number): Promise<void>;
+
+  // enrollments
+  listEnrollmentsForCohort(cohortId: number): Promise<CohortEnrollment[]>;
+  listEnrollmentsForStudent(studentId: number): Promise<CohortEnrollment[]>;
+  createEnrollment(e: InsertCohortEnrollment): Promise<CohortEnrollment>;
+  deleteEnrollment(id: number): Promise<void>;
+
+  // class sessions
+  listClassSessions(): Promise<ClassSession[]>;
+  listClassSessionsForCohort(cohortId: number): Promise<ClassSession[]>;
+  getClassSession(id: number): Promise<ClassSession | undefined>;
+  createClassSession(c: InsertClassSession): Promise<ClassSession>;
+  updateClassSession(id: number, c: Partial<InsertClassSession>): Promise<ClassSession | undefined>;
+  deleteClassSession(id: number): Promise<void>;
+
+  // homework
+  createHomework(h: InsertHomeworkSubmission & { createdAt: number }): Promise<HomeworkSubmission>;
+  listHomeworkForStudent(studentId: number): Promise<HomeworkSubmission[]>;
+  listHomeworkForSession(sessionId: number): Promise<HomeworkSubmission[]>;
+  listAllHomework(): Promise<HomeworkSubmission[]>;
+
+  // uploaded files
+  createUploadedFile(f: InsertUploadedFile): Promise<UploadedFile>;
+  getUploadedFileByDriveId(driveFileId: string): Promise<UploadedFile | undefined>;
+
+  // chat
+  getOrCreateThread(userId: number, userRole: string): Promise<ChatThread>;
+  listThreads(): Promise<ChatThread[]>;
+  getThread(id: number): Promise<ChatThread | undefined>;
+  createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
+  listMessagesForThread(threadId: number): Promise<ChatMessage[]>;
+
+  // push subscriptions
+  upsertPushSubscription(s: InsertPushSubscription): Promise<PushSubscriptionRow>;
+  deletePushSubscriptionByEndpoint(endpoint: string): Promise<void>;
+  deletePushSubscriptionsByEndpoints(endpoints: string[]): Promise<void>;
+  listPushSubscriptionsForAudience(audience: string): Promise<PushSubscriptionRow[]>;
+
+  // announcements
+  createAnnouncement(a: InsertAnnouncement): Promise<Announcement>;
+  listAnnouncements(): Promise<Announcement[]>;
+
+  // push subscriptions (targeted lookup)
+  getPushSubscriptionsForUserIds(userIds: number[]): Promise<PushSubscriptionRow[]>;
+
+  // case discussions
+  listUpcomingCaseDiscussions(forUserId: number): Promise<(CaseDiscussion & { rsvpCount: number; iAmAttending: boolean })[]>;
+  listAllCaseDiscussionsForAdmin(): Promise<(CaseDiscussion & { rsvpCount: number })[]>;
+  getCaseDiscussionById(id: number): Promise<CaseDiscussion | undefined>;
+  createCaseDiscussion(input: InsertCaseDiscussion): Promise<CaseDiscussion>;
+  updateCaseDiscussion(id: number, patch: Partial<InsertCaseDiscussion>): Promise<CaseDiscussion>;
+  deleteCaseDiscussion(id: number): Promise<void>;
+  rsvpToCaseDiscussion(discussionId: number, userId: number): Promise<void>;
+  cancelCaseDiscussionRsvp(discussionId: number, userId: number): Promise<void>;
+  listCaseDiscussionAttendees(discussionId: number): Promise<{ userId: number; name: string; email: string; clinicName: string | null }[]>;
+  findCaseDiscussionsNeedingNotification(windowStartMs: number, nowMs: number): Promise<CaseDiscussion[]>;
+  markCaseDiscussionNotified(id: number, whenMs: number): Promise<void>;
+}
+
+export class DatabaseStorage implements IStorage {
+  async getUser(id: number) {
+    return db.select().from(users).where(eq(users.id, id)).get();
+  }
+  async getUserByEmail(email: string) {
+    return db.select().from(users).where(eq(users.email, email)).get();
+  }
+  async createUser(user: InsertUser) {
+    return db.insert(users).values({ ...user, createdAt: Date.now() }).returning().get();
+  }
+  async updateUserStatus(id: number, status: string) {
+    return db.update(users).set({ status }).where(eq(users.id, id)).returning().get();
+  }
+  async listUsersByRoleStatus(role?: string, status?: string) {
+    let rows = db.select().from(users).all();
+    if (role) rows = rows.filter((u) => u.role === role);
+    if (status) rows = rows.filter((u) => u.status === status);
+    return rows;
+  }
+  async listAdmins() {
+    return db.select().from(users).where(eq(users.role, "admin")).all();
+  }
+
+  async createSession(session: Session) {
+    return db.insert(sessions).values(session).returning().get();
+  }
+  async getSession(token: string) {
+    return db.select().from(sessions).where(eq(sessions.token, token)).get();
+  }
+  async deleteSession(token: string) {
+    db.delete(sessions).where(eq(sessions.token, token)).run();
+  }
+
+  async listProducts() {
+    return db.select().from(products).all();
+  }
+  async getProduct(id: number) {
+    return db.select().from(products).where(eq(products.id, id)).get();
+  }
+  async createProduct(p: InsertProduct) {
+    return db.insert(products).values(p).returning().get();
+  }
+  async updateProduct(id: number, p: Partial<InsertProduct>) {
+    return db.update(products).set(p).where(eq(products.id, id)).returning().get();
+  }
+  async deleteProduct(id: number) {
+    db.delete(products).where(eq(products.id, id)).run();
+  }
+
+  async listTiersForProduct(productId: number) {
+    return db.select().from(priceTiers).where(eq(priceTiers.productId, productId)).all();
+  }
+  async createTier(t: InsertPriceTier) {
+    return db.insert(priceTiers).values(t).returning().get();
+  }
+  async deleteTier(id: number) {
+    db.delete(priceTiers).where(eq(priceTiers.id, id)).run();
+  }
+  async deleteTiersForProduct(productId: number) {
+    db.delete(priceTiers).where(eq(priceTiers.productId, productId)).run();
+  }
+
+  async createOrder(o: any) {
+    return db.insert(orders).values({
+      partnerId: o.partnerId,
+      status: o.status ?? "Requested",
+      emailNotified: o.emailNotified ?? false,
+      notifiedAt: o.notifiedAt ?? null,
+      destinationCountry: o.destinationCountry ?? null,
+      estimatedShippingCost: o.estimatedShippingCost ?? null,
+      createdAt: o.createdAt,
+    }).returning().get();
+  }
+  async listOrdersForPartner(partnerId: number) {
+    return db.select().from(orders).where(eq(orders.partnerId, partnerId)).orderBy(desc(orders.createdAt)).all();
+  }
+  async listAllOrders() {
+    return db.select().from(orders).orderBy(desc(orders.createdAt)).all();
+  }
+  async getOrder(id: number) {
+    return db.select().from(orders).where(eq(orders.id, id)).get();
+  }
+  async updateOrderStatus(id: number, status: string) {
+    return db.update(orders).set({ status }).where(eq(orders.id, id)).returning().get();
+  }
+  async markOrdersNotified(ids: number[], ts: number) {
+    for (const id of ids) {
+      db.update(orders).set({ emailNotified: true, notifiedAt: ts }).where(eq(orders.id, id)).run();
+    }
+  }
+  async listUnnotifiedOrders() {
+    return db.select().from(orders).where(eq(orders.emailNotified, false)).all();
+  }
+
+  async createOrderItem(oi: InsertOrderItem) {
+    return db.insert(orderItems).values(oi).returning().get();
+  }
+  async listItemsForOrder(orderId: number) {
+    return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).all();
+  }
+
+  async createReferral(r: any) {
+    return db.insert(referrals).values({
+      partnerId: r.partnerId,
+      patientFirstName: r.patientFirstName,
+      patientLastName: r.patientLastName,
+      patientContact: r.patientContact,
+      caseDescription: r.caseDescription,
+      urgency: r.urgency ?? "Normal",
+      notes: r.notes ?? null,
+      attachmentUrl: r.attachmentUrl ?? null,
+      status: "New",
+      emailNotified: false,
+      notifiedAt: null,
+      createdAt: r.createdAt,
+    }).returning().get();
+  }
+  async listReferralsForPartner(partnerId: number) {
+    return db.select().from(referrals).where(eq(referrals.partnerId, partnerId)).orderBy(desc(referrals.createdAt)).all();
+  }
+  async listAllReferrals() {
+    return db.select().from(referrals).orderBy(desc(referrals.createdAt)).all();
+  }
+  async getReferral(id: number) {
+    return db.select().from(referrals).where(eq(referrals.id, id)).get();
+  }
+  async updateReferralStatus(id: number, status: string) {
+    return db.update(referrals).set({ status }).where(eq(referrals.id, id)).returning().get();
+  }
+  async markReferralsNotified(ids: number[], ts: number) {
+    for (const id of ids) {
+      db.update(referrals).set({ emailNotified: true, notifiedAt: ts }).where(eq(referrals.id, id)).run();
+    }
+  }
+  async listUnnotifiedReferrals() {
+    return db.select().from(referrals).where(eq(referrals.emailNotified, false)).all();
+  }
+
+  async listCourses() {
+    return db.select().from(courses).all();
+  }
+  async getCourse(id: number) {
+    return db.select().from(courses).where(eq(courses.id, id)).get();
+  }
+  async getCourseByName(name: string) {
+    return db.select().from(courses).where(eq(courses.name, name)).get();
+  }
+  async createCourse(c: InsertCourse) {
+    return db.insert(courses).values(c).returning().get();
+  }
+  async updateCourse(id: number, c: Partial<InsertCourse>) {
+    return db.update(courses).set(c).where(eq(courses.id, id)).returning().get();
+  }
+  async deleteCourse(id: number) {
+    db.delete(courses).where(eq(courses.id, id)).run();
+  }
+
+  async listVideos() {
+    return db.select().from(videos).all();
+  }
+  async listVideosForCourse(courseId: number) {
+    return db.select().from(videos).where(eq(videos.courseId, courseId)).all();
+  }
+  async getVideo(id: number) {
+    return db.select().from(videos).where(eq(videos.id, id)).get();
+  }
+  async createVideo(v: InsertVideo) {
+    return db.insert(videos).values(v).returning().get();
+  }
+  async updateVideo(id: number, v: Partial<InsertVideo>) {
+    return db.update(videos).set(v).where(eq(videos.id, id)).returning().get();
+  }
+  async deleteVideo(id: number) {
+    db.delete(videos).where(eq(videos.id, id)).run();
+  }
+
+  async listGrantsForCourse(courseId: number) {
+    return db.select().from(courseAccessGrants).where(eq(courseAccessGrants.courseId, courseId)).all();
+  }
+  async listGrantsForPartner(partnerId: number) {
+    return db.select().from(courseAccessGrants).where(eq(courseAccessGrants.partnerId, partnerId)).all();
+  }
+  async getGrant(courseId: number, partnerId: number) {
+    return db.select().from(courseAccessGrants)
+      .where(and(eq(courseAccessGrants.courseId, courseId), eq(courseAccessGrants.partnerId, partnerId)))
+      .get();
+  }
+  async createGrant(g: InsertCourseAccessGrant) {
+    return db.insert(courseAccessGrants).values(g).returning().get();
+  }
+  async deleteGrant(id: number) {
+    db.delete(courseAccessGrants).where(eq(courseAccessGrants.id, id)).run();
+  }
+
+  async createCoursePurchase(p: InsertCoursePurchase) {
+    return db.insert(coursePurchases).values(p).returning().get();
+  }
+  async updateCoursePurchaseStatus(id: number, status: string) {
+    return db.update(coursePurchases).set({ status }).where(eq(coursePurchases.id, id)).returning().get();
+  }
+  async getCoursePurchaseBySession(stripeSessionId: string) {
+    return db.select().from(coursePurchases).where(eq(coursePurchases.stripeSessionId, stripeSessionId)).get();
+  }
+  async getCompletedPurchase(userId: number, courseId: number) {
+    return db.select().from(coursePurchases)
+      .where(and(
+        eq(coursePurchases.userId, userId),
+        eq(coursePurchases.courseId, courseId),
+        eq(coursePurchases.status, "completed"),
+      ))
+      .get();
+  }
+  async listCompletedPurchasesForUser(userId: number) {
+    return db.select().from(coursePurchases)
+      .where(and(eq(coursePurchases.userId, userId), eq(coursePurchases.status, "completed")))
+      .all();
+  }
+  async listAllCoursePurchases() {
+    return db.select().from(coursePurchases).orderBy(desc(coursePurchases.createdAt)).all();
+  }
+
+  async listModules() {
+    return db.select().from(modules).all();
+  }
+  async createModule(m: InsertModule) {
+    return db.insert(modules).values(m).returning().get();
+  }
+  async updateModule(id: number, m: Partial<InsertModule>) {
+    return db.update(modules).set(m).where(eq(modules.id, id)).returning().get();
+  }
+  async deleteModule(id: number) {
+    db.delete(modules).where(eq(modules.id, id)).run();
+  }
+
+  async listCohorts() {
+    return db.select().from(cohorts).all();
+  }
+  async listCohortsForModule(moduleId: number) {
+    return db.select().from(cohorts).where(eq(cohorts.moduleId, moduleId)).all();
+  }
+  async createCohort(c: InsertCohort) {
+    return db.insert(cohorts).values(c).returning().get();
+  }
+  async deleteCohort(id: number) {
+    db.delete(cohorts).where(eq(cohorts.id, id)).run();
+  }
+
+  async listEnrollmentsForCohort(cohortId: number) {
+    return db.select().from(cohortEnrollments).where(eq(cohortEnrollments.cohortId, cohortId)).all();
+  }
+  async listEnrollmentsForStudent(studentId: number) {
+    return db.select().from(cohortEnrollments).where(eq(cohortEnrollments.studentId, studentId)).all();
+  }
+  async createEnrollment(e: InsertCohortEnrollment) {
+    return db.insert(cohortEnrollments).values(e).returning().get();
+  }
+  async deleteEnrollment(id: number) {
+    db.delete(cohortEnrollments).where(eq(cohortEnrollments.id, id)).run();
+  }
+
+  async listClassSessions() {
+    return db.select().from(classSessions).all();
+  }
+  async listClassSessionsForCohort(cohortId: number) {
+    return db.select().from(classSessions).where(eq(classSessions.cohortId, cohortId)).all();
+  }
+  async getClassSession(id: number) {
+    return db.select().from(classSessions).where(eq(classSessions.id, id)).get();
+  }
+  async createClassSession(c: InsertClassSession) {
+    return db.insert(classSessions).values(c).returning().get();
+  }
+  async updateClassSession(id: number, c: Partial<InsertClassSession>) {
+    return db.update(classSessions).set(c).where(eq(classSessions.id, id)).returning().get();
+  }
+  async deleteClassSession(id: number) {
+    db.delete(classSessions).where(eq(classSessions.id, id)).run();
+  }
+
+  async createHomework(h: any) {
+    return db.insert(homeworkSubmissions).values({
+      classSessionId: h.classSessionId,
+      studentId: h.studentId,
+      fileUrl: h.fileUrl,
+      fileType: h.fileType,
+      comment: h.comment ?? null,
+      createdAt: h.createdAt,
+    }).returning().get();
+  }
+  async listHomeworkForStudent(studentId: number) {
+    return db.select().from(homeworkSubmissions).where(eq(homeworkSubmissions.studentId, studentId)).orderBy(desc(homeworkSubmissions.createdAt)).all();
+  }
+  async listHomeworkForSession(sessionId: number) {
+    return db.select().from(homeworkSubmissions).where(eq(homeworkSubmissions.classSessionId, sessionId)).all();
+  }
+  async listAllHomework() {
+    return db.select().from(homeworkSubmissions).orderBy(desc(homeworkSubmissions.createdAt)).all();
+  }
+
+  async createUploadedFile(f: InsertUploadedFile) {
+    return db.insert(uploadedFiles).values(f).returning().get();
+  }
+  async getUploadedFileByDriveId(driveFileId: string) {
+    return db.select().from(uploadedFiles).where(eq(uploadedFiles.driveFileId, driveFileId)).get();
+  }
+
+  async getOrCreateThread(userId: number, userRole: string) {
+    const existing = db.select().from(chatThreads).where(eq(chatThreads.userId, userId)).get();
+    if (existing) return existing;
+    return db.insert(chatThreads).values({ userId, userRole, createdAt: Date.now() }).returning().get();
+  }
+  async listThreads() {
+    return db.select().from(chatThreads).orderBy(desc(chatThreads.createdAt)).all();
+  }
+  async getThread(id: number) {
+    return db.select().from(chatThreads).where(eq(chatThreads.id, id)).get();
+  }
+  async createMessage(m: any) {
+    return db.insert(chatMessages).values({
+      threadId: m.threadId,
+      senderId: m.senderId,
+      senderRole: m.senderRole,
+      senderName: m.senderName,
+      body: m.body,
+      createdAt: m.createdAt,
+    }).returning().get();
+  }
+  async listMessagesForThread(threadId: number) {
+    return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(chatMessages.createdAt).all();
+  }
+
+  async upsertPushSubscription(s: InsertPushSubscription) {
+    const existing = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, s.endpoint)).get();
+    if (existing) {
+      return db.update(pushSubscriptions)
+        .set({ userId: s.userId ?? null, p256dh: s.p256dh, auth: s.auth })
+        .where(eq(pushSubscriptions.endpoint, s.endpoint))
+        .returning().get();
+    }
+    return db.insert(pushSubscriptions).values(s).returning().get();
+  }
+  async deletePushSubscriptionByEndpoint(endpoint: string) {
+    db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint)).run();
+  }
+  async deletePushSubscriptionsByEndpoints(endpoints: string[]) {
+    if (endpoints.length === 0) return;
+    db.delete(pushSubscriptions).where(inArray(pushSubscriptions.endpoint, endpoints)).run();
+  }
+  async listPushSubscriptionsForAudience(audience: string) {
+    const subs = db.select().from(pushSubscriptions).all();
+    if (audience === "all") return subs;
+    const role = audience === "partners" ? "partner" : "student";
+    const roleUserIds = new Set(
+      db.select().from(users).where(eq(users.role, role)).all().map((u) => u.id)
+    );
+    return subs.filter((s) => s.userId != null && roleUserIds.has(s.userId));
+  }
+
+  async createAnnouncement(a: InsertAnnouncement) {
+    return db.insert(announcements).values(a).returning().get();
+  }
+  async listAnnouncements() {
+    return db.select().from(announcements).orderBy(desc(announcements.sentAt)).all();
+  }
+
+  async getPushSubscriptionsForUserIds(userIds: number[]) {
+    if (userIds.length === 0) return [];
+    return db.select().from(pushSubscriptions).where(inArray(pushSubscriptions.userId, userIds)).all();
+  }
+
+  // ---------- case discussions ----------
+  async listUpcomingCaseDiscussions(forUserId: number) {
+    const now = Date.now();
+    const rows = db.select().from(caseDiscussions)
+      .where(gte(caseDiscussions.scheduledAt, now))
+      .orderBy(asc(caseDiscussions.scheduledAt))
+      .all();
+    return rows.map((d) => {
+      const rsvps = db.select().from(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.discussionId, d.id)).all();
+      return {
+        ...d,
+        rsvpCount: rsvps.length,
+        iAmAttending: rsvps.some((r) => r.userId === forUserId),
+      };
+    });
+  }
+  async listAllCaseDiscussionsForAdmin() {
+    const rows = db.select().from(caseDiscussions).orderBy(desc(caseDiscussions.scheduledAt)).all();
+    return rows.map((d) => {
+      const rsvps = db.select().from(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.discussionId, d.id)).all();
+      return { ...d, rsvpCount: rsvps.length };
+    });
+  }
+  async getCaseDiscussionById(id: number) {
+    return db.select().from(caseDiscussions).where(eq(caseDiscussions.id, id)).get();
+  }
+  async createCaseDiscussion(input: InsertCaseDiscussion) {
+    return db.insert(caseDiscussions).values({
+      topic: input.topic,
+      presenterName: input.presenterName ?? null,
+      scheduledAt: input.scheduledAt,
+      zoomLink: input.zoomLink,
+      notes: input.notes ?? null,
+      notifiedAt: null,
+      createdAt: Date.now(),
+    }).returning().get();
+  }
+  async updateCaseDiscussion(id: number, patch: Partial<InsertCaseDiscussion>) {
+    return db.update(caseDiscussions).set(patch).where(eq(caseDiscussions.id, id)).returning().get();
+  }
+  async deleteCaseDiscussion(id: number) {
+    db.delete(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.discussionId, id)).run();
+    db.delete(caseDiscussions).where(eq(caseDiscussions.id, id)).run();
+  }
+  async rsvpToCaseDiscussion(discussionId: number, userId: number) {
+    // Idempotent: no-op if this user has already RSVP'd (SELECT-before-INSERT,
+    // matching the cohort-enrollment / grant convention in this repo).
+    const existing = db.select().from(caseDiscussionRsvps)
+      .where(and(eq(caseDiscussionRsvps.discussionId, discussionId), eq(caseDiscussionRsvps.userId, userId)))
+      .get();
+    if (existing) return;
+    db.insert(caseDiscussionRsvps).values({ discussionId, userId, createdAt: Date.now() }).run();
+  }
+  async cancelCaseDiscussionRsvp(discussionId: number, userId: number) {
+    db.delete(caseDiscussionRsvps)
+      .where(and(eq(caseDiscussionRsvps.discussionId, discussionId), eq(caseDiscussionRsvps.userId, userId)))
+      .run();
+  }
+  async listCaseDiscussionAttendees(discussionId: number) {
+    const rsvps = db.select().from(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.discussionId, discussionId)).all();
+    return rsvps.map((r) => {
+      const u = db.select().from(users).where(eq(users.id, r.userId)).get();
+      return {
+        userId: r.userId,
+        name: u?.name ?? "Unknown",
+        email: u?.email ?? "",
+        clinicName: u?.businessName ?? null,
+      };
+    });
+  }
+  async findCaseDiscussionsNeedingNotification(windowStartMs: number, nowMs: number) {
+    return db.select().from(caseDiscussions)
+      .where(and(
+        lte(caseDiscussions.scheduledAt, nowMs),
+        gt(caseDiscussions.scheduledAt, windowStartMs),
+        isNull(caseDiscussions.notifiedAt),
+      ))
+      .all();
+  }
+  async markCaseDiscussionNotified(id: number, whenMs: number) {
+    db.update(caseDiscussions).set({ notifiedAt: whenMs }).where(eq(caseDiscussions.id, id)).run();
+  }
+}
+
+export const storage = new DatabaseStorage();

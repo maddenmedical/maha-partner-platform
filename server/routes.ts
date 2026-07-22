@@ -1,0 +1,1065 @@
+import type { Express, Request, Response, NextFunction } from "express";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
+import multer from "multer";
+import { storage } from "./storage";
+import { uploadToDrive, streamFromDrive } from "./googleDrive";
+import {
+  registerSchema, loginSchema, insertProductSchema, insertPriceTierSchema,
+  createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
+  insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
+  insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
+  estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
+  insertCaseDiscussionSchema,
+} from "@shared/schema";
+import type { Course, Video } from "@shared/schema";
+import { getVapidPublicKey, sendToSubscriptions } from "./push";
+import { buildCaseDiscussionIcs } from "./ical";
+import { getStripe, isStripeConfigured } from "./stripe";
+
+const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Files are received into memory (multipart) and then streamed straight to
+// Google Drive — nothing is written to local disk anymore.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+interface AuthedRequest extends Request {
+  user?: { id: number; role: string; name: string; email: string; status: string };
+}
+
+async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  const token = header.slice(7);
+  const session = await storage.getSession(token);
+  if (!session || session.expiresAt < Date.now()) {
+    return res.status(401).json({ message: "Session expired" });
+  }
+  const user = await storage.getUser(session.userId);
+  if (!user || user.status !== "approved") {
+    return res.status(401).json({ message: "Account not approved" });
+  }
+  req.user = { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status };
+  next();
+}
+
+// Resolves the authenticated user if a valid Bearer token is present, otherwise
+// returns undefined. Used by the shared upload-document endpoint, which is hit
+// both pre-auth (registration) and authenticated (referral attachments).
+async function getOptionalUser(req: Request): Promise<AuthedRequest["user"] | undefined> {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) return undefined;
+  const session = await storage.getSession(header.slice(7));
+  if (!session || session.expiresAt < Date.now()) return undefined;
+  const user = await storage.getUser(session.userId);
+  if (!user || user.status !== "approved") return undefined;
+  return { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status };
+}
+
+function requireRole(...roles: string[]) {
+  return (req: AuthedRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    next();
+  };
+}
+
+function requireNotifyKey(req: Request, res: Response, next: NextFunction) {
+  const key = req.headers["x-notify-key"];
+  if (!key || key !== process.env.NOTIFY_API_KEY) {
+    return res.status(401).json({ message: "Invalid notify key" });
+  }
+  next();
+}
+
+const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+export async function registerRoutes(
+  httpServer: Server,
+  app: Express
+): Promise<Server> {
+  // ---------- legacy local uploads (pre-Drive records only) ----------
+  // New uploads go to Google Drive and are served via /api/files/:driveFileId.
+  // This route is kept only so any pre-existing local-path records still resolve.
+  app.get("/api/uploads/:filename", (req, res) => {
+    const filePath = path.join(UPLOAD_DIR, path.basename(req.params.filename));
+    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "Not found" });
+    res.sendFile(filePath);
+  });
+
+  // ---------- authenticated file-serving proxy (Google Drive) ----------
+  // Streams a Drive-stored file back to the browser after re-checking the same
+  // authorization rule that applied to the original upload.
+  app.get("/api/files/:driveFileId", requireAuth, async (req: AuthedRequest, res) => {
+    const rec = await storage.getUploadedFileByDriveId(String(req.params.driveFileId));
+    if (!rec) return res.status(404).json({ message: "Not found" });
+
+    const isAdmin = req.user!.role === "admin";
+    let allowed = false;
+    switch (rec.category) {
+      case "homework":
+        // Owning student or an admin/instructor only.
+        allowed = isAdmin || req.user!.id === rec.ownerId;
+        break;
+      case "referral":
+        // The partner who submitted the referral or an admin.
+        allowed = isAdmin || req.user!.id === rec.ownerId;
+        break;
+      case "registration":
+        // Registration documents are reviewed by admins only.
+        allowed = isAdmin;
+        break;
+      default:
+        allowed = isAdmin;
+    }
+    if (!allowed) return res.status(403).json({ message: "Forbidden" });
+
+    try {
+      const stream = await streamFromDrive(rec.driveFileId);
+      res.setHeader("Content-Type", rec.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${rec.filename.replace(/"/g, "")}"`,
+      );
+      stream.on("error", () => {
+        if (!res.headersSent) res.status(502).json({ message: "Failed to fetch file" });
+        else res.end();
+      });
+      stream.pipe(res);
+    } catch {
+      res.status(502).json({ message: "Failed to fetch file from storage" });
+    }
+  });
+
+  // ---------- AUTH ----------
+  app.post("/api/auth/register", async (req, res) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const data = parsed.data;
+    const existing = await storage.getUserByEmail(data.email);
+    if (existing) return res.status(400).json({ message: "An account with this email already exists" });
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+    const user = await storage.createUser({
+      role: data.role,
+      name: data.name,
+      email: data.email,
+      passwordHash,
+      status: "pending",
+      phone: data.phone,
+      businessName: data.businessName || null,
+      vatNumber: data.vatNumber || null,
+      profession: data.profession || null,
+      homepageUrl: data.homepageUrl || null,
+      degreeFileUrl: data.degreeFileUrl || null,
+    } as any);
+    res.json({ id: user.id, status: user.status });
+  });
+
+  // Shared upload endpoint for registration documents (pre-auth) and referral
+  // attachments (authenticated partner). The file goes straight to Drive; we
+  // record its metadata and return the proxy URL.
+  app.post("/api/auth/upload-document", upload.single("file"), async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    const user = await getOptionalUser(req);
+    const category = req.body?.context === "referral" ? "referral" : "registration";
+    try {
+      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      await storage.createUploadedFile({
+        driveFileId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        category,
+        ownerId: category === "referral" ? user?.id ?? null : null,
+        uploadedAt: Date.now(),
+      });
+      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname });
+    } catch (err: any) {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const { email, password } = parsed.data;
+    const user = await storage.getUserByEmail(email);
+    if (!user) return res.status(401).json({ message: "Invalid email or password" });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(401).json({ message: "Invalid email or password" });
+    if (user.status !== "approved") {
+      return res.status(403).json({ message: "pending", status: user.status });
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    await storage.createSession({ token, userId: user.id, expiresAt: Date.now() + SEVEN_DAYS });
+    res.json({
+      token,
+      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status },
+    });
+  });
+
+  app.post("/api/auth/logout", requireAuth, async (req: AuthedRequest, res) => {
+    const header = req.headers.authorization!;
+    await storage.deleteSession(header.slice(7));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/auth/me", requireAuth, async (req: AuthedRequest, res) => {
+    res.json(req.user);
+  });
+
+  // ---------- PARTNER: REFERRALS ----------
+  app.post("/api/referrals", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const parsed = insertReferralSchema.safeParse({ ...req.body, partnerId: req.user!.id });
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now() });
+    res.json(referral);
+  });
+
+  app.get("/api/referrals/mine", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const rows = await storage.listReferralsForPartner(req.user!.id);
+    res.json(rows);
+  });
+
+  // ---------- ADMIN: REFERRALS ----------
+  app.get("/api/admin/referrals", requireAuth, requireRole("admin"), async (_req, res) => {
+    const rows = await storage.listAllReferrals();
+    const withPartner = await Promise.all(
+      rows.map(async (r) => {
+        const partner = await storage.getUser(r.partnerId);
+        return { ...r, partnerName: partner?.name, partnerEmail: partner?.email, partnerPhone: partner?.phone };
+      })
+    );
+    res.json(withPartner);
+  });
+
+  app.patch("/api/admin/referrals/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
+    const { status } = req.body;
+    const updated = await storage.updateReferralStatus(Number(req.params.id), status);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  // ---------- SHOP: PRODUCTS ----------
+  app.get("/api/products", async (_req, res) => {
+    const products = await storage.listProducts();
+    const withTiers = await Promise.all(
+      products.map(async (p) => ({ ...p, tiers: await storage.listTiersForProduct(p.id) }))
+    );
+    res.json(withTiers);
+  });
+
+  app.post("/api/admin/products", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertProductSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const product = await storage.createProduct(parsed.data);
+    res.json(product);
+  });
+
+  app.patch("/api/admin/products/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const updated = await storage.updateProduct(Number(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/products/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteTiersForProduct(Number(req.params.id));
+    await storage.deleteProduct(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.post("/api/admin/products/:id/tiers", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertPriceTierSchema.safeParse({ ...req.body, productId: Number(req.params.id) });
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const tier = await storage.createTier(parsed.data);
+    res.json(tier);
+  });
+
+  app.delete("/api/admin/tiers/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteTier(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---------- PARTNER: ORDERS ----------
+  app.post("/api/orders", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const parsed = createOrderSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid order" });
+
+    // Compute total weight across cart items for the shipping estimate.
+    let totalWeightGrams = 0;
+    for (const item of parsed.data.items) {
+      const product = await storage.getProduct(item.productId);
+      if (!product) continue;
+      totalWeightGrams += (product.weightGrams || 0) * item.quantity;
+    }
+    const estimatedShippingCost = estimateShippingCostCents(totalWeightGrams, parsed.data.destinationCountry);
+
+    const order = await storage.createOrder({
+      partnerId: req.user!.id,
+      destinationCountry: parsed.data.destinationCountry.toUpperCase(),
+      estimatedShippingCost,
+      createdAt: Date.now(),
+    } as any);
+    for (const item of parsed.data.items) {
+      const product = await storage.getProduct(item.productId);
+      if (!product) continue;
+      const tiers = await storage.listTiersForProduct(item.productId);
+      let unitPrice = product.unitPrice;
+      for (const tier of tiers) {
+        if (item.quantity >= tier.minQty && (tier.maxQty == null || item.quantity <= tier.maxQty)) {
+          unitPrice = tier.pricePerUnit;
+        }
+      }
+      await storage.createOrderItem({
+        orderId: order.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPriceAtOrder: unitPrice,
+      });
+    }
+    res.json(order);
+  });
+
+  app.get("/api/orders/mine", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const rows = await storage.listOrdersForPartner(req.user!.id);
+    const withItems = await Promise.all(
+      rows.map(async (o) => ({ ...o, items: await storage.listItemsForOrder(o.id) }))
+    );
+    res.json(withItems);
+  });
+
+  // ---------- ADMIN: ORDERS ----------
+  app.get("/api/admin/orders", requireAuth, requireRole("admin"), async (_req, res) => {
+    const rows = await storage.listAllOrders();
+    const withDetails = await Promise.all(
+      rows.map(async (o) => {
+        const partner = await storage.getUser(o.partnerId);
+        const items = await storage.listItemsForOrder(o.id);
+        return { ...o, partnerName: partner?.name, partnerEmail: partner?.email, items };
+      })
+    );
+    res.json(withDetails);
+  });
+
+  app.patch("/api/admin/orders/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
+    const { status } = req.body;
+    const updated = await storage.updateOrderStatus(Number(req.params.id), status);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  // ---------- COURSES & LESSONS (Education) ----------
+  // A partner has access to a course when it is 'open' (free, no gate), OR they
+  // have a completed purchase for it (paid unlock or free self-enroll), OR an
+  // admin has manually granted it. Admins and students see everything.
+  function courseHasAccess(
+    role: string,
+    course: Course,
+    completed: Set<number>,
+    granted: Set<number>,
+  ): boolean {
+    if (role !== "partner") return true;
+    if (course.accessType === "open") return true;
+    return completed.has(course.id) || granted.has(course.id);
+  }
+
+  function isFreeCourse(course: Course): boolean {
+    return course.accessType !== "paid" || !course.priceCents;
+  }
+
+  app.get("/api/courses", requireAuth, async (req: AuthedRequest, res) => {
+    const allCourses = await storage.listCourses();
+    const allVideos = await storage.listVideos();
+
+    let completed = new Set<number>();
+    let granted = new Set<number>();
+    if (req.user!.role === "partner") {
+      completed = new Set((await storage.listCompletedPurchasesForUser(req.user!.id)).map((p) => p.courseId));
+      granted = new Set((await storage.listGrantsForPartner(req.user!.id)).map((g) => g.courseId));
+    }
+
+    const result = allCourses.map((c) => {
+      const lessons = allVideos.filter((v) => v.courseId === c.id);
+      return {
+        ...c,
+        lessons,
+        lessonCount: lessons.length,
+        hasAccess: courseHasAccess(req.user!.role, c, completed, granted),
+      };
+    });
+    res.json(result);
+  });
+
+  // Free self-enroll — creates access without payment (recorded as a completed
+  // purchase with amount 0). Only valid for non-paid courses.
+  app.post("/api/courses/:id/enroll", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const course = await storage.getCourse(Number(req.params.id));
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!isFreeCourse(course)) {
+      return res.status(400).json({ message: "This course requires payment" });
+    }
+    const existing = await storage.getCompletedPurchase(req.user!.id, course.id);
+    if (!existing) {
+      await storage.createCoursePurchase({
+        userId: req.user!.id,
+        courseId: course.id,
+        amountCents: 0,
+        currency: course.currency,
+        stripeSessionId: null,
+        status: "completed",
+        createdAt: Date.now(),
+      });
+    }
+    res.json({ ok: true, hasAccess: true });
+  });
+
+  // Start a paid checkout. Gates gracefully when Stripe is not configured yet.
+  app.post("/api/courses/:id/checkout", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const course = await storage.getCourse(Number(req.params.id));
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (isFreeCourse(course)) {
+      return res.status(400).json({ message: "This course is free — use enroll" });
+    }
+    const already = await storage.getCompletedPurchase(req.user!.id, course.id);
+    if (already) return res.json({ alreadyOwned: true });
+
+    const stripe = getStripe();
+    if (!stripe) {
+      // No STRIPE_SECRET_KEY set — surface a clear, non-fatal signal the client
+      // turns into a "contact the MAHA team" message.
+      return res.status(503).json({ error: "payments_not_configured" });
+    }
+
+    const origin = req.headers.origin || `${req.protocol}://${req.get("host")}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: course.currency,
+            unit_amount: course.priceCents!,
+            product_data: { name: course.name, description: course.description || undefined },
+          },
+        },
+      ],
+      success_url: `${origin}/#/videos?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/#/videos?checkout=cancelled`,
+      metadata: { courseId: String(course.id), userId: String(req.user!.id) },
+    });
+
+    await storage.createCoursePurchase({
+      userId: req.user!.id,
+      courseId: course.id,
+      amountCents: course.priceCents!,
+      currency: course.currency,
+      stripeSessionId: session.id,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+
+    res.json({ url: session.url });
+  });
+
+  // Confirm a completed checkout by verifying the session with Stripe directly
+  // (avoids needing a separately configured webhook endpoint for now).
+  app.get("/api/courses/checkout/confirm", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const sessionId = typeof req.query.session_id === "string" ? req.query.session_id : null;
+    if (!sessionId) return res.status(400).json({ message: "Missing session_id" });
+
+    const purchase = await storage.getCoursePurchaseBySession(sessionId);
+    if (!purchase || purchase.userId !== req.user!.id) {
+      return res.status(404).json({ message: "Purchase not found" });
+    }
+    if (purchase.status === "completed") {
+      return res.json({ ok: true, courseId: purchase.courseId, alreadyConfirmed: true });
+    }
+
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: "payments_not_configured" });
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") {
+      return res.status(402).json({ message: "Payment not completed" });
+    }
+    await storage.updateCoursePurchaseStatus(purchase.id, "completed");
+    res.json({ ok: true, courseId: purchase.courseId });
+  });
+
+  // ---------- ADMIN: COURSES ----------
+  app.post("/api/admin/courses", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = courseInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const d = parsed.data;
+    const course = await storage.createCourse({
+      name: d.name,
+      description: d.description || null,
+      priceCents: d.accessType === "paid" ? d.priceCents ?? 0 : null,
+      currency: d.currency || "eur",
+      accessType: d.accessType,
+    });
+    res.json(course);
+  });
+
+  app.patch("/api/admin/courses/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = courseInputSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const d = parsed.data;
+    const patch: Record<string, unknown> = {};
+    if (d.name !== undefined) patch.name = d.name;
+    if (d.description !== undefined) patch.description = d.description || null;
+    if (d.currency !== undefined) patch.currency = d.currency;
+    if (d.accessType !== undefined) {
+      patch.accessType = d.accessType;
+      patch.priceCents = d.accessType === "paid" ? d.priceCents ?? 0 : null;
+    } else if (d.priceCents !== undefined) {
+      patch.priceCents = d.priceCents;
+    }
+    // Keep lessons' denormalized category in sync if the course is renamed.
+    if (d.name !== undefined) {
+      const lessons = await storage.listVideosForCourse(Number(req.params.id));
+      for (const l of lessons) await storage.updateVideo(l.id, { category: d.name });
+    }
+    const updated = await storage.updateCourse(Number(req.params.id), patch);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/courses/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    const lessons = await storage.listVideosForCourse(id);
+    for (const l of lessons) await storage.deleteVideo(l.id);
+    const grants = await storage.listGrantsForCourse(id);
+    for (const g of grants) await storage.deleteGrant(g.id);
+    await storage.deleteCourse(id);
+    res.json({ ok: true });
+  });
+
+  // ---------- ADMIN: LESSONS (videos scoped to a course) ----------
+  app.post("/api/admin/videos", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = lessonInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const course = await storage.getCourse(parsed.data.courseId);
+    if (!course) return res.status(400).json({ message: "Course not found" });
+    const video = await storage.createVideo({
+      title: parsed.data.title,
+      description: parsed.data.description || null,
+      url: parsed.data.url || "",
+      category: course.name,
+      courseId: course.id,
+      isPremium: course.accessType === "paid",
+      thumbnailUrl: null,
+    });
+    res.json(video);
+  });
+
+  app.patch("/api/admin/videos/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const patch: Partial<Video> = {};
+    if (typeof req.body.title === "string") patch.title = req.body.title;
+    if (req.body.description !== undefined) patch.description = req.body.description || null;
+    if (req.body.url !== undefined) patch.url = req.body.url || "";
+    if (req.body.courseId !== undefined) {
+      const course = await storage.getCourse(Number(req.body.courseId));
+      if (!course) return res.status(400).json({ message: "Course not found" });
+      patch.courseId = course.id;
+      patch.category = course.name;
+      patch.isPremium = course.accessType === "paid";
+    }
+    const updated = await storage.updateVideo(Number(req.params.id), patch);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/videos/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteVideo(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---------- ADMIN: COURSE GRANTS (manual comps) ----------
+  app.get("/api/admin/courses/:id/grants", requireAuth, requireRole("admin"), async (req, res) => {
+    const grants = await storage.listGrantsForCourse(Number(req.params.id));
+    const withNames = await Promise.all(
+      grants.map(async (g) => {
+        const partner = await storage.getUser(g.partnerId);
+        return { ...g, partnerName: partner?.name, partnerEmail: partner?.email };
+      })
+    );
+    res.json(withNames);
+  });
+
+  app.post("/api/admin/courses/:id/grants", requireAuth, requireRole("admin"), async (req, res) => {
+    const courseId = Number(req.params.id);
+    const partnerId = Number(req.body.partnerId);
+    if (!partnerId) return res.status(400).json({ message: "Invalid input" });
+    const existing = await storage.getGrant(courseId, partnerId);
+    if (existing) return res.json(existing);
+    const grant = await storage.createGrant({ courseId, partnerId });
+    res.json(grant);
+  });
+
+  app.delete("/api/admin/course-grants/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteGrant(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---------- ADMIN: PURCHASE HISTORY ----------
+  app.get("/api/admin/course-purchases", requireAuth, requireRole("admin"), async (_req, res) => {
+    const rows = await storage.listAllCoursePurchases();
+    const withDetails = await Promise.all(
+      rows.map(async (p) => {
+        const user = await storage.getUser(p.userId);
+        const course = await storage.getCourse(p.courseId);
+        return {
+          ...p,
+          partnerName: user?.name,
+          partnerEmail: user?.email,
+          courseName: course?.name,
+        };
+      })
+    );
+    res.json(withDetails);
+  });
+
+  // ---------- INSTITUTE: MODULES / COHORTS / SESSIONS ----------
+  app.get("/api/modules", requireAuth, async (_req, res) => {
+    res.json(await storage.listModules());
+  });
+  app.post("/api/admin/modules", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertModuleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    res.json(await storage.createModule(parsed.data));
+  });
+  app.patch("/api/admin/modules/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const updated = await storage.updateModule(Number(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+  app.delete("/api/admin/modules/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteModule(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/cohorts", requireAuth, async (_req, res) => {
+    res.json(await storage.listCohorts());
+  });
+  app.post("/api/admin/cohorts", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertCohortSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    res.json(await storage.createCohort(parsed.data));
+  });
+  app.delete("/api/admin/cohorts/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteCohort(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/admin/enrollments", requireAuth, requireRole("admin"), async (_req, res) => {
+    const cohorts = await storage.listCohorts();
+    const all = [];
+    for (const c of cohorts) {
+      const enrollments = await storage.listEnrollmentsForCohort(c.id);
+      for (const e of enrollments) {
+        const student = await storage.getUser(e.studentId);
+        all.push({ ...e, studentName: student?.name, studentEmail: student?.email, cohortName: c.name });
+      }
+    }
+    res.json(all);
+  });
+  app.post("/api/admin/enrollments", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertCohortEnrollmentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    res.json(await storage.createEnrollment(parsed.data));
+  });
+  app.delete("/api/admin/enrollments/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteEnrollment(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/class-sessions", requireAuth, async (_req, res) => {
+    res.json(await storage.listClassSessions());
+  });
+
+  app.get("/api/students/my-classes", requireAuth, requireRole("student"), async (req: AuthedRequest, res) => {
+    const enrollments = await storage.listEnrollmentsForStudent(req.user!.id);
+    const cohortIds = enrollments.map((e) => e.cohortId);
+    const allSessions = await storage.listClassSessions();
+    const mine = allSessions.filter((s) => cohortIds.includes(s.cohortId));
+    const cohorts = await storage.listCohorts();
+    const modules = await storage.listModules();
+    const enriched = mine.map((s) => {
+      const cohort = cohorts.find((c) => c.id === s.cohortId);
+      const module = modules.find((m) => m.id === cohort?.moduleId);
+      return { ...s, cohortName: cohort?.name, moduleName: module?.name };
+    });
+    res.json(enriched);
+  });
+
+  app.post("/api/admin/class-sessions", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertClassSessionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    res.json(await storage.createClassSession(parsed.data));
+  });
+  app.patch("/api/admin/class-sessions/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const updated = await storage.updateClassSession(Number(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+  app.delete("/api/admin/class-sessions/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteClassSession(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---------- HOMEWORK ----------
+  app.post("/api/homework/upload", requireAuth, requireRole("student"), upload.single("file"), async (req: AuthedRequest, res) => {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    try {
+      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      await storage.createUploadedFile({
+        driveFileId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        category: "homework",
+        ownerId: req.user!.id,
+        uploadedAt: Date.now(),
+      });
+      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, type: req.file.mimetype });
+    } catch (err: any) {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  app.post("/api/homework", requireAuth, requireRole("student"), async (req: AuthedRequest, res) => {
+    const parsed = insertHomeworkSubmissionSchema.safeParse({ ...req.body, studentId: req.user!.id });
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const hw = await storage.createHomework({ ...parsed.data, createdAt: Date.now() });
+    res.json(hw);
+  });
+
+  app.get("/api/homework/mine", requireAuth, requireRole("student"), async (req: AuthedRequest, res) => {
+    const rows = await storage.listHomeworkForStudent(req.user!.id);
+    res.json(rows);
+  });
+
+  app.get("/api/admin/homework", requireAuth, requireRole("admin"), async (req, res) => {
+    const { classSessionId, studentId } = req.query;
+    let rows = await storage.listAllHomework();
+    if (classSessionId) rows = rows.filter((h) => h.classSessionId === Number(classSessionId));
+    if (studentId) rows = rows.filter((h) => h.studentId === Number(studentId));
+    const withNames = await Promise.all(
+      rows.map(async (h) => {
+        const student = await storage.getUser(h.studentId);
+        const session = await storage.getClassSession(h.classSessionId);
+        return { ...h, studentName: student?.name, sessionTitle: session?.title };
+      })
+    );
+    res.json(withNames);
+  });
+
+  // ---------- ADMIN: PENDING APPROVALS ----------
+  app.get("/api/admin/pending-users", requireAuth, requireRole("admin"), async (_req, res) => {
+    const rows = await storage.listUsersByRoleStatus(undefined, "pending");
+    res.json(rows);
+  });
+
+  app.patch("/api/admin/users/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
+    const { status } = req.body;
+    if (!["approved", "rejected", "pending"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+    const updated = await storage.updateUserStatus(Number(req.params.id), status);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/admin/partners", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listUsersByRoleStatus("partner", "approved"));
+  });
+  app.get("/api/admin/students", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listUsersByRoleStatus("student", "approved"));
+  });
+
+  // ---------- ADMIN: TEAM ----------
+  app.get("/api/admin/team", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listAdmins());
+  });
+  app.post("/api/admin/team", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertUserSchema.safeParse({
+      role: "admin",
+      name: req.body.name,
+      email: req.body.email,
+      passwordHash: "x",
+      status: "approved",
+      phone: req.body.phone || null,
+    });
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const existing = await storage.getUserByEmail(req.body.email);
+    if (existing) return res.status(400).json({ message: "Email already in use" });
+    const passwordHash = await bcrypt.hash(req.body.password, 10);
+    const admin = await storage.createUser({ ...parsed.data, passwordHash, status: "approved" } as any);
+    res.json({ id: admin.id, name: admin.name, email: admin.email });
+  });
+
+  // ---------- CHAT ----------
+  app.get("/api/chat/my-thread", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getOrCreateThread(req.user!.id, req.user!.role);
+    const messages = await storage.listMessagesForThread(thread.id);
+    res.json({ thread, messages });
+  });
+
+  app.post("/api/chat/my-thread/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getOrCreateThread(req.user!.id, req.user!.role);
+    const parsed = insertChatMessageSchema.safeParse({
+      threadId: thread.id,
+      senderId: req.user!.id,
+      senderRole: req.user!.role,
+      senderName: req.user!.name,
+      body: req.body.body,
+    });
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
+    res.json(msg);
+  });
+
+  app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (_req, res) => {
+    const threads = await storage.listThreads();
+    const withUser = await Promise.all(
+      threads.map(async (t) => {
+        const user = await storage.getUser(t.userId);
+        const messages = await storage.listMessagesForThread(t.id);
+        const last = messages[messages.length - 1];
+        return {
+          ...t,
+          userName: user?.name,
+          userEmail: user?.email,
+          lastMessage: last?.body,
+          lastMessageAt: last?.createdAt,
+          messageCount: messages.length,
+        };
+      })
+    );
+    res.json(withUser);
+  });
+
+  app.get("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req, res) => {
+    res.json(await storage.listMessagesForThread(Number(req.params.id)));
+  });
+
+  app.post("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const parsed = insertChatMessageSchema.safeParse({
+      threadId: Number(req.params.id),
+      senderId: req.user!.id,
+      senderRole: "admin",
+      senderName: req.user!.name,
+      body: req.body.body,
+    });
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
+    res.json(msg);
+  });
+
+  // ---------- HOME SUMMARY ----------
+  app.get("/api/partner/home-summary", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const referrals = await storage.listReferralsForPartner(req.user!.id);
+    const orders = await storage.listOrdersForPartner(req.user!.id);
+    const thread = await storage.getOrCreateThread(req.user!.id, "partner");
+    const messages = await storage.listMessagesForThread(thread.id);
+    res.json({
+      openReferrals: referrals.filter((r) => r.status !== "Closed").length,
+      openOrders: orders.filter((o) => o.status !== "Fulfilled" && o.status !== "Cancelled").length,
+      recentMessages: messages.slice(-3),
+      totalReferrals: referrals.length,
+      totalOrders: orders.length,
+    });
+  });
+
+  // ---------- NOTIFICATION HOOK (for parent-agent email sending) ----------
+  app.get("/api/admin/pending-notifications", requireNotifyKey, async (_req, res) => {
+    const referrals = await storage.listUnnotifiedReferrals();
+    const orders = await storage.listUnnotifiedOrders();
+
+    const referralsDetailed = await Promise.all(
+      referrals.map(async (r) => {
+        const partner = await storage.getUser(r.partnerId);
+        return {
+          id: r.id,
+          type: "referral",
+          partnerName: partner?.name,
+          partnerEmail: partner?.email,
+          partnerPhone: partner?.phone,
+          patientFirstName: r.patientFirstName,
+          patientLastName: r.patientLastName,
+          patientContact: r.patientContact,
+          caseDescription: r.caseDescription,
+          urgency: r.urgency,
+          notes: r.notes,
+          createdAt: r.createdAt,
+        };
+      })
+    );
+
+    const ordersDetailed = await Promise.all(
+      orders.map(async (o) => {
+        const partner = await storage.getUser(o.partnerId);
+        const items = await storage.listItemsForOrder(o.id);
+        const itemsDetailed = await Promise.all(
+          items.map(async (it) => {
+            const product = await storage.getProduct(it.productId);
+            return { productName: product?.name, quantity: it.quantity, unitPriceAtOrder: it.unitPriceAtOrder };
+          })
+        );
+        return {
+          id: o.id,
+          type: "order",
+          partnerName: partner?.name,
+          partnerEmail: partner?.email,
+          partnerPhone: partner?.phone,
+          status: o.status,
+          items: itemsDetailed,
+          createdAt: o.createdAt,
+        };
+      })
+    );
+
+    res.json({ referrals: referralsDetailed, orders: ordersDetailed });
+  });
+
+  app.post("/api/admin/mark-notified", requireNotifyKey, async (req, res) => {
+    const { referralIds = [], orderIds = [] } = req.body as { referralIds: number[]; orderIds: number[] };
+    const ts = Date.now();
+    if (referralIds.length) await storage.markReferralsNotified(referralIds, ts);
+    if (orderIds.length) await storage.markOrdersNotified(orderIds, ts);
+    res.json({ ok: true });
+  });
+
+  // ---------- PUSH NOTIFICATIONS ----------
+  app.get("/api/push/vapid-public-key", (_req, res) => {
+    const key = getVapidPublicKey();
+    if (!key) return res.status(503).json({ message: "Push not configured" });
+    res.json({ publicKey: key });
+  });
+
+  app.post("/api/push/subscribe", requireAuth, async (req: AuthedRequest, res) => {
+    const parsed = pushSubscribeSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid subscription" });
+    const sub = await storage.upsertPushSubscription({
+      userId: req.user!.id,
+      endpoint: parsed.data.endpoint,
+      p256dh: parsed.data.keys.p256dh,
+      auth: parsed.data.keys.auth,
+      createdAt: Date.now(),
+    });
+    res.json({ ok: true, id: sub.id });
+  });
+
+  app.post("/api/push/unsubscribe", requireAuth, async (req: AuthedRequest, res) => {
+    const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : null;
+    if (!endpoint) return res.status(400).json({ message: "Missing endpoint" });
+    await storage.deletePushSubscriptionByEndpoint(endpoint);
+    res.json({ ok: true });
+  });
+
+  // ---------- ANNOUNCEMENTS ----------
+  app.post("/api/admin/announcements", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const parsed = createAnnouncementSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const url = parsed.data.url && parsed.data.url.length > 0 ? parsed.data.url : null;
+
+    const subs = await storage.listPushSubscriptionsForAudience(parsed.data.audience);
+    const result = await sendToSubscriptions(subs, {
+      title: parsed.data.title,
+      body: parsed.data.body,
+      url,
+    });
+    if (result.removedEndpoints.length) {
+      await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
+    }
+
+    const announcement = await storage.createAnnouncement({
+      title: parsed.data.title,
+      body: parsed.data.body,
+      url,
+      audience: parsed.data.audience,
+      sentByUserId: req.user!.id,
+      recipientCount: result.sent,
+      sentAt: Date.now(),
+    });
+
+    res.json({
+      announcement,
+      sent: result.sent,
+      failed: result.failed,
+      removed: result.removedEndpoints.length,
+    });
+  });
+
+  app.get("/api/admin/announcements", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listAnnouncements());
+  });
+
+  // ---------- CASE DISCUSSIONS (partner-facing) ----------
+  app.get("/api/case-discussions", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+    res.json(await storage.listUpcomingCaseDiscussions(req.user!.id));
+  });
+
+  app.post("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+    const discussion = await storage.getCaseDiscussionById(Number(req.params.id));
+    if (!discussion) return res.status(404).json({ message: "Not found" });
+    await storage.rsvpToCaseDiscussion(discussion.id, req.user!.id);
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+    await storage.cancelCaseDiscussionRsvp(Number(req.params.id), req.user!.id);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/case-discussions/:id/ical", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+    const discussion = await storage.getCaseDiscussionById(Number(req.params.id));
+    if (!discussion) return res.status(404).json({ message: "Not found" });
+    const ics = buildCaseDiscussionIcs(discussion);
+    res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="case-discussion-${discussion.id}.ics"`);
+    res.send(ics);
+  });
+
+  // ---------- CASE DISCUSSIONS (admin) ----------
+  app.get("/api/admin/case-discussions", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listAllCaseDiscussionsForAdmin());
+  });
+
+  app.post("/api/admin/case-discussions", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = insertCaseDiscussionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    res.json(await storage.createCaseDiscussion(parsed.data));
+  });
+
+  app.patch("/api/admin/case-discussions/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const existing = await storage.getCaseDiscussionById(Number(req.params.id));
+    if (!existing) return res.status(404).json({ message: "Not found" });
+    const updated = await storage.updateCaseDiscussion(Number(req.params.id), req.body);
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/case-discussions/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteCaseDiscussion(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/admin/case-discussions/:id/attendees", requireAuth, requireRole("admin"), async (req, res) => {
+    res.json(await storage.listCaseDiscussionAttendees(Number(req.params.id)));
+  });
+
+  return httpServer;
+}
