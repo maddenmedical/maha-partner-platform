@@ -27,12 +27,15 @@ export async function uploadToDrive(
   buffer: Buffer,
   filename: string,
   mimeType: string,
+  folderId?: string,
 ): Promise<{ driveFileId: string; webViewLink: string }> {
   const drive = getDrive();
   const res = await drive.files.create({
     requestBody: {
       name: filename,
-      parents: [getFolderId()],
+      // Uploads default to the main folder; callers (e.g. the backup routine)
+      // can pass an explicit subfolder id to keep their files separate.
+      parents: [folderId || getFolderId()],
     },
     media: {
       mimeType,
@@ -61,14 +64,16 @@ export async function streamFromDrive(
 }
 
 // Used by tests/verification to confirm a file actually landed in the folder.
-export async function listFolderFiles(): Promise<
-  { id: string; name: string; mimeType: string; size?: string }[]
-> {
+// Defaults to the main uploads folder, but accepts an explicit folder id so the
+// backup routine can list/prune the dedicated "App Backups" subfolder.
+export async function listFolderFiles(
+  folderId?: string,
+): Promise<{ id: string; name: string; mimeType: string; size?: string }[]> {
   const drive = getDrive();
   const res = await drive.files.list({
-    q: `'${getFolderId()}' in parents and trashed = false`,
+    q: `'${folderId || getFolderId()}' in parents and trashed = false`,
     fields: "files(id, name, mimeType, size)",
-    pageSize: 100,
+    pageSize: 1000,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
   });
@@ -78,4 +83,42 @@ export async function listFolderFiles(): Promise<
     mimeType: f.mimeType!,
     size: f.size || undefined,
   }));
+}
+
+// Permanently delete a file from Drive (used by backup retention pruning).
+export async function deleteFromDrive(fileId: string): Promise<void> {
+  const drive = getDrive();
+  await drive.files.delete({ fileId, supportsAllDrives: true });
+}
+
+// Find-or-create a dedicated "App Backups" subfolder inside the main Drive
+// folder so database backups don't clutter the uploads folder. The resolved id
+// is cached in-process to avoid a lookup on every backup run.
+let cachedBackupFolderId: string | null = null;
+
+export async function getOrCreateBackupFolderId(): Promise<string> {
+  if (cachedBackupFolderId) return cachedBackupFolderId;
+  const drive = getDrive();
+  const parentId = getFolderId();
+  const existing = await drive.files.list({
+    q: `'${parentId}' in parents and name = 'App Backups' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: "files(id, name)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  if (existing.data.files && existing.data.files.length > 0) {
+    cachedBackupFolderId = existing.data.files[0].id!;
+    return cachedBackupFolderId;
+  }
+  const created = await drive.files.create({
+    requestBody: {
+      name: "App Backups",
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    },
+    fields: "id",
+    supportsAllDrives: true,
+  });
+  cachedBackupFolderId = created.data.id!;
+  return cachedBackupFolderId;
 }

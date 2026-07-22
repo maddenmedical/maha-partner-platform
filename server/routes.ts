@@ -6,8 +6,10 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
-import { storage } from "./storage";
-import { uploadToDrive, streamFromDrive } from "./googleDrive";
+import { storage, sqliteDb } from "./storage";
+import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
+import { backupDatabaseToDrive } from "./backup";
+import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
   registerSchema, loginSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
@@ -1059,6 +1061,39 @@ export async function registerRoutes(
 
   app.get("/api/admin/case-discussions/:id/attendees", requireAuth, requireRole("admin"), async (req, res) => {
     res.json(await storage.listCaseDiscussionAttendees(Number(req.params.id)));
+  });
+
+  // ---------- DATA BACKUPS (admin) ----------
+  // Reports the most recent backup outcome (from the in-process scheduler) plus
+  // the total number of backups currently stored in the Drive backup folder.
+  app.get("/api/admin/backups/status", requireAuth, requireRole("admin"), async (_req, res) => {
+    const last = getLastBackupStatus();
+    let totalBackups = 0;
+    try {
+      const folderId = await getOrCreateBackupFolderId();
+      const files = await listFolderFiles(folderId);
+      totalBackups = files.filter((f) => f.name.startsWith("maha-backup-")).length;
+    } catch (err) {
+      console.error("[backup] status: failed to list Drive backups:", err);
+    }
+    res.json({
+      lastBackupAt: last ? last.at : null,
+      lastBackupOk: last ? last.ok : null,
+      lastBackupError: last && !last.ok ? last.error : null,
+      totalBackups,
+    });
+  });
+
+  // Trigger an immediate manual backup and update the scheduler's in-memory
+  // status so GET .../status reflects it right away.
+  app.post("/api/admin/backups/run", requireAuth, requireRole("admin"), async (_req, res) => {
+    const result = await backupDatabaseToDrive(sqliteDb);
+    if (result.ok) {
+      setLastBackupStatus({ at: Date.now(), ok: true, filename: result.filename });
+    } else {
+      setLastBackupStatus({ at: Date.now(), ok: false, error: result.error });
+    }
+    res.json(result);
   });
 
   return httpServer;

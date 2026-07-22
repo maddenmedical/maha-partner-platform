@@ -24,6 +24,11 @@ sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
 
+// Raw better-sqlite3 connection exported so the backup routine can run
+// `VACUUM INTO` against the SAME open connection/file the app uses, rather than
+// opening a second connection. Day-to-day reads/writes still go through `db`.
+export const sqliteDb = sqlite;
+
 export interface IStorage {
   // users
   getUser(id: number): Promise<User | undefined>;

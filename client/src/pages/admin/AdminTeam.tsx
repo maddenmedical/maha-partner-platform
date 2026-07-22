@@ -9,7 +9,15 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Plus, Loader2, Shield } from "lucide-react";
+import { Users, Plus, Loader2, Shield, Database, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+
+type BackupStatus = {
+  lastBackupAt: number | null;
+  lastBackupOk: boolean | null;
+  lastBackupError: string | null;
+  totalBackups: number;
+};
 
 export default function AdminTeam() {
   const { toast } = useToast();
@@ -17,6 +25,28 @@ export default function AdminTeam() {
   const { data: team, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/team"] });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
+
+  const { data: backupStatus, isLoading: backupLoading } = useQuery<BackupStatus>({
+    queryKey: ["/api/admin/backups/status"],
+  });
+
+  const backupMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/backups/run");
+      return res.json();
+    },
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backups/status"] });
+      if (res?.ok) {
+        toast({ title: "Backup complete", description: `Saved ${res.filename} to Google Drive.` });
+      } else {
+        toast({ title: "Backup failed", description: res?.error || "Unknown error", variant: "destructive" });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: "Backup failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   const mutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/team", form),
@@ -59,6 +89,69 @@ export default function AdminTeam() {
           ))}
         </div>
       )}
+
+      <Card data-testid="card-data-backups">
+        <CardContent className="p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <Database className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Data backups</p>
+                <p className="text-xs text-muted-foreground">Database is copied to Google Drive automatically every 4 hours.</p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => backupMutation.mutate()}
+              disabled={backupMutation.isPending}
+              data-testid="button-backup-now"
+              className="shrink-0"
+            >
+              {backupMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Back up now
+            </Button>
+          </div>
+
+          {backupLoading ? (
+            <Skeleton className="h-10 rounded-md skeleton-shimmer" />
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+              <div className="flex items-center gap-1.5" data-testid="text-backup-last">
+                {backupStatus?.lastBackupAt == null ? (
+                  <span className="text-muted-foreground">No backup recorded yet this session.</span>
+                ) : backupStatus.lastBackupOk ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-500 shrink-0" />
+                    <span className="text-muted-foreground">
+                      Last backup{" "}
+                      <span className="font-medium text-foreground">
+                        {formatDistanceToNow(backupStatus.lastBackupAt, { addSuffix: true })}
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                    <span className="text-destructive break-words">
+                      Last backup failed{backupStatus.lastBackupError ? `: ${backupStatus.lastBackupError}` : ""}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="text-muted-foreground" data-testid="text-backup-count">
+                <span className="font-medium text-foreground">{backupStatus?.totalBackups ?? 0}</span> backup{(backupStatus?.totalBackups ?? 0) === 1 ? "" : "s"} stored in Drive
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent data-testid="dialog-add-admin">

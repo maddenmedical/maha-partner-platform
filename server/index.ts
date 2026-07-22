@@ -3,8 +3,9 @@ import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
-import { storage } from "./storage";
+import { storage, sqliteDb } from "./storage";
 import { startCaseDiscussionScheduler } from "./caseDiscussionScheduler";
+import { startBackupScheduler } from "./backupScheduler";
 import { createServer } from "node:http";
 
 const app = express();
@@ -72,6 +73,15 @@ app.use((req, res, next) => {
     startCaseDiscussionScheduler(storage);
   } catch (err) {
     console.error("[case-discussion-scheduler] failed to start:", err);
+  }
+
+  // Start the in-process Google Drive database-backup scheduler (every 4 hours,
+  // plus one immediate backup on boot). Wrapped so a failure never prevents the
+  // server from booting.
+  try {
+    startBackupScheduler(sqliteDb);
+  } catch (err) {
+    console.error("[backup] failed to start scheduler:", err);
   }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
