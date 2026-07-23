@@ -11,8 +11,6 @@ import {
   ClipboardList, ShoppingCart, MessageSquare, ArrowRight,
   CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2,
 } from "lucide-react";
-// Client-provided brand photography: clinician handing a patient a MAHA supplement.
-import heroPhoto from "@/assets/brand/handshake-supplement.jpg";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
@@ -197,18 +195,6 @@ export default function PartnerHome() {
 
   return (
     <div className="max-w-2xl mx-auto p-4 flex flex-col gap-6">
-      <div className="relative rounded-xl overflow-hidden h-44" data-testid="banner-partner-home-photo">
-        <img
-          src={heroPhoto}
-          alt="MAHA clinician handing a partner clinic patient a MAHA supplement"
-          className="absolute inset-0 w-full h-full object-cover object-[center_28%]"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-[hsl(240_20%_12%/0.82)] via-[hsl(240_20%_14%/0.25)] to-transparent" />
-        <div className="relative z-10 h-full flex flex-col justify-end p-4">
-          <p className="font-serif text-lg text-[#f5efe4] leading-snug">Trusted formulations, delivered with care</p>
-        </div>
-      </div>
-
       <div>
         <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {user?.name?.split(" ")[0]}</h1>
         <p className="text-sm text-muted-foreground mt-1">Here's what's happening with your clinic today.</p>
