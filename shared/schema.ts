@@ -31,6 +31,16 @@ export const users = sqliteTable("users", {
   // Eligibility gate: applicants must self-attest to being a medical
   // specialist and describe their qualification/specialty here.
   additionalInfo: text("additional_info"),
+  // Set for accounts bulk-migrated from the legacy partner.maha.clinic
+  // WordPress site. wpUserId links back to the WP user id (for re-running the
+  // import idempotently and for mapping legacy orders/course grants).
+  // migratedPasswordPlain holds the freshly generated password only until an
+  // admin marks credentials as issued (see credentialsIssuedAt), at which
+  // point it is cleared — it is never emailed automatically.
+  wpUserId: integer("wp_user_id").unique(),
+  migratedFromWp: integer("migrated_from_wp", { mode: "boolean" }).notNull().default(false),
+  migratedPasswordPlain: text("migrated_password_plain"),
+  credentialsIssuedAt: integer("credentials_issued_at"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -145,6 +155,27 @@ export const orderItems = sqliteTable("order_items", {
 export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true });
 export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 export type OrderItem = typeof orderItems.$inferSelect;
+
+// ---------- LEGACY ORDERS (migrated from partner.maha.clinic WooCommerce) ----------
+// Read-only reference records for purchases made on the old WordPress/WooCommerce
+// site before an account was migrated into this app. Not part of the live
+// order/inventory flow — purely historical context shown on the user's profile
+// and to admins. itemsJson is a JSON-encoded array of { name, quantity, total, sku }.
+export const legacyOrders = sqliteTable("legacy_orders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  wpOrderId: integer("wp_order_id").notNull().unique(),
+  orderNumber: text("order_number").notNull(),
+  status: text("status").notNull(),
+  currency: text("currency").notNull().default("eur"),
+  totalCents: integer("total_cents").notNull(),
+  itemsJson: text("items_json").notNull(),
+  wpCreatedAt: integer("wp_created_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export const insertLegacyOrderSchema = createInsertSchema(legacyOrders).omit({ id: true, createdAt: true });
+export type InsertLegacyOrder = z.infer<typeof insertLegacyOrderSchema>;
+export type LegacyOrder = typeof legacyOrders.$inferSelect;
 
 export const cartItemSchema = z.object({
   productId: z.number(),

@@ -2,7 +2,7 @@ import {
   users, sessions, products, priceTiers, orders, orderItems, referrals,
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
   classSessions, homeworkSubmissions, chatThreads, chatMessages, uploadedFiles,
-  pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps,
+  pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -13,7 +13,7 @@ import type {
   InsertClassSession, HomeworkSubmission, InsertHomeworkSubmission, ChatThread,
   InsertChatThread, ChatMessage, InsertChatMessage, UploadedFile, InsertUploadedFile,
   PushSubscriptionRow, InsertPushSubscription, Announcement, InsertAnnouncement,
-  CaseDiscussion, InsertCaseDiscussion,
+  CaseDiscussion, InsertCaseDiscussion, LegacyOrder, InsertLegacyOrder,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -39,11 +39,20 @@ export interface IStorage {
   // users
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByWpUserId(wpUserId: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserStatus(id: number, status: string): Promise<User | undefined>;
   dismissInstallBanner(id: number): Promise<User | undefined>;
   listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
   listAdmins(): Promise<User[]>;
+  // migration (bulk-imported legacy partner.maha.clinic accounts)
+  listMigratedUsersAwaitingCredentials(): Promise<User[]>;
+  markCredentialsIssued(id: number): Promise<User | undefined>;
+
+  // legacy orders (read-only reference, migrated from WooCommerce)
+  createLegacyOrder(o: InsertLegacyOrder & { createdAt: number }): Promise<LegacyOrder>;
+  listLegacyOrdersForUser(userId: number): Promise<LegacyOrder[]>;
+  getLegacyOrderByWpOrderId(wpOrderId: number): Promise<LegacyOrder | undefined>;
 
   // sessions
   createSession(session: Session): Promise<Session>;
@@ -210,6 +219,30 @@ export class DatabaseStorage implements IStorage {
   }
   async listAdmins() {
     return db.select().from(users).where(eq(users.role, "admin")).all();
+  }
+  async getUserByWpUserId(wpUserId: number) {
+    return db.select().from(users).where(eq(users.wpUserId, wpUserId)).get();
+  }
+  async listMigratedUsersAwaitingCredentials() {
+    return db.select().from(users)
+      .where(and(eq(users.migratedFromWp, true), isNull(users.credentialsIssuedAt)))
+      .all();
+  }
+  async markCredentialsIssued(id: number) {
+    return db.update(users)
+      .set({ credentialsIssuedAt: Date.now(), migratedPasswordPlain: null })
+      .where(eq(users.id, id))
+      .returning()
+      .get();
+  }
+  async createLegacyOrder(o: InsertLegacyOrder & { createdAt: number }) {
+    return db.insert(legacyOrders).values(o).returning().get();
+  }
+  async listLegacyOrdersForUser(userId: number) {
+    return db.select().from(legacyOrders).where(eq(legacyOrders.userId, userId)).all();
+  }
+  async getLegacyOrderByWpOrderId(wpOrderId: number) {
+    return db.select().from(legacyOrders).where(eq(legacyOrders.wpOrderId, wpOrderId)).get();
   }
 
   async createSession(session: Session) {

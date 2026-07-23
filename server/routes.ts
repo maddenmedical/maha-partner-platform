@@ -23,6 +23,13 @@ import { getVapidPublicKey, sendToSubscriptions } from "./push";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
+import { runLegacyPartnerImport } from "./migrateLegacyPartners";
+
+// Single shared redeem code that unlocks the paid "Maha Symposium lectures"
+// course (our course id 16) for free — e.g. for people who attended the live
+// event. No expiry, no per-user limit, by explicit request.
+const SYMPOSIUM_REDEEM_CODE = "castlemaha2026";
+const SYMPOSIUM_COURSE_NAME = "Maha Symposium lectures";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -522,6 +529,26 @@ export async function registerRoutes(
     res.json({ ok: true, courseId: purchase.courseId });
   });
 
+  // Redeem the shared Symposium access code (e.g. handed out to attendees of
+  // the live event) for free access to the paid "Maha Symposium lectures"
+  // course. Single shared code, no expiry, no per-user redemption limit.
+  app.post("/api/courses/redeem-code", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+    if (code !== SYMPOSIUM_REDEEM_CODE) {
+      return res.status(400).json({ message: "Invalid code" });
+    }
+    const course = await storage.getCourseByName(SYMPOSIUM_COURSE_NAME);
+    if (!course) return res.status(500).json({ message: "Symposium course not found" });
+
+    const existingGrant = await storage.getGrant(course.id, req.user!.id);
+    const existingPurchase = await storage.getCompletedPurchase(req.user!.id, course.id);
+    if (!existingGrant && !existingPurchase) {
+      await storage.createGrant({ courseId: course.id, partnerId: req.user!.id });
+      syncLearnDashEnrollment({ email: req.user!.email, name: req.user!.name }, course.learndashCourseId);
+    }
+    res.json({ ok: true, courseId: course.id, hasAccess: true });
+  });
+
   // ---------- ADMIN: COURSES ----------
   // Live list of LearnDash courses on partner.maha.clinic, for the "link to
   // LearnDash course" dropdown when creating/editing a course here.
@@ -832,6 +859,48 @@ export async function registerRoutes(
   });
   app.get("/api/admin/students", requireAuth, requireRole("admin"), async (_req, res) => {
     res.json(await storage.listUsersByRoleStatus("student", "approved"));
+  });
+
+  // ---------- ADMIN: LEGACY WORDPRESS PARTNER MIGRATION ----------
+  // One-time (safely re-runnable) bulk import of existing partner.maha.clinic
+  // accounts, purchase history, and LearnDash course access. Runs entirely
+  // server-side against the live database — no emails or push notifications
+  // are ever sent as part of this. Generated passwords are retrievable below
+  // until an admin marks them as issued.
+  app.post("/api/admin/migrate-legacy-partners", requireAuth, requireRole("admin"), async (_req, res) => {
+    try {
+      const summary = await runLegacyPartnerImport();
+      res.json({ ok: true, summary });
+    } catch (err) {
+      console.error("Legacy partner import failed:", err);
+      res.status(500).json({ message: err instanceof Error ? err.message : "Import failed" });
+    }
+  });
+
+  // Migrated accounts whose generated password hasn't been retrieved/marked
+  // issued yet. Returns the plaintext password so the admin can hand it out
+  // manually — never emailed or pushed automatically.
+  app.get("/api/admin/migrated-users", requireAuth, requireRole("admin"), async (_req, res) => {
+    const rows = await storage.listMigratedUsersAwaitingCredentials();
+    res.json(rows.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      username: u.username,
+      password: u.migratedPasswordPlain,
+      wpUserId: u.wpUserId,
+      createdAt: u.createdAt,
+    })));
+  });
+
+  app.post("/api/admin/migrated-users/:id/mark-issued", requireAuth, requireRole("admin"), async (req, res) => {
+    const updated = await storage.markCredentialsIssued(Number(req.params.id));
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json({ ok: true });
+  });
+
+  app.get("/api/admin/legacy-orders/:userId", requireAuth, requireRole("admin"), async (req, res) => {
+    res.json(await storage.listLegacyOrdersForUser(Number(req.params.userId)));
   });
 
   // ---------- ADMIN: TEAM ----------

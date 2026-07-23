@@ -1,14 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthToken } from "@/lib/queryClient";
 import type { Course, Video } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { PlayCircle, Lock, GraduationCap, Loader2, CheckCircle2 } from "lucide-react";
+import { PlayCircle, Lock, GraduationCap, Loader2, CheckCircle2, Ticket } from "lucide-react";
 
 type CourseWithLessons = Course & { lessons: Video[]; lessonCount: number; hasAccess: boolean };
 
@@ -37,6 +38,7 @@ export default function Videos() {
   const queryClient = useQueryClient();
   const { data: courses, isLoading } = useQuery<CourseWithLessons[]>({ queryKey: ["/api/courses"] });
   const confirmedRef = useRef(false);
+  const [redeemCode, setRedeemCode] = useState<Record<number, string>>({});
 
   // After Stripe redirects back with ?session_id=..., confirm the purchase.
   useEffect(() => {
@@ -78,6 +80,34 @@ export default function Videos() {
     },
     onError: () => {
       toast({ title: "Could not enroll", description: "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const redeemMutation = useMutation({
+    mutationFn: async ({ courseId, code }: { courseId: number; code: string }) => {
+      const res = await fetch("/api/courses/redeem-code", {
+        method: "POST",
+        headers: (() => {
+          const h: Record<string, string> = { "Content-Type": "application/json" };
+          const token = getAuthToken();
+          if (token) h["Authorization"] = `Bearer ${token}`;
+          return h;
+        })(),
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Invalid code");
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/courses"] });
+      setRedeemCode((prev) => ({ ...prev, [variables.courseId]: "" }));
+      toast({ title: "Access unlocked", description: "Enjoy the lectures!" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not redeem code", description: err.message, variant: "destructive" });
     },
   });
 
@@ -198,14 +228,35 @@ export default function Videos() {
                       <Lock className="h-3.5 w-3.5" /> {course.lessonCount} lessons locked
                     </div>
                     {isPaid ? (
-                      <Button
-                        onClick={() => buyMutation.mutate(course.id)}
-                        disabled={buyMutation.isPending}
-                        data-testid={`button-buy-${course.id}`}
-                      >
-                        {buyMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                        Buy access — {priceLabel} — unlock all {course.lessonCount} lectures
-                      </Button>
+                      <>
+                        <Button
+                          onClick={() => buyMutation.mutate(course.id)}
+                          disabled={buyMutation.isPending}
+                          data-testid={`button-buy-${course.id}`}
+                        >
+                          {buyMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Buy access — {priceLabel} — unlock all {course.lessonCount} lectures
+                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Ticket className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <Input
+                            placeholder="Have a code? Enter it here"
+                            value={redeemCode[course.id] || ""}
+                            onChange={(e) => setRedeemCode((prev) => ({ ...prev, [course.id]: e.target.value }))}
+                            className="h-8 text-sm"
+                            data-testid={`input-redeem-code-${course.id}`}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!redeemCode[course.id] || redeemMutation.isPending}
+                            onClick={() => redeemMutation.mutate({ courseId: course.id, code: redeemCode[course.id] })}
+                            data-testid={`button-redeem-${course.id}`}
+                          >
+                            {redeemMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Redeem"}
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <Button
                         variant="secondary"

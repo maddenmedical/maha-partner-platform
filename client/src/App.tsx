@@ -36,6 +36,7 @@ import AdminChatInbox from "@/pages/admin/AdminChatInbox";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminAnnouncements from "@/pages/admin/AdminAnnouncements";
 import AdminCaseDiscussions from "@/pages/admin/AdminCaseDiscussions";
+import AdminMigration from "@/pages/admin/AdminMigration";
 
 import { PushPrompt } from "@/components/PushPrompt";
 
@@ -65,6 +66,7 @@ const ADMIN_TITLES: Record<string, string> = {
   "/admin/team": "Team",
   "/admin/announcements": "Announcements",
   "/admin/case-discussions": "Case Discussions",
+  "/admin/migration": "Partner Migration",
 };
 
 function PartnerApp() {
@@ -134,6 +136,9 @@ function AdminApp() {
       </Route>
       <Route path="/admin/case-discussions">
         <AdminLayout title={ADMIN_TITLES["/admin/case-discussions"]}><AdminCaseDiscussions /></AdminLayout>
+      </Route>
+      <Route path="/admin/migration">
+        <AdminLayout title={ADMIN_TITLES["/admin/migration"]}><AdminMigration /></AdminLayout>
       </Route>
       <Route path="/">
         <Redirect to="/admin/approvals" />
