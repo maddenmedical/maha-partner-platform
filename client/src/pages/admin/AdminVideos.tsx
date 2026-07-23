@@ -16,6 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, Plus, Trash2, Pencil, Loader2, Lock, Users, PlayCircle, AlertCircle } from "lucide-react";
 
 type CourseWithLessons = Course & { lessons: Video[]; lessonCount: number; hasAccess: boolean };
+type LearnDashCourse = { id: number; title: string; link: string };
+type LearnDashCoursesResponse = { configured: boolean; courses: LearnDashCourse[]; error?: string };
 type Grant = { id: number; partnerId: number; partnerName?: string; partnerEmail?: string };
 type Purchase = {
   id: number;
@@ -45,11 +47,12 @@ export default function AdminVideos() {
   const { data: courses, isLoading } = useQuery<CourseWithLessons[]>({ queryKey: ["/api/courses"] });
   const { data: partners } = useQuery<User[]>({ queryKey: ["/api/admin/partners"] });
   const { data: purchases } = useQuery<Purchase[]>({ queryKey: ["/api/admin/course-purchases"] });
+  const { data: learndash } = useQuery<LearnDashCoursesResponse>({ queryKey: ["/api/admin/learndash/courses"] });
 
   // Course create/edit dialog
   const [courseDialogOpen, setCourseDialogOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
-  const [courseForm, setCourseForm] = useState({ name: "", description: "", accessType: "open", priceEur: "" });
+  const [courseForm, setCourseForm] = useState({ name: "", description: "", accessType: "open", priceEur: "", learndashCourseId: "" });
 
   // Lesson create/edit dialog
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
@@ -71,7 +74,7 @@ export default function AdminVideos() {
 
   function openCreateCourse() {
     setEditingCourse(null);
-    setCourseForm({ name: "", description: "", accessType: "open", priceEur: "" });
+    setCourseForm({ name: "", description: "", accessType: "open", priceEur: "", learndashCourseId: "" });
     setCourseDialogOpen(true);
   }
   function openEditCourse(c: Course) {
@@ -81,6 +84,7 @@ export default function AdminVideos() {
       description: c.description || "",
       accessType: c.accessType,
       priceEur: c.priceCents ? (c.priceCents / 100).toFixed(2) : "",
+      learndashCourseId: c.learndashCourseId ? String(c.learndashCourseId) : "",
     });
     setCourseDialogOpen(true);
   }
@@ -105,6 +109,7 @@ export default function AdminVideos() {
         description: courseForm.description,
         accessType: courseForm.accessType,
         priceCents,
+        learndashCourseId: courseForm.learndashCourseId ? Number(courseForm.learndashCourseId) : null,
       };
       if (editingCourse) return apiRequest("PATCH", `/api/admin/courses/${editingCourse.id}`, payload);
       return apiRequest("POST", "/api/admin/courses", payload);
@@ -204,6 +209,11 @@ export default function AdminVideos() {
                       {c.accessType === "paid" && c.priceCents != null && (
                         <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate">
                           {formatPrice(c.priceCents, c.currency)}
+                        </Badge>
+                      )}
+                      {c.learndashCourseId != null && (
+                        <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate" data-testid={`badge-learndash-${c.id}`}>
+                          LearnDash linked
                         </Badge>
                       )}
                       <span className="text-xs text-muted-foreground">{c.lessonCount} lessons</span>
@@ -341,6 +351,30 @@ export default function AdminVideos() {
                 <Input id="c-price" type="number" step="0.01" value={courseForm.priceEur} onChange={(e) => setCourseForm({ ...courseForm, priceEur: e.target.value })} data-testid="input-course-price" />
               </div>
             )}
+            <div className="flex flex-col gap-1.5">
+              <Label>LearnDash course (optional)</Label>
+              <Select
+                value={courseForm.learndashCourseId || "none"}
+                onValueChange={(v) => setCourseForm({ ...courseForm, learndashCourseId: v === "none" ? "" : v })}
+              >
+                <SelectTrigger data-testid="select-course-learndash">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None — not linked</SelectItem>
+                  {learndash?.courses.map((lc) => (
+                    <SelectItem key={lc.id} value={String(lc.id)}>{lc.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {learndash?.configured === false
+                  ? "LearnDash is not connected."
+                  : learndash?.error
+                    ? "Could not load LearnDash courses right now."
+                    : "When linked, purchasing, enrolling, or granting access to this course also enrolls the partner in the matching LearnDash course on partner.maha.clinic."}
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button onClick={() => saveCourseMutation.mutate()} disabled={saveCourseMutation.isPending} data-testid="button-save-course">

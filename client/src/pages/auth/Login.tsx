@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { InstallAppButton } from "@/components/InstallAppButton";
 import { AlertCircle, Loader2 } from "lucide-react";
 // Client-provided brand photography: a MAHA clinician greeting a partner-clinic
 // patient. Chosen over the wide stats/lecture image because its two upright
@@ -59,7 +60,8 @@ export default function Login() {
 
   return (
     <div className="min-h-dvh flex bg-background relative">
-      <div className="absolute top-4 right-4 z-10">
+      <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <InstallAppButton variant="full" />
         <button
           onClick={toggle}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}

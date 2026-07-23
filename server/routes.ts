@@ -22,6 +22,7 @@ import type { Course, Video } from "@shared/schema";
 import { getVapidPublicKey, sendToSubscriptions } from "./push";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
+import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -429,6 +430,7 @@ export async function registerRoutes(
         status: "completed",
         createdAt: Date.now(),
       });
+      syncLearnDashEnrollment({ email: req.user!.email, name: req.user!.name }, course.learndashCourseId);
     }
     res.json({ ok: true, hasAccess: true });
   });
@@ -503,10 +505,27 @@ export async function registerRoutes(
       return res.status(402).json({ message: "Payment not completed" });
     }
     await storage.updateCoursePurchaseStatus(purchase.id, "completed");
+    const purchasedCourse = await storage.getCourse(purchase.courseId);
+    if (purchasedCourse) {
+      syncLearnDashEnrollment({ email: req.user!.email, name: req.user!.name }, purchasedCourse.learndashCourseId);
+    }
     res.json({ ok: true, courseId: purchase.courseId });
   });
 
   // ---------- ADMIN: COURSES ----------
+  // Live list of LearnDash courses on partner.maha.clinic, for the "link to
+  // LearnDash course" dropdown when creating/editing a course here.
+  app.get("/api/admin/learndash/courses", requireAuth, requireRole("admin"), async (_req, res) => {
+    if (!isLearnDashConfigured()) return res.json({ configured: false, courses: [] });
+    try {
+      const courses = await fetchLearnDashCourses();
+      res.json({ configured: true, courses });
+    } catch (err) {
+      console.error("[learndash] course list failed:", err);
+      res.status(502).json({ configured: true, courses: [], error: "Could not reach LearnDash" });
+    }
+  });
+
   app.post("/api/admin/courses", requireAuth, requireRole("admin"), async (req, res) => {
     const parsed = courseInputSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
@@ -517,6 +536,7 @@ export async function registerRoutes(
       priceCents: d.accessType === "paid" ? d.priceCents ?? 0 : null,
       currency: d.currency || "eur",
       accessType: d.accessType,
+      learndashCourseId: d.learndashCourseId ?? null,
     });
     res.json(course);
   });
@@ -529,6 +549,7 @@ export async function registerRoutes(
     if (d.name !== undefined) patch.name = d.name;
     if (d.description !== undefined) patch.description = d.description || null;
     if (d.currency !== undefined) patch.currency = d.currency;
+    if (d.learndashCourseId !== undefined) patch.learndashCourseId = d.learndashCourseId;
     if (d.accessType !== undefined) {
       patch.accessType = d.accessType;
       patch.priceCents = d.accessType === "paid" ? d.priceCents ?? 0 : null;
@@ -614,6 +635,11 @@ export async function registerRoutes(
     const existing = await storage.getGrant(courseId, partnerId);
     if (existing) return res.json(existing);
     const grant = await storage.createGrant({ courseId, partnerId });
+    const grantedCourse = await storage.getCourse(courseId);
+    const grantedPartner = await storage.getUser(partnerId);
+    if (grantedCourse && grantedPartner) {
+      syncLearnDashEnrollment({ email: grantedPartner.email, name: grantedPartner.name }, grantedCourse.learndashCourseId);
+    }
     res.json(grant);
   });
 

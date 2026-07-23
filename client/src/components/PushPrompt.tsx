@@ -2,15 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { Bell, X, Share, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { isPushSupported, subscribeToPush, iosNeedsInstall } from "@/lib/push";
+import { isPushSupported, subscribeToPush } from "@/lib/push";
+import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
-
-// Minimal shape for the non-standard beforeinstallprompt event.
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-}
 
 // One-time dismissal is also tracked in memory (module scope) as a fallback so
 // the banner never reappears mid-session even before the backend call resolves.
@@ -19,28 +14,19 @@ let dismissedThisSession = false;
 export function PushPrompt() {
   const { toast } = useToast();
   const { user, markInstallBannerDismissed } = useAuth();
+  const { canInstallNative, isIosInstallable, promptInstall } = useInstallPrompt();
   const [visible, setVisible] = useState(false);
   const [mode, setMode] = useState<"install" | "ios" | "push">("push");
   const [busy, setBusy] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-
-  useEffect(() => {
-    const handleBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
-  }, []);
 
   useEffect(() => {
     if (dismissedThisSession || user?.installBannerDismissedAt) return;
-    if (deferredPrompt) {
+    if (canInstallNative) {
       setMode("install");
       setVisible(true);
       return;
     }
-    if (iosNeedsInstall()) {
+    if (isIosInstallable) {
       setMode("ios");
       setVisible(true);
       return;
@@ -49,7 +35,7 @@ export function PushPrompt() {
     if (Notification.permission === "granted" || Notification.permission === "denied") return;
     setMode("push");
     setVisible(true);
-  }, [deferredPrompt, user?.installBannerDismissedAt]);
+  }, [canInstallNative, isIosInstallable, user?.installBannerDismissedAt]);
 
   const dismiss = useCallback(() => {
     dismissedThisSession = true;
@@ -61,11 +47,9 @@ export function PushPrompt() {
   }, [markInstallBannerDismissed]);
 
   async function handleInstall() {
-    if (!deferredPrompt) return;
     setBusy(true);
     try {
-      await deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
+      await promptInstall();
     } finally {
       setBusy(false);
       dismiss();

@@ -266,6 +266,10 @@ export const courses = sqliteTable("courses", {
   priceCents: integer("price_cents"), // null/0 = free
   currency: text("currency").notNull().default("eur"),
   accessType: text("access_type").notNull().default("open"), // 'open' | 'enroll' | 'paid'
+  // Optional link to a LearnDash course (by WP post ID) on partner.maha.clinic.
+  // When set, any purchase/enroll/grant for this course also enrolls the
+  // partner's WordPress account in the matching LearnDash course.
+  learndashCourseId: integer("learndash_course_id"),
 });
 export const insertCourseSchema = createInsertSchema(courses).omit({ id: true });
 export type InsertCourse = z.infer<typeof insertCourseSchema>;
@@ -305,6 +309,7 @@ export const courseInputSchema = z.object({
   priceCents: z.number().int().min(0).nullable().optional(),
   currency: z.string().min(1).optional(),
   accessType: z.enum(["open", "enroll", "paid"]),
+  learndashCourseId: z.number().int().positive().nullable().optional(),
 });
 export type CourseInput = z.infer<typeof courseInputSchema>;
 
