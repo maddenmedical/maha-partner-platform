@@ -1,38 +1,78 @@
-import { useEffect, useState } from "react";
-import { Bell, X, Share } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
+import { Bell, X, Share, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { isPushSupported, subscribeToPush, iosNeedsInstall } from "@/lib/push";
+import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/context/AuthContext";
 
-// One-time dismissal is tracked in memory (module scope) because the sandboxed
-// preview iframe blocks web storage. This keeps the banner from reappearing on
-// every route change within a session without depending on localStorage.
+// Minimal shape for the non-standard beforeinstallprompt event.
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+// One-time dismissal is also tracked in memory (module scope) as a fallback so
+// the banner never reappears mid-session even before the backend call resolves.
 let dismissedThisSession = false;
 
 export function PushPrompt() {
   const { toast } = useToast();
+  const { user, markInstallBannerDismissed } = useAuth();
   const [visible, setVisible] = useState(false);
-  const [iosMode, setIosMode] = useState(false);
+  const [mode, setMode] = useState<"install" | "ios" | "push">("push");
   const [busy, setBusy] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
-    if (dismissedThisSession) return;
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+  }, []);
+
+  useEffect(() => {
+    if (dismissedThisSession || user?.installBannerDismissedAt) return;
+    if (deferredPrompt) {
+      setMode("install");
+      setVisible(true);
+      return;
+    }
     if (iosNeedsInstall()) {
-      setIosMode(true);
+      setMode("ios");
       setVisible(true);
       return;
     }
     if (!isPushSupported()) return;
     if (Notification.permission === "granted" || Notification.permission === "denied") return;
+    setMode("push");
     setVisible(true);
-  }, []);
+  }, [deferredPrompt, user?.installBannerDismissedAt]);
 
-  function dismiss() {
+  const dismiss = useCallback(() => {
     dismissedThisSession = true;
     setVisible(false);
+    markInstallBannerDismissed();
+    void apiRequest("POST", "/api/auth/dismiss-install-banner").catch(() => {
+      // Non-critical — banner still stays hidden for this session.
+    });
+  }, [markInstallBannerDismissed]);
+
+  async function handleInstall() {
+    if (!deferredPrompt) return;
+    setBusy(true);
+    try {
+      await deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+    } finally {
+      setBusy(false);
+      dismiss();
+    }
   }
 
-  async function handleEnable() {
+  async function handleEnablePush() {
     setBusy(true);
     try {
       await subscribeToPush();
@@ -53,24 +93,52 @@ export function PushPrompt() {
         className="pointer-events-auto w-full max-w-md rounded-lg border border-card-border bg-card shadow-lg p-4 flex items-start gap-3"
         data-testid="banner-push-prompt"
       >
-        <Bell className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        {mode === "install" ? (
+          <Download className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        ) : (
+          <Bell className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        )}
         <div className="flex flex-col gap-2 min-w-0 flex-1">
           <div>
-            <p className="text-sm font-medium">Get notified about new discounts and lectures</p>
-            {iosMode ? (
-              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">
-                On iPhone/iPad, tap <Share className="h-3 w-3 inline" /> Share, then
-                “Add to Home Screen” and open MAHA from there to enable notifications.
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground mt-1">
-                Turn on push notifications to stay up to date.
-              </p>
+            {mode === "install" && (
+              <>
+                <p className="text-sm font-medium">Install the MAHA app</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Get quick access from your home screen and stay up to date with notifications.
+                </p>
+              </>
+            )}
+            {mode === "ios" && (
+              <>
+                <p className="text-sm font-medium">Add MAHA to your Home Screen</p>
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">
+                  Tap <Share className="h-3 w-3 inline" /> Share, then “Add to Home Screen” for
+                  quick access and to enable notifications.
+                </p>
+              </>
+            )}
+            {mode === "push" && (
+              <>
+                <p className="text-sm font-medium">Get notified about new discounts and lectures</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Turn on push notifications to stay up to date.
+                </p>
+              </>
             )}
           </div>
-          {!iosMode && (
+          {mode === "install" && (
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={handleEnable} disabled={busy} data-testid="button-enable-push">
+              <Button size="sm" onClick={handleInstall} disabled={busy} data-testid="button-install-app">
+                {busy ? "Installing…" : "Install"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={dismiss} data-testid="button-dismiss-install">
+                Not now
+              </Button>
+            </div>
+          )}
+          {mode === "push" && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleEnablePush} disabled={busy} data-testid="button-enable-push">
                 {busy ? "Enabling…" : "Enable"}
               </Button>
               <Button size="sm" variant="ghost" onClick={dismiss} data-testid="button-dismiss-push">

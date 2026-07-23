@@ -8,6 +8,7 @@ export type AuthUser = {
   name: string;
   email: string;
   status: string;
+  installBannerDismissedAt: number | null;
 };
 
 type PendingState = { pending: true; status: "pending" | "rejected" } | null;
@@ -19,6 +20,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   clearPending: () => void;
+  markInstallBannerDismissed: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -63,8 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearPending = useCallback(() => setPendingState(null), []);
 
+  const markInstallBannerDismissed = useCallback(() => {
+    setUser((prev) => (prev ? { ...prev, installBannerDismissedAt: Date.now() } : prev));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, pendingState, loading, login, logout, clearPending }}>
+    <AuthContext.Provider
+      value={{ user, pendingState, loading, login, logout, clearPending, markInstallBannerDismissed }}
+    >
       {children}
     </AuthContext.Provider>
   );

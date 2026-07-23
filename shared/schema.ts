@@ -16,6 +16,7 @@ export const users = sqliteTable("users", {
   profession: text("profession"),
   homepageUrl: text("homepage_url"),
   degreeFileUrl: text("degree_file_url"),
+  installBannerDismissedAt: integer("install_banner_dismissed_at"),
   createdAt: integer("created_at").notNull(),
 });
 

@@ -34,7 +34,7 @@ const upload = multer({
 });
 
 interface AuthedRequest extends Request {
-  user?: { id: number; role: string; name: string; email: string; status: string };
+  user?: { id: number; role: string; name: string; email: string; status: string; installBannerDismissedAt: number | null };
 }
 
 async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -51,7 +51,7 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
   if (!user || user.status !== "approved") {
     return res.status(401).json({ message: "Account not approved" });
   }
-  req.user = { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status };
+  req.user = { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt };
   next();
 }
 
@@ -65,7 +65,7 @@ async function getOptionalUser(req: Request): Promise<AuthedRequest["user"] | un
   if (!session || session.expiresAt < Date.now()) return undefined;
   const user = await storage.getUser(session.userId);
   if (!user || user.status !== "approved") return undefined;
-  return { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status };
+  return { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt };
 }
 
 function requireRole(...roles: string[]) {
@@ -208,7 +208,7 @@ export async function registerRoutes(
     await storage.createSession({ token, userId: user.id, expiresAt: Date.now() + SEVEN_DAYS });
     res.json({
       token,
-      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status },
+      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
     });
   });
 
@@ -220,6 +220,12 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", requireAuth, async (req: AuthedRequest, res) => {
     res.json(req.user);
+  });
+
+  app.post("/api/auth/dismiss-install-banner", requireAuth, async (req: AuthedRequest, res) => {
+    const updated = await storage.dismissInstallBanner(req.user!.id);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ id: updated.id, role: updated.role, name: updated.name, email: updated.email, status: updated.status, installBannerDismissedAt: updated.installBannerDismissedAt });
   });
 
   // ---------- PARTNER: REFERRALS ----------
