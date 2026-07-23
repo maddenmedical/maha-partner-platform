@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest, getAuthToken } from "@/lib/queryClient";
+import { firstNameOf } from "@/lib/utils";
 import type { CaseDiscussion } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -196,7 +197,7 @@ export default function PartnerHome() {
   return (
     <div className="max-w-2xl mx-auto p-4 flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {user?.name?.split(" ")[0]}</h1>
+        <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {firstNameOf(user?.name)}</h1>
         <p className="text-sm text-muted-foreground mt-1">Here's what's happening with your clinic today.</p>
       </div>
 
