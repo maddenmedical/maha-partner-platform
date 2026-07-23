@@ -25,6 +25,7 @@ import MyClasses from "@/pages/student/MyClasses";
 import Homework from "@/pages/student/Homework";
 
 import Chat from "@/pages/Chat";
+import Account from "@/pages/Account";
 
 import PendingApprovals from "@/pages/admin/PendingApprovals";
 import AdminReferrals from "@/pages/admin/AdminReferrals";
@@ -81,6 +82,7 @@ function PartnerApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
+        <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
     </MobileAppLayout>
@@ -98,6 +100,7 @@ function StudentApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
+        <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
     </MobileAppLayout>
@@ -139,6 +142,9 @@ function AdminApp() {
       </Route>
       <Route path="/admin/migration">
         <AdminLayout title={ADMIN_TITLES["/admin/migration"]}><AdminMigration /></AdminLayout>
+      </Route>
+      <Route path="/admin/account">
+        <AdminLayout title="Account"><Account /></AdminLayout>
       </Route>
       <Route path="/">
         <Redirect to="/admin/approvals" />

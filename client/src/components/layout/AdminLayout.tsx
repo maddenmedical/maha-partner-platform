@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings,
 } from "lucide-react";
 
 const navItems = [
@@ -92,6 +92,11 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
               <span className="text-sm text-muted-foreground hidden sm:inline" data-testid="text-current-user">
                 {user?.name}
               </span>
+              <Button variant="ghost" size="icon" asChild aria-label="Account settings" data-testid="button-account">
+                <Link href="/admin/account">
+                  <Settings className="h-4 w-4" />
+                </Link>
+              </Button>
               <button
                 onClick={toggle}
                 aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}

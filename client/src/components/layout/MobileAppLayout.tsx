@@ -5,7 +5,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
-import { LogOut } from "lucide-react";
+import { LogOut, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 
@@ -35,6 +35,11 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <InstallAppButton />
+          <Button variant="ghost" size="icon" asChild aria-label="Account settings" data-testid="button-account">
+            <Link href="/account">
+              <Settings className="h-4 w-4" />
+            </Link>
+          </Button>
           <button
             onClick={toggle}
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}

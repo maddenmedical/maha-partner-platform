@@ -38,6 +38,34 @@ function sqlTypeFor(columnType: string): string {
   }
 }
 
+// Builds a CREATE TABLE IF NOT EXISTS statement from a Drizzle table's column
+// metadata, so a brand-new table added to shared/schema.ts (like
+// webauthn_credentials) gets created automatically on next boot instead of
+// requiring a manual `drizzle-kit push` against the production data.db, which
+// nothing in the deploy pipeline runs. Intentionally minimal: no foreign keys
+// or indexes, since the app never relies on DB-enforced constraints beyond
+// primary key / unique / not null / default.
+function buildCreateTableSql(tableName: string, columns: Record<string, any>): string {
+  const colDefs: string[] = [];
+  for (const col of Object.values(columns) as any[]) {
+    let def = `"${col.name}" ${sqlTypeFor(col.columnType)}`;
+    if (col.primary) {
+      def += col.autoIncrement ? " PRIMARY KEY AUTOINCREMENT" : " PRIMARY KEY";
+    } else {
+      if (col.notNull) def += " NOT NULL";
+      if (col.isUnique) def += " UNIQUE";
+    }
+    if (col.hasDefault && col.default !== undefined && typeof col.default !== "object") {
+      const d = col.default;
+      if (typeof d === "boolean") def += ` DEFAULT ${d ? 1 : 0}`;
+      else if (typeof d === "number") def += ` DEFAULT ${d}`;
+      else if (typeof d === "string") def += ` DEFAULT '${d.replace(/'/g, "''")}'`;
+    }
+    colDefs.push(def);
+  }
+  return `CREATE TABLE IF NOT EXISTS "${tableName}" (${colDefs.join(", ")})`;
+}
+
 export function autoMigrate(sqlite: Database.Database) {
   const existingTables = new Set(
     (sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
@@ -53,9 +81,19 @@ export function autoMigrate(sqlite: Database.Database) {
     } catch {
       continue; // not a table (schema also exports zod schemas, types, etc.)
     }
-    if (!tableName || !existingTables.has(tableName)) continue;
+    if (!tableName) continue;
 
     const expectedCols = getTableColumns(value as Table);
+
+    if (!existingTables.has(tableName)) {
+      try {
+        sqlite.prepare(buildCreateTableSql(tableName, expectedCols)).run();
+        console.log(`[auto-migrate] created missing table ${tableName}`);
+      } catch (e: any) {
+        console.error(`[auto-migrate] FAILED to create table ${tableName}:`, e?.message || e);
+      }
+      continue; // freshly created with every expected column already
+    }
     const actualCols = new Set(
       (sqlite.prepare(`PRAGMA table_info('${tableName}')`).all() as { name: string }[]).map((c) => c.name)
     );

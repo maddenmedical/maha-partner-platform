@@ -24,6 +24,11 @@ import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
 import { runLegacyPartnerImport } from "./migrateLegacyPartners";
+import {
+  buildRegistrationOptions, verifyRegistration, buildAuthenticationOptions, verifyAuthentication,
+  labelFromUserAgent,
+} from "./webauthn";
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 // Single shared redeem code that unlocks the paid "Maha Symposium lectures"
 // course (our course id 16) for free — e.g. for people who attended the live
@@ -244,6 +249,82 @@ export async function registerRoutes(
     const updated = await storage.dismissInstallBanner(req.user!.id);
     if (!updated) return res.status(404).json({ message: "User not found" });
     res.json({ id: updated.id, role: updated.role, name: updated.name, email: updated.email, status: updated.status, installBannerDismissedAt: updated.installBannerDismissedAt });
+  });
+
+  // ---------- WEBAUTHN (Face ID / Fingerprint login) ----------
+  // Registration (adding a new passkey to an already-logged-in account).
+  app.post("/api/webauthn/register/options", requireAuth, async (req: AuthedRequest, res) => {
+    const existing = await storage.listWebauthnCredentialsForUser(req.user!.id);
+    const options = await buildRegistrationOptions(
+      req,
+      { id: req.user!.id, email: req.user!.email, name: req.user!.name },
+      existing.map((c) => c.credentialId)
+    );
+    res.json(options);
+  });
+
+  app.post("/api/webauthn/register/verify", requireAuth, async (req: AuthedRequest, res) => {
+    const response = req.body?.response as RegistrationResponseJSON | undefined;
+    if (!response) return res.status(400).json({ message: "Missing WebAuthn response" });
+    const result = await verifyRegistration(req, req.user!.id, response);
+    if (!result.verified || !result.credential) {
+      return res.status(400).json({ message: "Could not verify this device. Please try again." });
+    }
+    const { credential, deviceType, backedUp } = result;
+    await storage.createWebauthnCredential({
+      userId: req.user!.id,
+      credentialId: credential.id,
+      publicKey: Buffer.from(credential.publicKey).toString("base64url"),
+      counter: credential.counter,
+      deviceType: deviceType || "singleDevice",
+      backedUp: !!backedUp,
+      transports: credential.transports ? JSON.stringify(credential.transports) : null,
+      label: labelFromUserAgent(req.headers["user-agent"]),
+      createdAt: Date.now(),
+    });
+    res.json({ ok: true });
+  });
+
+  // Login (no auth yet — this is how the user authenticates).
+  app.get("/api/webauthn/login/options", async (req, res) => {
+    const options = await buildAuthenticationOptions(req);
+    res.json(options);
+  });
+
+  app.post("/api/webauthn/login/verify", async (req, res) => {
+    const response = req.body?.response as AuthenticationResponseJSON | undefined;
+    if (!response?.id) return res.status(400).json({ message: "Missing WebAuthn response" });
+
+    const stored = await storage.getWebauthnCredentialByCredentialId(response.id);
+    if (!stored) return res.status(401).json({ message: "This device is not registered. Please use your password or register Face ID / Fingerprint from your account settings first." });
+
+    const result = await verifyAuthentication(req, response, stored);
+    if (!result.verified) return res.status(401).json({ message: "Verification failed. Please try again." });
+
+    await storage.updateWebauthnCredentialCounter(stored.id, result.newCounter ?? stored.counter, Date.now());
+
+    const user = await storage.getUser(stored.userId);
+    if (!user || user.status !== "approved") {
+      return res.status(403).json({ message: "Account not approved" });
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    await storage.createSession({ token, userId: user.id, expiresAt: Date.now() + SEVEN_DAYS });
+    res.json({
+      token,
+      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
+    });
+  });
+
+  // Manage registered devices from account settings.
+  app.get("/api/webauthn/credentials", requireAuth, async (req: AuthedRequest, res) => {
+    const rows = await storage.listWebauthnCredentialsForUser(req.user!.id);
+    res.json(rows.map((r) => ({ id: r.id, label: r.label, deviceType: r.deviceType, createdAt: r.createdAt, lastUsedAt: r.lastUsedAt })));
+  });
+
+  app.delete("/api/webauthn/credentials/:id", requireAuth, async (req: AuthedRequest, res) => {
+    const ok = await storage.deleteWebauthnCredential(Number(req.params.id), req.user!.id);
+    if (!ok) return res.status(404).json({ message: "Not found" });
+    res.json({ ok: true });
   });
 
   // ---------- PARTNER: REFERRALS ----------

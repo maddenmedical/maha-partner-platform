@@ -82,6 +82,36 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// ---------- WEBAUTHN CREDENTIALS (Face ID / Fingerprint login) ----------
+// One row per registered passkey/authenticator (a partner or student may
+// register several devices — e.g. an iPhone and a laptop). credentialId and
+// publicKey are stored as base64url strings (Node's native encoding); counter
+// guards against cloned-authenticator replay. transports is a JSON-encoded
+// array of strings (e.g. ["internal"]) or null when the browser didn't report any.
+export const webauthnCredentials = sqliteTable("webauthn_credentials", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  credentialId: text("credential_id").notNull().unique(),
+  publicKey: text("public_key").notNull(),
+  counter: integer("counter").notNull().default(0),
+  deviceType: text("device_type").notNull(), // 'singleDevice' | 'multiDevice'
+  backedUp: integer("backed_up", { mode: "boolean" }).notNull().default(false),
+  transports: text("transports"),
+  // User-friendly label shown in account settings, e.g. "iPhone" — derived from
+  // the browser's user agent at registration time, since WebAuthn itself
+  // doesn't report a device name.
+  label: text("label").notNull().default("Device"),
+  createdAt: integer("created_at").notNull(),
+  lastUsedAt: integer("last_used_at"),
+});
+export const insertWebauthnCredentialSchema = createInsertSchema(webauthnCredentials).omit({
+  id: true,
+  createdAt: true,
+  lastUsedAt: true,
+});
+export type InsertWebauthnCredential = z.infer<typeof insertWebauthnCredentialSchema>;
+export type WebauthnCredential = typeof webauthnCredentials.$inferSelect;
+
 // ---------- SESSIONS ----------
 export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),

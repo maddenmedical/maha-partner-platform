@@ -3,6 +3,7 @@ import {
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
   classSessions, homeworkSubmissions, chatThreads, chatMessages, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
+  webauthnCredentials,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -14,6 +15,7 @@ import type {
   InsertChatThread, ChatMessage, InsertChatMessage, UploadedFile, InsertUploadedFile,
   PushSubscriptionRow, InsertPushSubscription, Announcement, InsertAnnouncement,
   CaseDiscussion, InsertCaseDiscussion, LegacyOrder, InsertLegacyOrder,
+  WebauthnCredential, InsertWebauthnCredential,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -58,6 +60,13 @@ export interface IStorage {
   createSession(session: Session): Promise<Session>;
   getSession(token: string): Promise<Session | undefined>;
   deleteSession(token: string): Promise<void>;
+
+  // webauthn credentials (Face ID / Fingerprint login)
+  createWebauthnCredential(c: InsertWebauthnCredential & { createdAt: number }): Promise<WebauthnCredential>;
+  getWebauthnCredentialByCredentialId(credentialId: string): Promise<WebauthnCredential | undefined>;
+  listWebauthnCredentialsForUser(userId: number): Promise<WebauthnCredential[]>;
+  updateWebauthnCredentialCounter(id: number, counter: number, lastUsedAt: number): Promise<void>;
+  deleteWebauthnCredential(id: number, userId: number): Promise<boolean>;
 
   // products
   listProducts(): Promise<Product[]>;
@@ -253,6 +262,26 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteSession(token: string) {
     db.delete(sessions).where(eq(sessions.token, token)).run();
+  }
+
+  async createWebauthnCredential(c: InsertWebauthnCredential & { createdAt: number }) {
+    return db.insert(webauthnCredentials).values(c).returning().get();
+  }
+  async getWebauthnCredentialByCredentialId(credentialId: string) {
+    return db.select().from(webauthnCredentials).where(eq(webauthnCredentials.credentialId, credentialId)).get();
+  }
+  async listWebauthnCredentialsForUser(userId: number) {
+    return db.select().from(webauthnCredentials).where(eq(webauthnCredentials.userId, userId)).all();
+  }
+  async updateWebauthnCredentialCounter(id: number, counter: number, lastUsedAt: number) {
+    db.update(webauthnCredentials).set({ counter, lastUsedAt }).where(eq(webauthnCredentials.id, id)).run();
+  }
+  async deleteWebauthnCredential(id: number, userId: number) {
+    const result = db
+      .delete(webauthnCredentials)
+      .where(and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.userId, userId)))
+      .run();
+    return result.changes > 0;
   }
 
   async listProducts() {

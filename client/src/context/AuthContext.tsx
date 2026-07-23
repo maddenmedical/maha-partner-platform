@@ -18,6 +18,10 @@ interface AuthContextValue {
   pendingState: PendingState;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  // Used by the Face ID / Fingerprint (WebAuthn) login flow, which resolves
+  // its own token+user pair via a separate verify call rather than the
+  // email/password endpoint.
+  loginWithToken: (token: string, authUser: AuthUser) => void;
   logout: () => void;
   clearPending: () => void;
   markInstallBannerDismissed: () => void;
@@ -57,6 +61,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loginWithToken = useCallback((token: string, authUser: AuthUser) => {
+    setPendingState(null);
+    setAuthToken(token);
+    setUser(authUser);
+  }, []);
+
   const logout = useCallback(() => {
     setAuthToken(null);
     setUser(null);
@@ -71,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, pendingState, loading, login, logout, clearPending, markInstallBannerDismissed }}
+      value={{ user, pendingState, loading, login, loginWithToken, logout, clearPending, markInstallBannerDismissed }}
     >
       {children}
     </AuthContext.Provider>

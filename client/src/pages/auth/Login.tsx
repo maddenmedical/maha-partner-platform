@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
@@ -8,19 +8,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { InstallAppButton } from "@/components/InstallAppButton";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2, ScanFace } from "lucide-react";
+import { browserSupportsWebAuthn, loginWithPasskey } from "@/lib/webauthn";
 // Client-provided brand photography: a MAHA clinician greeting a partner-clinic
 // patient. Chosen over the wide stats/lecture image because its two upright
 // figures read cleanly in the tall login side panel without cropping heads.
 import loginPhoto from "@/assets/brand/handshake-supplement.jpg";
 
 export default function Login() {
-  const { login, pendingState, clearPending } = useAuth();
+  const { login, loginWithToken, pendingState, clearPending } = useAuth();
   const { theme, toggle } = useTheme();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  const [passkeySubmitting, setPasskeySubmitting] = useState(false);
+
+  useEffect(() => {
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,6 +39,23 @@ export default function Login() {
       setError(err.message || "Login failed");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handlePasskeyLogin() {
+    setError("");
+    setPasskeySubmitting(true);
+    try {
+      const { token, user } = await loginWithPasskey();
+      loginWithToken(token, user);
+    } catch (err: any) {
+      // The browser throws its own error (e.g. "NotAllowedError") when the
+      // user cancels the biometric prompt — don't show that as a scary error.
+      if (err?.name !== "NotAllowedError") {
+        setError(err.message || "Face ID / Fingerprint sign-in failed");
+      }
+    } finally {
+      setPasskeySubmitting(false);
     }
   }
 
@@ -142,6 +166,30 @@ export default function Login() {
               Sign in
             </Button>
           </form>
+          {passkeySupported && (
+            <>
+              <div className="flex items-center gap-3 my-4">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={passkeySubmitting}
+                onClick={handlePasskeyLogin}
+                data-testid="button-passkey-login"
+              >
+                {passkeySubmitting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <ScanFace className="h-4 w-4 mr-2" />
+                )}
+                Sign in with Face ID / Fingerprint
+              </Button>
+            </>
+          )}
           <p className="text-sm text-muted-foreground text-center mt-6">
             New partner or student?{" "}
             <Link href="/register" className="text-primary font-medium" data-testid="link-register">
