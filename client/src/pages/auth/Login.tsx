@@ -80,15 +80,26 @@ export default function Login() {
           className="absolute inset-0 w-full h-full object-cover object-[center_30%]"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(240_20%_12%/0.88)] via-[hsl(240_20%_14%/0.35)] to-[hsl(240_20%_14%/0.15)]" />
-        <div className="relative z-10 flex flex-col justify-end p-10">
-          <p className="font-serif text-2xl text-[#f5efe4] leading-snug max-w-sm">
-            Biological medicine for practitioners who want measurable outcomes.
-          </p>
-          <p className="text-sm text-[#e8ded0]/80 mt-3 max-w-sm">MAHA Partner Portal</p>
+        <div className="relative z-10 flex flex-col justify-end p-10" data-testid="panel-login-stats">
+          <div className="flex flex-col gap-2.5 max-w-sm">
+            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+              <span className="font-semibold">60–80%</span> of your patients have gut dysbiosis
+            </p>
+            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+              <span className="font-semibold">90%</span> of your patients have gum inflammation
+            </p>
+            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+              <span className="font-semibold">50%</span> of your patients have periodontal infections
+            </p>
+            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+              <span className="font-semibold">50%</span> of your patients have root canals
+            </p>
+          </div>
+          <p className="text-sm text-[#e8ded0]/80 mt-4 max-w-sm">MAHA Partner Portal</p>
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center px-4 py-12">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
       <Card className="w-full max-w-sm">
         <CardHeader className="flex flex-col items-center gap-2 pb-2">
           <MahaWordmark width={170} />
@@ -139,6 +150,9 @@ export default function Login() {
           </p>
         </CardContent>
       </Card>
+      <p className="text-[10px] text-muted-foreground/40 mt-8" data-testid="text-app-credit">
+        Webapp provided by Madden Medical e.U.
+      </p>
       </div>
     </div>
   );
