@@ -18,9 +18,15 @@ import type {
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, asc, gte, gt, lte, isNull, inArray } from "drizzle-orm";
+import { autoMigrate } from "./autoMigrate";
 
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
+
+// Self-heal any schema drift between this build's shared/schema.ts and the
+// persisted data.db file before any query runs against it. See autoMigrate.ts
+// for why this matters.
+autoMigrate(sqlite);
 
 export const db = drizzle(sqlite);
 

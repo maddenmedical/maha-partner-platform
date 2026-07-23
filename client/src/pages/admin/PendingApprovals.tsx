@@ -47,6 +47,7 @@ export default function PendingApprovals() {
                     <p className="text-sm font-medium">{u.name}</p>
                     <p className="text-xs text-muted-foreground break-words">{u.email} · {u.phone}</p>
                     <p className="text-xs text-muted-foreground capitalize mt-0.5">{u.role}{u.businessName ? ` · ${u.businessName}` : ""}{u.profession ? ` · ${u.profession}` : ""}</p>
+                    <p className="text-xs text-muted-foreground/70">{[u.city, u.country].filter(Boolean).join(", ")}</p>
                     <p className="text-xs text-muted-foreground/70 mt-0.5">Registered {format(new Date(u.createdAt), "MMM d, yyyy")}</p>
                   </div>
                   <div className="flex gap-2 shrink-0 w-full sm:w-auto">
@@ -58,8 +59,15 @@ export default function PendingApprovals() {
                     </Button>
                   </div>
                 </div>
+                {u.additionalInfo && (
+                  <p className="text-xs text-foreground bg-muted/50 rounded-md px-3 py-2" data-testid={`text-additional-info-${u.id}`}>
+                    <span className="font-medium">Medical specialty / qualification: </span>
+                    {u.additionalInfo}
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-3 text-xs border-t border-border pt-3">
                   {u.vatNumber && <span className="text-muted-foreground">VAT: {u.vatNumber}</span>}
+                  {u.address && <span className="text-muted-foreground">Address: {u.address}</span>}
                   {u.homepageUrl && (
                     <a href={u.homepageUrl} target="_blank" rel="noopener noreferrer" className="text-primary flex items-center gap-1" data-testid={`link-homepage-${u.id}`}>
                       <ExternalLink className="h-3 w-3" /> Homepage

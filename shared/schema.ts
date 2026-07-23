@@ -17,6 +17,20 @@ export const users = sqliteTable("users", {
   homepageUrl: text("homepage_url"),
   degreeFileUrl: text("degree_file_url"),
   installBannerDismissedAt: integer("install_banner_dismissed_at"),
+  // Mirrors the fields collected on the WordPress partner.maha.clinic
+  // registration form (partner-registration page), so the Portal's own
+  // sign-up asks for the same information.
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  prefix: text("prefix"), // e.g. "Dr.", "Prof."
+  suffix: text("suffix"), // e.g. "PhD", "MD"
+  username: text("username"),
+  city: text("city"),
+  address: text("address"),
+  country: text("country"),
+  // Eligibility gate: applicants must self-attest to being a medical
+  // specialist and describe their qualification/specialty here.
+  additionalInfo: text("additional_info"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -30,15 +44,25 @@ export type User = typeof users.$inferSelect;
 // Public-facing registration schema (subset, with plain password)
 export const registerSchema = z.object({
   role: z.enum(["partner", "student"]),
-  name: z.string().min(2),
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  prefix: z.string().optional(),
+  suffix: z.string().optional(),
   email: z.string().email(),
   password: z.string().min(6),
   phone: z.string().min(3),
+  username: z.string().min(3),
   businessName: z.string().optional(),
   vatNumber: z.string().optional(),
+  city: z.string().optional(),
+  address: z.string().optional(),
+  country: z.string().optional(),
   profession: z.string().optional(),
   homepageUrl: z.string().optional(),
   degreeFileUrl: z.string().optional(),
+  // Applicant must self-attest to being a medical specialist and describe
+  // their qualification/specialty.
+  additionalInfo: z.string().min(10, "Please provide additional information about your medical specialty or qualification"),
 });
 export type RegisterInput = z.infer<typeof registerSchema>;
 

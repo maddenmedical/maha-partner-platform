@@ -154,9 +154,10 @@ export async function registerRoutes(
     if (existing) return res.status(400).json({ message: "An account with this email already exists" });
 
     const passwordHash = await bcrypt.hash(data.password, 10);
+    const fullName = [data.prefix, data.firstName, data.lastName, data.suffix].filter(Boolean).join(" ");
     const user = await storage.createUser({
       role: data.role,
-      name: data.name,
+      name: fullName,
       email: data.email,
       passwordHash,
       status: "pending",
@@ -166,6 +167,15 @@ export async function registerRoutes(
       profession: data.profession || null,
       homepageUrl: data.homepageUrl || null,
       degreeFileUrl: data.degreeFileUrl || null,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      prefix: data.prefix || null,
+      suffix: data.suffix || null,
+      username: data.username,
+      city: data.city || null,
+      address: data.address || null,
+      country: data.country || null,
+      additionalInfo: data.additionalInfo,
     } as any);
     res.json({ id: user.id, status: user.status });
   });
