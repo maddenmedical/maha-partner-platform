@@ -3,7 +3,7 @@ import {
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
   classSessions, homeworkSubmissions, chatThreads, chatMessages, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
-  webauthnCredentials,
+  webauthnCredentials, productResources,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -15,7 +15,7 @@ import type {
   InsertChatThread, ChatMessage, InsertChatMessage, UploadedFile, InsertUploadedFile,
   PushSubscriptionRow, InsertPushSubscription, Announcement, InsertAnnouncement,
   CaseDiscussion, InsertCaseDiscussion, LegacyOrder, InsertLegacyOrder,
-  WebauthnCredential, InsertWebauthnCredential,
+  WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -170,8 +170,15 @@ export interface IStorage {
   createUploadedFile(f: InsertUploadedFile): Promise<UploadedFile>;
   getUploadedFileByDriveId(driveFileId: string): Promise<UploadedFile | undefined>;
 
+  // product resources
+  createProductResource(r: InsertProductResource): Promise<ProductResource>;
+  listResourcesForProduct(productId: number): Promise<ProductResource[]>;
+  getProductResource(id: number): Promise<ProductResource | undefined>;
+  deleteProductResource(id: number): Promise<void>;
+
   // chat
-  getOrCreateThread(userId: number, userRole: string): Promise<ChatThread>;
+  createThread(userId: number, userRole: string, topic: string): Promise<ChatThread>;
+  listThreadsForUser(userId: number): Promise<ChatThread[]>;
   listThreads(): Promise<ChatThread[]>;
   getThread(id: number): Promise<ChatThread | undefined>;
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
@@ -557,10 +564,24 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(uploadedFiles).where(eq(uploadedFiles.driveFileId, driveFileId)).get();
   }
 
-  async getOrCreateThread(userId: number, userRole: string) {
-    const existing = db.select().from(chatThreads).where(eq(chatThreads.userId, userId)).get();
-    if (existing) return existing;
-    return db.insert(chatThreads).values({ userId, userRole, createdAt: Date.now() }).returning().get();
+  async createProductResource(r: InsertProductResource) {
+    return db.insert(productResources).values({ ...r, createdAt: Date.now() }).returning().get();
+  }
+  async listResourcesForProduct(productId: number) {
+    return db.select().from(productResources).where(eq(productResources.productId, productId)).orderBy(desc(productResources.createdAt)).all();
+  }
+  async getProductResource(id: number) {
+    return db.select().from(productResources).where(eq(productResources.id, id)).get();
+  }
+  async deleteProductResource(id: number) {
+    db.delete(productResources).where(eq(productResources.id, id)).run();
+  }
+
+  async createThread(userId: number, userRole: string, topic: string) {
+    return db.insert(chatThreads).values({ userId, userRole, topic, createdAt: Date.now() }).returning().get();
+  }
+  async listThreadsForUser(userId: number) {
+    return db.select().from(chatThreads).where(eq(chatThreads.userId, userId)).orderBy(desc(chatThreads.createdAt)).all();
   }
   async listThreads() {
     return db.select().from(chatThreads).orderBy(desc(chatThreads.createdAt)).all();

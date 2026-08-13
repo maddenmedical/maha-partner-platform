@@ -151,6 +151,24 @@ export const insertPriceTierSchema = createInsertSchema(priceTiers).omit({ id: t
 export type InsertPriceTier = z.infer<typeof insertPriceTierSchema>;
 export type PriceTier = typeof priceTiers.$inferSelect;
 
+// ---------- PRODUCT RESOURCES ----------
+// Informational files (spec sheets, certificates) and videos attached to a
+// product, shown to partners in the shop's product detail view.
+export const productResources = sqliteTable("product_resources", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  productId: integer("product_id").notNull(),
+  kind: text("kind").notNull(), // 'file' | 'video'
+  title: text("title").notNull(),
+  // Set when the asset was uploaded to Drive via the admin panel.
+  driveFileId: text("drive_file_id"),
+  // Set when the admin pasted an external link (e.g. a YouTube video) instead.
+  externalUrl: text("external_url"),
+  createdAt: integer("created_at").notNull(),
+});
+export const insertProductResourceSchema = createInsertSchema(productResources).omit({ id: true, createdAt: true });
+export type InsertProductResource = z.infer<typeof insertProductResourceSchema>;
+export type ProductResource = typeof productResources.$inferSelect;
+
 // ---------- ORDERS ----------
 export const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -499,7 +517,7 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
   filename: text("filename").notNull(),
   mimeType: text("mime_type").notNull(),
   size: integer("size").notNull(),
-  category: text("category").notNull(), // 'homework' | 'registration' | 'referral'
+  category: text("category").notNull(), // 'homework' | 'registration' | 'referral' | 'product'
   ownerId: integer("owner_id"),
   uploadedAt: integer("uploaded_at").notNull(),
 });
@@ -512,6 +530,7 @@ export const chatThreads = sqliteTable("chat_threads", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),
   userRole: text("user_role").notNull(), // 'partner' | 'student'
+  topic: text("topic").notNull().default("General"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({ id: true, createdAt: true });

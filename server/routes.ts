@@ -135,6 +135,11 @@ export async function registerRoutes(
         // Registration documents are reviewed by admins only.
         allowed = isAdmin;
         break;
+      case "product":
+        // Product informational files/videos are visible to any signed-in
+        // partner or student, plus admins.
+        allowed = true;
+        break;
       default:
         allowed = isAdmin;
     }
@@ -363,7 +368,11 @@ export async function registerRoutes(
   app.get("/api/products", async (_req, res) => {
     const products = await storage.listProducts();
     const withTiers = await Promise.all(
-      products.map(async (p) => ({ ...p, tiers: await storage.listTiersForProduct(p.id) }))
+      products.map(async (p) => ({
+        ...p,
+        tiers: await storage.listTiersForProduct(p.id),
+        resources: await storage.listResourcesForProduct(p.id),
+      }))
     );
     res.json(withTiers);
   });
@@ -396,6 +405,44 @@ export async function registerRoutes(
 
   app.delete("/api/admin/tiers/:id", requireAuth, requireRole("admin"), async (req, res) => {
     await storage.deleteTier(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // Informational files (spec sheets, certificates) and videos about a product.
+  // Either an uploaded file (multipart, goes to Drive) or a pasted external
+  // URL (e.g. a YouTube link) is accepted — not both.
+  app.post("/api/admin/products/:id/resources", requireAuth, requireRole("admin"), upload.single("file"), async (req: AuthedRequest, res) => {
+    const productId = Number(req.params.id);
+    const kind = req.body.kind === "video" ? "video" : "file";
+    const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
+    if (!title) return res.status(400).json({ message: "Please provide a title." });
+
+    try {
+      if (req.file) {
+        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        await storage.createUploadedFile({
+          driveFileId,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          category: "product",
+          ownerId: null,
+          uploadedAt: Date.now(),
+        });
+        const resource = await storage.createProductResource({ productId, kind, title, driveFileId, externalUrl: null });
+        return res.json(resource);
+      }
+      const externalUrl = typeof req.body.externalUrl === "string" ? req.body.externalUrl.trim() : "";
+      if (!externalUrl) return res.status(400).json({ message: "Upload a file or provide a link." });
+      const resource = await storage.createProductResource({ productId, kind, title, driveFileId: null, externalUrl });
+      res.json(resource);
+    } catch (err: any) {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  app.delete("/api/admin/products/resources/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteProductResource(Number(req.params.id));
     res.json({ ok: true });
   });
 
@@ -1006,14 +1053,41 @@ export async function registerRoutes(
   });
 
   // ---------- CHAT ----------
-  app.get("/api/chat/my-thread", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
-    const thread = await storage.getOrCreateThread(req.user!.id, req.user!.role);
-    const messages = await storage.listMessagesForThread(thread.id);
-    res.json({ thread, messages });
+  // Partners/students can have several topic-based threads at once, so list
+  // and create routes operate over all of the caller's own threads.
+  app.get("/api/chat/threads", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const threads = await storage.listThreadsForUser(req.user!.id);
+    const withPreview = await Promise.all(
+      threads.map(async (t) => {
+        const messages = await storage.listMessagesForThread(t.id);
+        const last = messages[messages.length - 1];
+        return {
+          ...t,
+          lastMessage: last?.body,
+          lastMessageAt: last?.createdAt,
+          messageCount: messages.length,
+        };
+      })
+    );
+    res.json(withPreview);
   });
 
-  app.post("/api/chat/my-thread/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
-    const thread = await storage.getOrCreateThread(req.user!.id, req.user!.role);
+  app.post("/api/chat/threads", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const topic = typeof req.body.topic === "string" ? req.body.topic.trim() : "";
+    if (!topic) return res.status(400).json({ message: "Please give the chat a topic." });
+    const thread = await storage.createThread(req.user!.id, req.user!.role, topic);
+    res.json(thread);
+  });
+
+  app.get("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    res.json(await storage.listMessagesForThread(thread.id));
+  });
+
+  app.post("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
     const parsed = insertChatMessageSchema.safeParse({
       threadId: thread.id,
       senderId: req.user!.id,
@@ -1067,12 +1141,16 @@ export async function registerRoutes(
   app.get("/api/partner/home-summary", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
     const referrals = await storage.listReferralsForPartner(req.user!.id);
     const orders = await storage.listOrdersForPartner(req.user!.id);
-    const thread = await storage.getOrCreateThread(req.user!.id, "partner");
-    const messages = await storage.listMessagesForThread(thread.id);
+    const threads = await storage.listThreadsForUser(req.user!.id);
+    const messagesByThread = await Promise.all(threads.map((t) => storage.listMessagesForThread(t.id)));
+    const recentMessages = messagesByThread
+      .flat()
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-3);
     res.json({
       openReferrals: referrals.filter((r) => r.status !== "Closed").length,
       openOrders: orders.filter((o) => o.status !== "Fulfilled" && o.status !== "Cancelled").length,
-      recentMessages: messages.slice(-3),
+      recentMessages,
       totalReferrals: referrals.length,
       totalOrders: orders.length,
     });

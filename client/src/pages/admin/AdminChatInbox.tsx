@@ -16,6 +16,7 @@ interface ThreadRow {
   id: number;
   userId: number;
   userRole: string;
+  topic?: string;
   userName?: string;
   userEmail?: string;
   lastMessage?: string;
@@ -55,6 +56,7 @@ export default function AdminChatInbox() {
                 <span className="text-sm font-medium truncate">{t.userName}</span>
                 <Badge variant="outline" className="text-xs capitalize no-default-hover-elevate no-default-active-elevate shrink-0">{t.userRole}</Badge>
               </div>
+              {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5">{t.topic}</span>}
               <p className="text-xs text-muted-foreground truncate mt-0.5">{t.lastMessage || "No messages yet"}</p>
             </button>
           ))

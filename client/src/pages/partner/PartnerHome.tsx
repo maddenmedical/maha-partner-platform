@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest, getAuthToken } from "@/lib/queryClient";
-import { firstNameOf } from "@/lib/utils";
+import { titleAndSurnameOf } from "@/lib/utils";
 import type { CaseDiscussion } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   ClipboardList, ShoppingCart, MessageSquare, ArrowRight,
-  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2,
+  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap,
 } from "lucide-react";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
@@ -197,8 +197,8 @@ export default function PartnerHome() {
   return (
     <div className="max-w-2xl mx-auto p-4 flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {firstNameOf(user?.name)}</h1>
-        <p className="text-sm text-muted-foreground mt-1">Here's what's happening with your clinic today.</p>
+        <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {titleAndSurnameOf(user?.name)}</h1>
+        <p className="text-sm text-muted-foreground mt-1">Here is your personal MAHA partner dashboard. Let us know how we can help.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -209,20 +209,24 @@ export default function PartnerHome() {
           </>
         ) : (
           <>
-            <Card data-testid="card-open-referrals">
-              <CardContent className="p-4 flex flex-col gap-1">
-                <ClipboardList className="h-5 w-5 text-primary" />
-                <span className="text-2xl font-semibold tabular-nums" data-testid="text-open-referrals-count">{data?.openReferrals ?? 0}</span>
-                <span className="text-xs text-muted-foreground">Open referrals</span>
-              </CardContent>
-            </Card>
-            <Card data-testid="card-open-orders">
-              <CardContent className="p-4 flex flex-col gap-1">
-                <ShoppingCart className="h-5 w-5 text-accent" />
-                <span className="text-2xl font-semibold tabular-nums" data-testid="text-open-orders-count">{data?.openOrders ?? 0}</span>
-                <span className="text-xs text-muted-foreground">Open order requests</span>
-              </CardContent>
-            </Card>
+            <Link href="/refer" data-testid="card-open-referrals">
+              <Card className="hover-elevate active-elevate-2 cursor-pointer">
+                <CardContent className="p-4 flex flex-col gap-1">
+                  <ClipboardList className="h-5 w-5 text-primary" />
+                  <span className="text-2xl font-semibold tabular-nums" data-testid="text-open-referrals-count">{data?.openReferrals ?? 0}</span>
+                  <span className="text-xs text-muted-foreground">Open referrals</span>
+                </CardContent>
+              </Card>
+            </Link>
+            <Link href="/shop?tab=orders" data-testid="card-open-orders">
+              <Card className="hover-elevate active-elevate-2 cursor-pointer">
+                <CardContent className="p-4 flex flex-col gap-1">
+                  <ShoppingCart className="h-5 w-5 text-accent" />
+                  <span className="text-2xl font-semibold tabular-nums" data-testid="text-open-orders-count">{data?.openOrders ?? 0}</span>
+                  <span className="text-xs text-muted-foreground">Open order requests</span>
+                </CardContent>
+              </Card>
+            </Link>
           </>
         )}
       </div>
@@ -247,6 +251,13 @@ export default function PartnerHome() {
           <div className="flex items-center gap-3">
             <MessageSquare className="h-5 w-5 text-chart-4" />
             <span className="text-sm font-medium">Chat with MAHA team</span>
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+        <Link href="/videos" className="flex items-center justify-between rounded-lg border border-card-border bg-card p-4 hover-elevate active-elevate-2" data-testid="link-quick-learn">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-5 w-5 text-chart-2" />
+            <span className="text-sm font-medium">Learn</span>
           </div>
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
         </Link>

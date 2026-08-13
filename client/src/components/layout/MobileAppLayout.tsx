@@ -22,7 +22,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const { theme, toggle } = useTheme();
 
   return (
-    <div className="min-h-dvh flex flex-col bg-background">
+    <div className="h-dvh flex flex-col bg-background overflow-hidden">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-2 min-w-0">
           <MahaLogo size={26} className="text-primary shrink-0" />
@@ -54,7 +54,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto pb-20 md:pb-6">{children}</main>
+      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-24">{children}</main>
 
       <nav
         className="fixed bottom-0 left-0 right-0 z-10 grid border-t border-border bg-card md:hidden"

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Product, PriceTier } from "@shared/schema";
+import type { Product, PriceTier, ProductResource } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Package, Plus, Trash2, Pencil, Loader2 } from "lucide-react";
+import { Package, Plus, Trash2, Pencil, Loader2, FileText, Video, Link as LinkIcon } from "lucide-react";
 
 // Real product photography sourced from the client's live shop
 // (https://partner.maha.clinic/maha-shop-maha/), mapped by product name.
@@ -43,7 +44,7 @@ const PRODUCT_IMAGES: Record<string, string> = {
   "Brahmi Ghee": imgBrahmiGhee,
 };
 
-type ProductWithTiers = Product & { tiers: PriceTier[] };
+type ProductWithTiers = Product & { tiers: PriceTier[]; resources: ProductResource[] };
 
 function formatPrice(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
@@ -156,9 +157,10 @@ export default function AdminProducts() {
                 </div>
                 <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
                 <p className="text-sm font-semibold tabular-nums">{formatPrice(p.unitPrice)}</p>
-                {p.tiers.length > 0 && (
-                  <div className="text-xs text-muted-foreground border-t border-border pt-2">
-                    {p.tiers.length} price tier{p.tiers.length !== 1 ? "s" : ""}
+                {(p.tiers.length > 0 || p.resources.length > 0) && (
+                  <div className="text-xs text-muted-foreground border-t border-border pt-2 flex flex-col gap-0.5">
+                    {p.tiers.length > 0 && <span>{p.tiers.length} price tier{p.tiers.length !== 1 ? "s" : ""}</span>}
+                    {p.resources.length > 0 && <span>{p.resources.length} resource{p.resources.length !== 1 ? "s" : ""}</span>}
                   </div>
                 )}
               </CardContent>
@@ -208,6 +210,13 @@ export default function AdminProducts() {
                 </div>
               ))}
             </div>
+
+            {editing && (
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <Label>Informational files and videos</Label>
+                <ResourceManager productId={editing.id} resources={products?.find((p) => p.id === editing.id)?.resources ?? editing.resources} />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-product">
@@ -217,6 +226,105 @@ export default function AdminProducts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ResourceManager({ productId, resources }: { productId: number; resources: ProductResource[] }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [kind, setKind] = useState<"file" | "video">("file");
+  const [title, setTitle] = useState("");
+  const [mode, setMode] = useState<"upload" | "link">("upload");
+  const [file, setFile] = useState<File | null>(null);
+  const [externalUrl, setExternalUrl] = useState("");
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const formData = new FormData();
+      formData.append("kind", kind);
+      formData.append("title", title);
+      if (mode === "upload" && file) {
+        formData.append("file", file);
+      } else {
+        formData.append("externalUrl", externalUrl);
+      }
+      return apiRequest("POST", `/api/admin/products/${productId}/resources`, formData, true);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      setTitle("");
+      setFile(null);
+      setExternalUrl("");
+      toast({ title: "Resource added" });
+    },
+    onError: () => toast({ title: "Could not add resource", variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/products/resources/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      toast({ title: "Resource removed" });
+    },
+  });
+
+  const canSubmit = title.trim() && (mode === "upload" ? !!file : externalUrl.trim());
+
+  return (
+    <div className="flex flex-col gap-3">
+      {resources.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {resources.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-2 text-sm border border-card-border rounded-md px-3 py-2" data-testid={`row-resource-${r.id}`}>
+              <div className="flex items-center gap-2 min-w-0">
+                {r.kind === "video" ? <Video className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                <span className="truncate">{r.title}</span>
+                {r.externalUrl && <LinkIcon className="h-3 w-3 text-muted-foreground shrink-0" />}
+              </div>
+              <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(r.id)} data-testid={`button-delete-resource-${r.id}`}>
+                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2 border border-dashed border-card-border rounded-md p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <Select value={kind} onValueChange={(v) => setKind(v as "file" | "video")}>
+            <SelectTrigger data-testid="select-resource-kind">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="file">Informational file</SelectItem>
+              <SelectItem value="video">Video</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={mode} onValueChange={(v) => setMode(v as "upload" | "link")}>
+            <SelectTrigger data-testid="select-resource-mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="upload">Upload file</SelectItem>
+              <SelectItem value="link">Paste link</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Input placeholder="Title (e.g. Spec sheet, How to use)" value={title} onChange={(e) => setTitle(e.target.value)} data-testid="input-resource-title" />
+        {mode === "upload" ? (
+          <label className="flex items-center gap-2 border border-input rounded-md px-3 py-2 text-sm cursor-pointer hover-elevate active-elevate-2" data-testid="label-upload-resource">
+            <span className="text-muted-foreground truncate">{file ? file.name : "Choose file..."}</span>
+            <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} data-testid="input-resource-file" />
+          </label>
+        ) : (
+          <Input placeholder="https://... (e.g. a YouTube link)" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} data-testid="input-resource-url" />
+        )}
+        <Button size="sm" variant="outline" disabled={!canSubmit || addMutation.isPending} onClick={() => addMutation.mutate()} data-testid="button-add-resource">
+          {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+          Add resource
+        </Button>
+      </div>
     </div>
   );
 }

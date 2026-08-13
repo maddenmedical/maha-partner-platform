@@ -522,7 +522,7 @@ async function main() {
   await storage.createOrderItem({ orderId: order.id, productId: maha40.id, quantity: 10, unitPriceAtOrder: Math.round(5388 * 0.9) });
   await storage.createOrderItem({ orderId: order.id, productId: detox.id, quantity: 15, unitPriceAtOrder: 4930 });
 
-  const thread = await storage.getOrCreateThread(partner.id, "partner");
+  const thread = await storage.createThread(partner.id, "partner", "Order follow-up");
   await storage.createMessage({
     threadId: thread.id,
     senderId: partner.id,

@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* MAHA — official brand palette: warm gold accent (#fdbe42), warm cream surfaces (#e8ded0),
+/* MAHA — official brand palette: warm gold accent (#ffbf42), warm cream surfaces (#e8ded0),
    navy-charcoal dark tone (#2c2c3f) for dark mode / secondary / text depth. */
 
 /* LIGHT MODE */
@@ -22,29 +22,29 @@
   --sidebar: 240 18% 17%;
   --sidebar-foreground: 35 30% 92%;
   --sidebar-border: 240 14% 24%;
-  --sidebar-primary: 40 98% 63%;
+  --sidebar-primary: 40 100% 63%;
   --sidebar-primary-foreground: 240 20% 14%;
   --sidebar-accent: 240 14% 26%;
   --sidebar-accent-foreground: 35 30% 92%;
-  --sidebar-ring: 40 98% 63%;
+  --sidebar-ring: 40 100% 63%;
   --popover: 35 38% 97%;
   --popover-foreground: 240 18% 21%;
   --popover-border: 35 20% 88%;
-  --primary: 33 90% 48%;
+  --primary: 40 100% 63%;
   --primary-foreground: 240 20% 12%;
   --secondary: 35 25% 89%;
   --secondary-foreground: 240 18% 21%;
   --muted: 35 22% 90%;
   --muted-foreground: 240 8% 42%;
-  --accent: 40 98% 63%;
+  --accent: 40 100% 63%;
   --accent-foreground: 240 20% 14%;
   --destructive: 6 62% 44%;
   --destructive-foreground: 42 40% 98%;
   --input: 35 20% 82%;
-  --ring: 33 90% 48%;
-  --chart-1: 40 98% 55%;
+  --ring: 40 100% 63%;
+  --chart-1: 40 100% 63%;
   --chart-2: 240 18% 35%;
-  --chart-3: 33 90% 48%;
+  --chart-3: 40 100% 63%;
   --chart-4: 200 30% 45%;
   --chart-5: 340 30% 50%;
   --font-sans: 'General Sans', 'Inter', sans-serif;
@@ -94,29 +94,29 @@
   --sidebar: 240 20% 10%;
   --sidebar-foreground: 35 30% 92%;
   --sidebar-border: 240 14% 18%;
-  --sidebar-primary: 40 98% 63%;
+  --sidebar-primary: 40 100% 63%;
   --sidebar-primary-foreground: 240 20% 12%;
   --sidebar-accent: 240 14% 22%;
   --sidebar-accent-foreground: 35 30% 92%;
-  --sidebar-ring: 40 98% 63%;
+  --sidebar-ring: 40 100% 63%;
   --popover: 240 18% 16%;
   --popover-foreground: 35 30% 92%;
   --popover-border: 240 14% 22%;
-  --primary: 40 98% 63%;
+  --primary: 40 100% 63%;
   --primary-foreground: 240 20% 12%;
   --secondary: 240 14% 22%;
   --secondary-foreground: 35 30% 92%;
   --muted: 240 12% 20%;
   --muted-foreground: 35 12% 65%;
-  --accent: 40 98% 63%;
+  --accent: 40 100% 63%;
   --accent-foreground: 240 20% 12%;
   --destructive: 6 62% 52%;
   --destructive-foreground: 42 20% 96%;
   --input: 240 14% 25%;
-  --ring: 40 98% 63%;
-  --chart-1: 40 98% 63%;
+  --ring: 40 100% 63%;
+  --chart-1: 40 100% 63%;
   --chart-2: 35 25% 75%;
-  --chart-3: 33 90% 58%;
+  --chart-3: 40 100% 63%;
   --chart-4: 200 30% 55%;
   --chart-5: 340 30% 58%;
   --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.2);

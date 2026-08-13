@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Product, PriceTier, Order, OrderItem } from "@shared/schema";
+import type { Product, PriceTier, Order, OrderItem, ProductResource } from "@shared/schema";
 import { estimateShippingCostCents, isEuCountry, COUNTRIES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,7 +18,7 @@ import {
 import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from "@/components/ui/tabs";
-import { ShoppingCart, Plus, Minus, Trash2, Package, Loader2, Truck, AlertTriangle } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, Package, Loader2, Truck, AlertTriangle, FileText, Video as VideoIcon, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 
 // Real product photography sourced from the client's live shop
@@ -54,7 +54,7 @@ const PRODUCT_IMAGES: Record<string, string> = {
   "Brahmi Ghee": imgBrahmiGhee,
 };
 
-type ProductWithTiers = Product & { tiers: PriceTier[] };
+type ProductWithTiers = Product & { tiers: PriceTier[]; resources: ProductResource[] };
 type OrderWithItems = Order & { items: OrderItem[] };
 
 function formatPrice(cents: number) {
@@ -74,6 +74,22 @@ function unitPriceForQty(product: ProductWithTiers, qty: number) {
   return price;
 }
 
+// Read the tab query param out of the hash route (e.g. "#/shop?tab=orders")
+// so the "Open order requests" quick link on the home page can deep-link
+// straight into the Order history tab. Hash routing keeps the query string
+// after the hash, so window.location.search is empty.
+function readHashParams(): URLSearchParams {
+  const hash = window.location.hash;
+  const qIndex = hash.indexOf("?");
+  return new URLSearchParams(qIndex >= 0 ? hash.slice(qIndex + 1) : "");
+}
+
+function clearHashParams() {
+  const hash = window.location.hash;
+  const qIndex = hash.indexOf("?");
+  if (qIndex >= 0) window.location.hash = hash.slice(0, qIndex);
+}
+
 export default function Shop() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -82,6 +98,11 @@ export default function Shop() {
   const [detailProductId, setDetailProductId] = useState<number | null>(null);
   const [destinationCountry, setDestinationCountry] = useState("SI");
   const [lastOrderCountry, setLastOrderCountry] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>(() => (readHashParams().get("tab") === "orders" ? "orders" : "catalog"));
+
+  useEffect(() => {
+    if (readHashParams().get("tab")) clearHashParams();
+  }, []);
 
   const { data: products, isLoading } = useQuery<ProductWithTiers[]>({ queryKey: ["/api/products"] });
   const { data: orders, isLoading: ordersLoading } = useQuery<OrderWithItems[]>({ queryKey: ["/api/orders/mine"] });
@@ -175,7 +196,7 @@ export default function Shop() {
         </div>
       )}
 
-      <Tabs defaultValue="catalog">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="catalog" data-testid="tab-catalog">Catalog</TabsTrigger>
           <TabsTrigger value="orders" data-testid="tab-order-history">Order history</TabsTrigger>
@@ -451,6 +472,36 @@ function ProductDetailSheet({
                   ))}
                 </div>
               </div>
+
+              {product.resources.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-sm font-medium">Learn more about this product</h3>
+                  <div className="flex flex-col gap-2">
+                    {product.resources.map((r) => (
+                      <div key={r.id} className="rounded-lg border border-border overflow-hidden" data-testid={`row-product-resource-${r.id}`}>
+                        {r.kind === "video" && r.driveFileId ? (
+                          <video controls className="w-full max-h-56 bg-muted" src={`/api/files/${r.driveFileId}`} data-testid={`video-resource-${r.id}`} />
+                        ) : null}
+                        <a
+                          href={r.driveFileId ? `/api/files/${r.driveFileId}` : r.externalUrl || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-3 py-2.5 text-sm hover-elevate"
+                          data-testid={`link-resource-${r.id}`}
+                        >
+                          {r.kind === "video" ? (
+                            <VideoIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                          ) : (
+                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                          )}
+                          <span className="flex-1 truncate">{r.title}</span>
+                          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <SheetFooter className="flex-col gap-3 sm:flex-col">
