@@ -39,8 +39,12 @@ const SYMPOSIUM_REDEEM_CODE = "castlemaha2026";
 const SYMPOSIUM_COURSE_NAME = "Maha Symposium lectures";
 
 // Base URL used to build absolute links (approve/decline, document view) inside
-// outbound emails. Falls back to the known published production URL.
-const APP_BASE_URL = process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app";
+// outbound emails. Falls back to the known published production URL. Published
+// pplx.app sites route backend API calls through /port/<PORT>/... — plain
+// /api/... paths hit the static asset server and 404. Append that prefix here
+// so every link built from APP_BASE_URL + "/api/..." resolves correctly on the
+// live site (and still works if APP_BASE_URL is overridden for another env).
+const APP_BASE_URL = `${process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app"}/port/5000`;
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
