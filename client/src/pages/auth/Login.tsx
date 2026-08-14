@@ -83,7 +83,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-dvh flex bg-background relative">
+    <div className="min-h-dvh flex bg-background relative overflow-y-auto">
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
         <InstallAppButton variant="full" />
         <button
@@ -104,29 +104,29 @@ export default function Login() {
           className="absolute inset-0 w-full h-full object-cover object-[center_30%]"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(240_20%_12%/0.88)] via-[hsl(240_20%_14%/0.35)] to-[hsl(240_20%_14%/0.15)]" />
-        <div className="relative z-10 flex flex-col justify-end p-10 lg:p-16" data-testid="panel-login-stats">
-          <div className="flex flex-col gap-3 lg:gap-4 max-w-sm lg:max-w-lg">
-            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
+        <div className="relative z-10 flex flex-col justify-end p-10 lg:p-12" data-testid="panel-login-stats">
+          <div className="flex flex-col gap-2.5 lg:gap-3 max-w-sm lg:max-w-lg">
+            <p className="font-serif text-xl lg:text-2xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">60–80%</span> of your patients have gut dysbiosis
             </p>
-            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-2xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">90%</span> of your patients have gum inflammation
             </p>
-            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-2xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">50%</span> of your patients have periodontal infections
             </p>
-            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-2xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">50%</span> of your patients have root canals
             </p>
           </div>
-          <p className="text-sm lg:text-base text-[#e8ded0]/80 mt-4 lg:mt-6 max-w-sm">MAHA Partner Portal</p>
+          <p className="text-sm lg:text-base text-[#e8ded0]/80 mt-3 lg:mt-4 max-w-sm">MAHA Partner Portal</p>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl shadow-lg">
-        <CardHeader className="flex flex-col items-center gap-3 lg:gap-4 pb-2 pt-8 lg:pt-12">
-          <MahaWordmark width={260} />
+      <Card className="w-full max-w-lg md:max-w-xl lg:max-w-2xl xl:max-w-3xl shadow-lg">
+        <CardHeader className="flex flex-col items-center gap-3 lg:gap-4 pb-2 pt-8 lg:pt-10">
+          <MahaWordmark width={280} />
           <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Portal — sign in to your account</p>
         </CardHeader>
         <CardContent className="p-8 lg:p-12 pt-4 lg:pt-6">
