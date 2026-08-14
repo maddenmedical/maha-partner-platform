@@ -124,15 +124,15 @@ export default function Login() {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="flex flex-col items-center gap-2 pb-2">
-          <MahaWordmark width={170} />
-          <p className="text-sm text-muted-foreground text-center">Partner Portal — sign in to your account</p>
+      <Card className="w-full max-w-md shadow-lg">
+        <CardHeader className="flex flex-col items-center gap-3 pb-2 pt-8">
+          <MahaWordmark width={220} />
+          <p className="text-base text-muted-foreground text-center">Partner Portal — sign in to your account</p>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="email">Email</Label>
+        <CardContent className="p-8 pt-4">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="email" className="text-base">Email</Label>
               <Input
                 id="email"
                 type="email"
@@ -140,11 +140,12 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@clinic.com"
+                className="h-12 text-base"
                 data-testid="input-email"
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Password</Label>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="password" className="text-base">Password</Label>
               <Input
                 id="password"
                 type="password"
@@ -152,6 +153,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                className="h-12 text-base"
                 data-testid="input-password"
               />
             </div>
@@ -161,7 +163,7 @@ export default function Login() {
                 <span>{error}</span>
               </div>
             )}
-            <Button type="submit" disabled={submitting} data-testid="button-submit-login">
+            <Button type="submit" disabled={submitting} className="h-12 text-base font-medium" data-testid="button-submit-login">
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Sign in
             </Button>
@@ -176,7 +178,7 @@ export default function Login() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full"
+                className="w-full h-12 text-base font-medium"
                 disabled={passkeySubmitting}
                 onClick={handlePasskeyLogin}
                 data-testid="button-passkey-login"
@@ -190,7 +192,7 @@ export default function Login() {
               </Button>
             </>
           )}
-          <p className="text-sm text-muted-foreground text-center mt-6">
+          <p className="text-base text-muted-foreground text-center mt-6">
             New partner or student?{" "}
             <Link href="/register" className="text-primary font-medium" data-testid="link-register">
               Register here
