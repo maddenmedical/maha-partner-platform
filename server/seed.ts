@@ -35,7 +35,14 @@ async function main() {
   db.delete(users).run();
 
   console.log("Seeding admin: Elisabeth Madden...");
-  const adminPasswordPlain = "MahaAdmin2026!";
+  // Real production admin credential — must never be hardcoded in source.
+  // Set ADMIN_SEED_PASSWORD in the environment before running this script.
+  const adminPasswordPlain = process.env.ADMIN_SEED_PASSWORD;
+  if (!adminPasswordPlain) {
+    throw new Error(
+      "ADMIN_SEED_PASSWORD env var is required to seed the admin account (no hardcoded default for security)."
+    );
+  }
   const adminHash = await bcrypt.hash(adminPasswordPlain, 10);
   const admin = await storage.createUser({
     role: "admin",
@@ -53,7 +60,14 @@ async function main() {
   console.log("Admin created:", admin.email, "password:", adminPasswordPlain);
 
   console.log("Seeding admin: Tina...");
-  const tinaPasswordPlain = "MahaTina2026!";
+  // Real production admin credential — must never be hardcoded in source.
+  // Set TINA_SEED_PASSWORD in the environment before running this script.
+  const tinaPasswordPlain = process.env.TINA_SEED_PASSWORD;
+  if (!tinaPasswordPlain) {
+    throw new Error(
+      "TINA_SEED_PASSWORD env var is required to seed this admin account (no hardcoded default for security)."
+    );
+  }
   const tinaHash = await bcrypt.hash(tinaPasswordPlain, 10);
   const tina = await storage.createUser({
     role: "admin",
