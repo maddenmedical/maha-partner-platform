@@ -44,6 +44,7 @@ export interface IStorage {
   getUserByWpUserId(wpUserId: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserStatus(id: number, status: string): Promise<User | undefined>;
+  updateUserPassword(id: number, passwordHash: string): Promise<User | undefined>;
   setUserApprovalToken(id: number, token: string | null): Promise<void>;
   getUserByApprovalToken(token: string): Promise<User | undefined>;
   setUserApprovalEmailNotified(id: number, notified: boolean): Promise<void>;
@@ -227,6 +228,9 @@ export class DatabaseStorage implements IStorage {
   }
   async updateUserStatus(id: number, status: string) {
     return db.update(users).set({ status }).where(eq(users.id, id)).returning().get();
+  }
+  async updateUserPassword(id: number, passwordHash: string) {
+    return db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning().get();
   }
   async setUserApprovalToken(id: number, token: string | null) {
     db.update(users).set({ approvalToken: token }).where(eq(users.id, id)).run();

@@ -86,6 +86,12 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
 // ---------- WEBAUTHN CREDENTIALS (Face ID / Fingerprint login) ----------
 // One row per registered passkey/authenticator (a partner or student may
 // register several devices — e.g. an iPhone and a laptop). credentialId and

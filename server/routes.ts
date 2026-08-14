@@ -13,7 +13,7 @@ import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import { sendEmail, buildRegistrationEmailHtml } from "./email";
 import {
-  registerSchema, loginSchema, insertProductSchema, insertPriceTierSchema,
+  registerSchema, loginSchema, changePasswordSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
@@ -390,6 +390,19 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", requireAuth, async (req: AuthedRequest, res) => {
     res.json(req.user);
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (req: AuthedRequest, res) => {
+    const parsed = changePasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const { currentPassword, newPassword } = parsed.data;
+    const user = await storage.getUser(req.user!.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) return res.status(401).json({ message: "Current password is incorrect" });
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await storage.updateUserPassword(user.id, passwordHash);
+    res.json({ ok: true });
   });
 
   app.post("/api/auth/dismiss-install-banner", requireAuth, async (req: AuthedRequest, res) => {
