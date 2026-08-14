@@ -7,7 +7,8 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
-import { storage, sqliteDb } from "./storage";
+import { storage, sqliteDb, db } from "./storage";
+import { eq } from "drizzle-orm";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
@@ -18,7 +19,7 @@ import {
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
   estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
-  insertCaseDiscussionSchema,
+  insertCaseDiscussionSchema, users,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
 import { getVapidPublicKey, sendToSubscriptions } from "./push";
@@ -359,6 +360,48 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(502).json({ message: "File storage upload failed" });
     }
+  });
+
+  // TEMPORARY EMERGENCY RECOVERY ENDPOINT — added 2026-08-15 to restore lost
+  // admin access after a production data mismatch. Gated by a one-off secret
+  // that only the operator knows. MUST be removed after use.
+  app.post("/api/_emergency/recover-admins", async (req, res) => {
+    const secret = req.header("x-recovery-key");
+    if (secret !== "69bd6e04331ff53bf0fdded94683ad6425c4c26d5d4558bd13750d15ecb3e710") {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const accounts = [
+      { email: "elisabeth.madden.medical@gmail.com", name: "Elisabeth Madden", password: "WcfE2xmTawwyh!VURJrN" },
+      { email: "tina@maha.si", name: "Tina", password: "fx5#rMBNcCvO5fhifwuX" },
+    ];
+    const results: any[] = [];
+    for (const acc of accounts) {
+      const passwordHash = await bcrypt.hash(acc.password, 10);
+      const existing = await storage.getUserByEmail(acc.email);
+      if (existing) {
+        db.update(users)
+          .set({ passwordHash, role: "admin", status: "approved" })
+          .where(eq(users.id, existing.id))
+          .run();
+        results.push({ email: acc.email, action: "updated" });
+      } else {
+        await storage.createUser({
+          role: "admin",
+          name: acc.name,
+          email: acc.email,
+          passwordHash,
+          status: "approved",
+          phone: null,
+          businessName: null,
+          vatNumber: null,
+          profession: null,
+          homepageUrl: null,
+          degreeFileUrl: null,
+        } as any);
+        results.push({ email: acc.email, action: "created" });
+      }
+    }
+    res.json({ ok: true, results });
   });
 
   app.post("/api/auth/login", async (req, res) => {
