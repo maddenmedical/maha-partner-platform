@@ -104,35 +104,35 @@ export default function Login() {
           className="absolute inset-0 w-full h-full object-cover object-[center_30%]"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(240_20%_12%/0.88)] via-[hsl(240_20%_14%/0.35)] to-[hsl(240_20%_14%/0.15)]" />
-        <div className="relative z-10 flex flex-col justify-end p-10" data-testid="panel-login-stats">
-          <div className="flex flex-col gap-2.5 max-w-sm">
-            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+        <div className="relative z-10 flex flex-col justify-end p-10 lg:p-16" data-testid="panel-login-stats">
+          <div className="flex flex-col gap-3 lg:gap-4 max-w-sm lg:max-w-lg">
+            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">60–80%</span> of your patients have gut dysbiosis
             </p>
-            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">90%</span> of your patients have gum inflammation
             </p>
-            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">50%</span> of your patients have periodontal infections
             </p>
-            <p className="font-serif text-xl text-[#f5efe4] leading-snug">
+            <p className="font-serif text-xl lg:text-3xl text-[#f5efe4] leading-snug">
               <span className="font-semibold">50%</span> of your patients have root canals
             </p>
           </div>
-          <p className="text-sm text-[#e8ded0]/80 mt-4 max-w-sm">MAHA Partner Portal</p>
+          <p className="text-sm lg:text-base text-[#e8ded0]/80 mt-4 lg:mt-6 max-w-sm">MAHA Partner Portal</p>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-md shadow-lg">
-        <CardHeader className="flex flex-col items-center gap-3 pb-2 pt-8">
-          <MahaWordmark width={220} />
-          <p className="text-base text-muted-foreground text-center">Partner Portal — sign in to your account</p>
+      <Card className="w-full max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl shadow-lg">
+        <CardHeader className="flex flex-col items-center gap-3 lg:gap-4 pb-2 pt-8 lg:pt-12">
+          <MahaWordmark width={260} />
+          <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Portal — sign in to your account</p>
         </CardHeader>
-        <CardContent className="p-8 pt-4">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="email" className="text-base">Email</Label>
+        <CardContent className="p-8 lg:p-12 pt-4 lg:pt-6">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-5 lg:gap-6">
+            <div className="flex flex-col gap-2 lg:gap-3">
+              <Label htmlFor="email" className="text-base lg:text-lg">Email</Label>
               <Input
                 id="email"
                 type="email"
@@ -140,12 +140,12 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@clinic.com"
-                className="h-12 text-base"
+                className="h-12 lg:h-14 text-base lg:text-lg"
                 data-testid="input-email"
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="text-base">Password</Label>
+            <div className="flex flex-col gap-2 lg:gap-3">
+              <Label htmlFor="password" className="text-base lg:text-lg">Password</Label>
               <Input
                 id="password"
                 type="password"
@@ -153,17 +153,17 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="h-12 text-base"
+                className="h-12 lg:h-14 text-base lg:text-lg"
                 data-testid="input-password"
               />
             </div>
             {error && (
-              <div className="flex items-start gap-2 text-sm text-destructive" data-testid="text-login-error">
+              <div className="flex items-start gap-2 text-sm lg:text-base text-destructive" data-testid="text-login-error">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
-            <Button type="submit" disabled={submitting} className="h-12 text-base font-medium" data-testid="button-submit-login">
+            <Button type="submit" disabled={submitting} className="h-12 lg:h-14 text-base lg:text-lg font-medium" data-testid="button-submit-login">
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Sign in
             </Button>
@@ -178,7 +178,7 @@ export default function Login() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full h-12 text-base font-medium"
+                className="w-full h-12 lg:h-14 text-base lg:text-lg font-medium"
                 disabled={passkeySubmitting}
                 onClick={handlePasskeyLogin}
                 data-testid="button-passkey-login"
@@ -192,7 +192,7 @@ export default function Login() {
               </Button>
             </>
           )}
-          <p className="text-base text-muted-foreground text-center mt-6">
+          <p className="text-base lg:text-lg text-muted-foreground text-center mt-6">
             New partner or student?{" "}
             <Link href="/register" className="text-primary font-medium" data-testid="link-register">
               Register here
