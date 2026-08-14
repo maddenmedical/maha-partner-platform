@@ -10,6 +10,7 @@ import { storage, sqliteDb } from "./storage";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
+import { sendEmail, buildRegistrationEmailHtml } from "./email";
 import {
   registerSchema, loginSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
@@ -35,6 +36,10 @@ import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simp
 // event. No expiry, no per-user limit, by explicit request.
 const SYMPOSIUM_REDEEM_CODE = "castlemaha2026";
 const SYMPOSIUM_COURSE_NAME = "Maha Symposium lectures";
+
+// Base URL used to build absolute links (approve/decline, document view) inside
+// outbound emails. Falls back to the known published production URL.
+const APP_BASE_URL = process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -172,12 +177,14 @@ export async function registerRoutes(
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const fullName = [data.prefix, data.firstName, data.lastName, data.suffix].filter(Boolean).join(" ");
+    const approvalToken = crypto.randomBytes(24).toString("hex");
     const user = await storage.createUser({
       role: data.role,
       name: fullName,
       email: data.email,
       passwordHash,
       status: "pending",
+      approvalToken,
       phone: data.phone,
       businessName: data.businessName || null,
       vatNumber: data.vatNumber || null,
@@ -194,7 +201,84 @@ export async function registerRoutes(
       country: data.country || null,
       additionalInfo: data.additionalInfo,
     } as any);
+
+    // Notify partner@maha.clinic with the full registration and one-click
+    // approve/decline links. Never let an email hiccup fail the signup itself.
+    try {
+      const html = buildRegistrationEmailHtml({
+        fullName,
+        role: data.role,
+        email: data.email,
+        phone: data.phone,
+        username: data.username,
+        businessName: data.businessName,
+        vatNumber: data.vatNumber,
+        profession: data.profession,
+        homepageUrl: data.homepageUrl,
+        city: data.city,
+        address: data.address,
+        country: data.country,
+        additionalInfo: data.additionalInfo,
+        degreeFileUrl: data.degreeFileUrl ? `${APP_BASE_URL}/api/admin/registration-document?token=${approvalToken}` : null,
+        approveUrl: `${APP_BASE_URL}/api/admin/registration-action?token=${approvalToken}&action=approve`,
+        declineUrl: `${APP_BASE_URL}/api/admin/registration-action?token=${approvalToken}&action=decline`,
+      });
+      await sendEmail(["partner@maha.clinic"], `New ${data.role} registration: ${fullName}`, html);
+      await storage.setUserApprovalEmailNotified(user.id, true);
+    } catch (err) {
+      console.error("[register] failed to send approval email:", err);
+    }
+
     res.json({ id: user.id, status: user.status });
+  });
+
+  // One-click approve/decline links from the registration notification email.
+  // No login required — the random token itself is the credential, and it is
+  // cleared after first use so a link can't be replayed.
+  app.get("/api/admin/registration-action", async (req, res) => {
+    const token = String(req.query.token || "");
+    const action = String(req.query.action || "");
+    const page = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+      <style>body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:64px auto;padding:0 24px;color:#222;}h1{font-size:20px;}a{color:#b8860b;}</style>
+      </head><body><h1>${title}</h1><p>${body}</p></body></html>`;
+
+    if (!token || !["approve", "decline"].includes(action)) {
+      return res.status(400).send(page("Invalid link", "This link is missing required information."));
+    }
+    const user = await storage.getUserByApprovalToken(token);
+    if (!user) {
+      return res.status(410).send(page("Link already used", "This registration has already been reviewed, or the link is invalid."));
+    }
+    const status = action === "approve" ? "approved" : "rejected";
+    await storage.updateUserStatus(user.id, status);
+    await storage.setUserApprovalToken(user.id, null);
+    const verb = action === "approve" ? "approved" : "declined";
+    res.send(page(`Registration ${verb}`, `${user.name}'s ${user.role} registration request has been ${verb}. They will be notified the next time they try to sign in.`));
+  });
+
+  // Token-gated document view so the degree/license file can be opened directly
+  // from the notification email without requiring the reviewer to be logged in.
+  // Only works while the token is still active (i.e. before a decision is made).
+  app.get("/api/admin/registration-document", async (req, res) => {
+    const token = String(req.query.token || "");
+    if (!token) return res.status(400).json({ message: "Missing token" });
+    const user = await storage.getUserByApprovalToken(token);
+    if (!user || !user.degreeFileUrl) return res.status(404).json({ message: "Not found" });
+    const driveFileId = user.degreeFileUrl.split("/").pop()!;
+    const rec = await storage.getUploadedFileByDriveId(driveFileId);
+    if (!rec) return res.status(404).json({ message: "Not found" });
+    try {
+      const stream = await streamFromDrive(rec.driveFileId);
+      res.setHeader("Content-Type", rec.mimeType);
+      res.setHeader("Content-Disposition", `inline; filename="${rec.filename.replace(/"/g, "")}"`);
+      stream.on("error", () => {
+        if (!res.headersSent) res.status(502).json({ message: "Failed to fetch file" });
+        else res.end();
+      });
+      stream.pipe(res);
+    } catch {
+      res.status(502).json({ message: "Failed to fetch file from storage" });
+    }
   });
 
   // Shared upload endpoint for registration documents (pre-auth) and referral

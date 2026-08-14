@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { storage, sqliteDb } from "./storage";
 import { startCaseDiscussionScheduler } from "./caseDiscussionScheduler";
 import { startBackupScheduler } from "./backupScheduler";
+import { startNotificationScheduler } from "./notificationScheduler";
 import { createServer } from "node:http";
 
 const app = express();
@@ -84,6 +85,15 @@ app.use((req, res, next) => {
     console.error("[backup] failed to start scheduler:", err);
   }
 
+  // Start the in-process referral/order email-notification scheduler (polls
+  // every 2 minutes for new, unnotified rows and emails the relevant MAHA
+  // team addresses). Wrapped so a failure here never prevents server boot.
+  try {
+    startNotificationScheduler(storage);
+  } catch (err) {
+    console.error("[notification-scheduler] failed to start:", err);
+  }
+
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -112,10 +122,11 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST || "0.0.0.0";
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host,
       reusePort: true,
     },
     () => {

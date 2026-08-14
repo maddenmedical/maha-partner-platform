@@ -10,6 +10,10 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   status: text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  // One-click approve/decline link sent to partner@maha.clinic on signup.
+  // Cleared once acted upon so the link can't be reused after a decision.
+  approvalToken: text("approval_token"),
+  approvalEmailNotified: integer("approval_email_notified", { mode: "boolean" }).notNull().default(false),
   phone: text("phone"),
   businessName: text("business_name"),
   vatNumber: text("vat_number"),

@@ -44,6 +44,9 @@ export interface IStorage {
   getUserByWpUserId(wpUserId: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserStatus(id: number, status: string): Promise<User | undefined>;
+  setUserApprovalToken(id: number, token: string | null): Promise<void>;
+  getUserByApprovalToken(token: string): Promise<User | undefined>;
+  setUserApprovalEmailNotified(id: number, notified: boolean): Promise<void>;
   dismissInstallBanner(id: number): Promise<User | undefined>;
   listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
   listAdmins(): Promise<User[]>;
@@ -223,6 +226,15 @@ export class DatabaseStorage implements IStorage {
   }
   async updateUserStatus(id: number, status: string) {
     return db.update(users).set({ status }).where(eq(users.id, id)).returning().get();
+  }
+  async setUserApprovalToken(id: number, token: string | null) {
+    db.update(users).set({ approvalToken: token }).where(eq(users.id, id)).run();
+  }
+  async getUserByApprovalToken(token: string) {
+    return db.select().from(users).where(eq(users.approvalToken, token)).get();
+  }
+  async setUserApprovalEmailNotified(id: number, notified: boolean) {
+    db.update(users).set({ approvalEmailNotified: notified }).where(eq(users.id, id)).run();
   }
   async dismissInstallBanner(id: number) {
     return db.update(users).set({ installBannerDismissedAt: Date.now() }).where(eq(users.id, id)).returning().get();

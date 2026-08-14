@@ -15,12 +15,17 @@ export function getAuthToken() {
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let message = res.statusText;
-    try {
-      const data = await res.json();
-      message = data.message || message;
-    } catch {
-      const text = await res.text();
-      if (text) message = text;
+    // Read the body as text ONCE (Response bodies can only be consumed a
+    // single time — calling .json() and then .text() on failure throws
+    // "body stream already read" and hides the real error from the user).
+    const raw = await res.text().catch(() => "");
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        message = data.message || message;
+      } catch {
+        message = raw;
+      }
     }
     throw new Error(message);
   }
