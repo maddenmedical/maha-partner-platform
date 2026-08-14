@@ -6,6 +6,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
+import { parse as parseCookie, serialize as serializeCookie } from "cookie";
 import { storage, sqliteDb } from "./storage";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { backupDatabaseToDrive } from "./backup";
@@ -55,12 +56,54 @@ interface AuthedRequest extends Request {
   user?: { id: number; role: string; name: string; email: string; status: string; installBannerDismissedAt: number | null };
 }
 
+// The session lives in an httpOnly cookie rather than a client-readable
+// Bearer token, so a login survives page reloads without needing localStorage
+// (which is unavailable both in the sandboxed preview iframe and — by policy
+// on this platform — isn't the right place for auth tokens anyway). In
+// production the cookie uses the __Host- prefix, which the publishing proxy
+// requires to avoid being stripped for cross-tenant isolation; that prefix
+// mandates the Secure attribute, so we only use it when actually serving over
+// HTTPS (production) and fall back to a plain cookie in local dev.
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const SESSION_COOKIE_NAME = IS_PRODUCTION ? "__Host-sid" : "sid";
+
+function getSessionToken(req: Request): string | undefined {
+  const raw = req.headers.cookie;
+  if (!raw) return undefined;
+  return parseCookie(raw)[SESSION_COOKIE_NAME];
+}
+
+function setSessionCookie(res: Response, token: string, expiresAt: number) {
+  res.setHeader(
+    "Set-Cookie",
+    serializeCookie(SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: IS_PRODUCTION,
+      sameSite: "lax",
+      path: "/",
+      expires: new Date(expiresAt),
+    }),
+  );
+}
+
+function clearSessionCookie(res: Response) {
+  res.setHeader(
+    "Set-Cookie",
+    serializeCookie(SESSION_COOKIE_NAME, "", {
+      httpOnly: true,
+      secure: IS_PRODUCTION,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    }),
+  );
+}
+
 async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  const token = getSessionToken(req);
+  if (!token) {
     return res.status(401).json({ message: "Not authenticated" });
   }
-  const token = header.slice(7);
   const session = await storage.getSession(token);
   if (!session || session.expiresAt < Date.now()) {
     return res.status(401).json({ message: "Session expired" });
@@ -69,17 +112,26 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
   if (!user || user.status !== "approved") {
     return res.status(401).json({ message: "Account not approved" });
   }
+  // Sliding expiry: push the session another 90 days out whenever it's used,
+  // so active users never hit the limit. Only rewrite once/day to avoid a
+  // database write on every single API call.
+  if (session.expiresAt - Date.now() < NINETY_DAYS - SESSION_REFRESH_THRESHOLD) {
+    const newExpiry = Date.now() + NINETY_DAYS;
+    await storage.updateSessionExpiry(token, newExpiry);
+    setSessionCookie(res, token, newExpiry);
+  }
   req.user = { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt };
   next();
 }
 
-// Resolves the authenticated user if a valid Bearer token is present, otherwise
-// returns undefined. Used by the shared upload-document endpoint, which is hit
-// both pre-auth (registration) and authenticated (referral attachments).
+// Resolves the authenticated user if a valid session cookie is present,
+// otherwise returns undefined. Used by the shared upload-document endpoint,
+// which is hit both pre-auth (registration) and authenticated (referral
+// attachments).
 async function getOptionalUser(req: Request): Promise<AuthedRequest["user"] | undefined> {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) return undefined;
-  const session = await storage.getSession(header.slice(7));
+  const token = getSessionToken(req);
+  if (!token) return undefined;
+  const session = await storage.getSession(token);
   if (!session || session.expiresAt < Date.now()) return undefined;
   const user = await storage.getUser(session.userId);
   if (!user || user.status !== "approved") return undefined;
@@ -103,7 +155,11 @@ function requireNotifyKey(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+// Sessions last 90 days and slide forward on every authenticated request, so
+// an actively-used login effectively never expires; only 90 days of total
+// inactivity logs someone out.
+const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+const SESSION_REFRESH_THRESHOLD = 24 * 60 * 60 * 1000; // only rewrite the row once/day of use
 
 export async function registerRoutes(
   httpServer: Server,
@@ -317,16 +373,18 @@ export async function registerRoutes(
       return res.status(403).json({ message: "pending", status: user.status });
     }
     const token = crypto.randomBytes(32).toString("hex");
-    await storage.createSession({ token, userId: user.id, expiresAt: Date.now() + SEVEN_DAYS });
+    const expiresAt = Date.now() + NINETY_DAYS;
+    await storage.createSession({ token, userId: user.id, expiresAt });
+    setSessionCookie(res, token, expiresAt);
     res.json({
-      token,
       user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
     });
   });
 
   app.post("/api/auth/logout", requireAuth, async (req: AuthedRequest, res) => {
-    const header = req.headers.authorization!;
-    await storage.deleteSession(header.slice(7));
+    const token = getSessionToken(req);
+    if (token) await storage.deleteSession(token);
+    clearSessionCookie(res);
     res.json({ ok: true });
   });
 
@@ -397,9 +455,10 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Account not approved" });
     }
     const token = crypto.randomBytes(32).toString("hex");
-    await storage.createSession({ token, userId: user.id, expiresAt: Date.now() + SEVEN_DAYS });
+    const expiresAt = Date.now() + NINETY_DAYS;
+    await storage.createSession({ token, userId: user.id, expiresAt });
+    setSessionCookie(res, token, expiresAt);
     res.json({
-      token,
       user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
     });
   });

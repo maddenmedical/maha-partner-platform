@@ -2,15 +2,13 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
-// Auth token is kept in memory only (never localStorage/sessionStorage/cookies —
-// blocked in the sandboxed preview iframe). Set by AuthContext on login/logout.
-let authToken: string | null = null;
-export function setAuthToken(token: string | null) {
-  authToken = token;
-}
-export function getAuthToken() {
-  return authToken;
-}
+// The session lives in an httpOnly cookie set by the server (see
+// server/routes.ts), not in JS-readable storage. This means a login survives
+// page reloads and re-opening the installed app for up to the 90-day
+// server-side session window, without touching localStorage/sessionStorage
+// (unavailable in the sandboxed preview iframe, and not appropriate for auth
+// tokens anyway). `credentials: "include"` ensures the cookie is sent on
+// every request.
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -39,11 +37,11 @@ export async function apiRequest(
 ): Promise<Response> {
   const headers: Record<string, string> = {};
   if (data && !isFormData) headers["Content-Type"] = "application/json";
-  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const res = await fetch(`${API_BASE}${url}`, {
     method,
     headers,
+    credentials: "include",
     body: isFormData ? (data as FormData) : data ? JSON.stringify(data) : undefined,
   });
 
@@ -57,10 +55,7 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const headers: Record<string, string> = {};
-    if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-
-    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, { headers });
+    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, { credentials: "include" });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

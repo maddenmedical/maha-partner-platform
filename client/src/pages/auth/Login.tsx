@@ -16,7 +16,7 @@ import { browserSupportsWebAuthn, loginWithPasskey } from "@/lib/webauthn";
 import loginPhoto from "@/assets/brand/handshake-supplement.jpg";
 
 export default function Login() {
-  const { login, loginWithToken, pendingState, clearPending } = useAuth();
+  const { login, loginWithUser, pendingState, clearPending } = useAuth();
   const { theme, toggle } = useTheme();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -46,8 +46,8 @@ export default function Login() {
     setError("");
     setPasskeySubmitting(true);
     try {
-      const { token, user } = await loginWithPasskey();
-      loginWithToken(token, user);
+      const { user } = await loginWithPasskey();
+      loginWithUser(user);
     } catch (err: any) {
       // The browser throws its own error (e.g. "NotAllowedError") when the
       // user cancels the biometric prompt — don't show that as a scary error.

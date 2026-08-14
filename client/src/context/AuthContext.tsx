@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
-import { setAuthToken, apiRequest } from "@/lib/queryClient";
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
+import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 
 export type AuthUser = {
@@ -17,12 +17,16 @@ interface AuthContextValue {
   user: AuthUser | null;
   pendingState: PendingState;
   loading: boolean;
+  // True only during the initial app load while we try to restore a
+  // previously persisted session; distinct from `loading`, which reflects an
+  // in-flight login submission.
+  bootstrapping: boolean;
   login: (email: string, password: string) => Promise<void>;
   // Used by the Face ID / Fingerprint (WebAuthn) login flow, which resolves
-  // its own token+user pair via a separate verify call rather than the
-  // email/password endpoint.
-  loginWithToken: (token: string, authUser: AuthUser) => void;
-  logout: () => void;
+  // its own user via a separate verify call (the server sets the session
+  // cookie on that response) rather than the email/password endpoint.
+  loginWithUser: (authUser: AuthUser) => void;
+  logout: () => Promise<void>;
   clearPending: () => void;
   markInstallBannerDismissed: () => void;
 }
@@ -33,6 +37,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [pendingState, setPendingState] = useState<PendingState>(null);
   const [loading, setLoading] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(true);
+
+  // On first load, check whether a session cookie survived from a previous
+  // visit (the cookie itself is httpOnly and invisible to JS, so we always
+  // just ask the server). The server session lasts 90 days and slides
+  // forward on use, so this effectively keeps active users signed in
+  // indefinitely without ever touching client-side storage.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/auth/me");
+        const authUser = await res.json();
+        setUser(authUser);
+      } catch {
+        // No valid session cookie — fall back to the login screen.
+      } finally {
+        setBootstrapping(false);
+      }
+    })();
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
@@ -43,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({ email, password }),
         }
       );
@@ -54,21 +79,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         throw new Error(data.message || "Login failed");
       }
-      setAuthToken(data.token);
       setUser(data.user);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const loginWithToken = useCallback((token: string, authUser: AuthUser) => {
+  const loginWithUser = useCallback((authUser: AuthUser) => {
     setPendingState(null);
-    setAuthToken(token);
     setUser(authUser);
   }, []);
 
-  const logout = useCallback(() => {
-    setAuthToken(null);
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest("POST", "/api/auth/logout");
+    } catch {
+      // Even if the request fails, still clear local state below.
+    }
     setUser(null);
     queryClient.clear();
   }, []);
@@ -81,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, pendingState, loading, login, loginWithToken, logout, clearPending, markInstallBannerDismissed }}
+      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, clearPending, markInstallBannerDismissed }}
     >
       {children}
     </AuthContext.Provider>

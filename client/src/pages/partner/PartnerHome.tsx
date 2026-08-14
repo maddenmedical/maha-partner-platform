@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
-import { apiRequest, getAuthToken } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { titleAndSurnameOf } from "@/lib/utils";
 import type { CaseDiscussion } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,14 +60,12 @@ function CaseDiscussionsSection() {
     onError: () => toast({ title: "Could not cancel", description: "Please try again.", variant: "destructive" }),
   });
 
-  // The .ics endpoint requires the in-memory Bearer token, so a plain <a href>
-  // can't reach it. Fetch with the auth header, then trigger a blob download.
+  // The .ics endpoint requires the session cookie, so a plain <a href> can't
+  // reach it cleanly. Fetch with the cookie included, then trigger a blob
+  // download.
   async function downloadIcal(id: number) {
     try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE}/api/case-discussions/${id}/ical`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await fetch(`${API_BASE}/api/case-discussions/${id}/ical`, { credentials: "include" });
       if (!res.ok) throw new Error("download_failed");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);

@@ -8,7 +8,7 @@ import type { AuthUser } from "@/context/AuthContext";
 export { browserSupportsWebAuthn };
 
 // Registers a new passkey for the CURRENTLY authenticated user (requires an
-// existing Bearer token — used from account settings, never from the login
+// existing session — used from account settings, never from the login
 // page).
 export async function registerPasskey(): Promise<void> {
   const optionsRes = await apiRequest("POST", "/api/webauthn/register/options");
@@ -18,8 +18,9 @@ export async function registerPasskey(): Promise<void> {
 }
 
 // Signs the user in via a previously-registered passkey. No auth required —
-// this IS the login. Returns the session token + user on success.
-export async function loginWithPasskey(): Promise<{ token: string; user: AuthUser }> {
+// this IS the login. The server sets the session cookie on this response, so
+// we only need to return the user.
+export async function loginWithPasskey(): Promise<{ user: AuthUser }> {
   const optionsRes = await apiRequest("GET", "/api/webauthn/login/options");
   const optionsJSON = await optionsRes.json();
   const response = await startAuthentication({ optionsJSON });

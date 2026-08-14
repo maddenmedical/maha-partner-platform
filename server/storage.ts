@@ -62,6 +62,7 @@ export interface IStorage {
   // sessions
   createSession(session: Session): Promise<Session>;
   getSession(token: string): Promise<Session | undefined>;
+  updateSessionExpiry(token: string, expiresAt: number): Promise<void>;
   deleteSession(token: string): Promise<void>;
 
   // webauthn credentials (Face ID / Fingerprint login)
@@ -278,6 +279,9 @@ export class DatabaseStorage implements IStorage {
   }
   async getSession(token: string) {
     return db.select().from(sessions).where(eq(sessions.token, token)).get();
+  }
+  async updateSessionExpiry(token: string, expiresAt: number) {
+    db.update(sessions).set({ expiresAt }).where(eq(sessions.token, token)).run();
   }
   async deleteSession(token: string) {
     db.delete(sessions).where(eq(sessions.token, token)).run();

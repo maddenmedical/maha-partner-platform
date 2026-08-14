@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest, getAuthToken } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import type { Course, Video } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -87,12 +87,8 @@ export default function Videos() {
     mutationFn: async ({ courseId, code }: { courseId: number; code: string }) => {
       const res = await fetch("/api/courses/redeem-code", {
         method: "POST",
-        headers: (() => {
-          const h: Record<string, string> = { "Content-Type": "application/json" };
-          const token = getAuthToken();
-          if (token) h["Authorization"] = `Bearer ${token}`;
-          return h;
-        })(),
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ code }),
       });
       if (!res.ok) {
@@ -115,10 +111,7 @@ export default function Videos() {
     mutationFn: async (courseId: number) => {
       // Manual fetch (not apiRequest) so we can inspect the 503 gate body
       // without the shared error-throwing wrapper swallowing it.
-      const headers: Record<string, string> = {};
-      const token = getAuthToken();
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`/api/courses/${courseId}/checkout`, { method: "POST", headers });
+      const res = await fetch(`/api/courses/${courseId}/checkout`, { method: "POST", credentials: "include" });
       if (res.status === 503) {
         const body = await res.json().catch(() => ({}));
         if (body?.error === "payments_not_configured") {

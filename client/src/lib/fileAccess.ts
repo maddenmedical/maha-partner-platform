@@ -1,15 +1,10 @@
-import { getAuthToken } from "./queryClient";
-
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
-// Files are served by an authenticated proxy that requires the in-memory Bearer
-// token, so a plain <a href> can't reach them. This fetches the file with the
-// auth header and opens it in a new tab via a blob URL.
+// Files are served by an authenticated proxy that requires the session
+// cookie, so a plain <a href> can't reach them cleanly. This fetches the file
+// with the cookie included and opens it in a new tab via a blob URL.
 export async function openAuthedFile(url: string): Promise<void> {
-  const token = getAuthToken();
-  const res = await fetch(`${API_BASE}${url}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await fetch(`${API_BASE}${url}`, { credentials: "include" });
   if (!res.ok) {
     let message = "Could not open file";
     try {

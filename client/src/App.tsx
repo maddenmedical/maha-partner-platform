@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import NotFound from "@/pages/not-found";
+import { Loader2 } from "lucide-react";
 
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
@@ -165,7 +166,17 @@ function AuthedApp() {
 }
 
 function RootRouter() {
-  const { user } = useAuth();
+  const { user, bootstrapping } = useAuth();
+
+  // While restoring a persisted session on first load, avoid flashing the
+  // login screen before we know whether the user is already signed in.
+  if (bootstrapping) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" data-testid="loader-session-restore" />
+      </div>
+    );
+  }
 
   if (!user) {
     return (
