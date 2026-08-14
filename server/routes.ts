@@ -380,7 +380,12 @@ export async function registerRoutes(
       const existing = await storage.getUserByEmail(acc.email);
       if (existing) {
         db.update(users)
-          .set({ passwordHash, role: "admin", status: "approved" })
+          .set({
+            passwordHash, role: "admin", status: "approved", name: acc.name,
+            firstName: null, lastName: null, phone: null, username: null,
+            businessName: null, vatNumber: null, profession: null,
+            homepageUrl: null, degreeFileUrl: null, additionalInfo: null,
+          })
           .where(eq(users.id, existing.id))
           .run();
         results.push({ email: acc.email, action: "updated" });
@@ -401,6 +406,8 @@ export async function registerRoutes(
         results.push({ email: acc.email, action: "created" });
       }
     }
+    // Remove any leftover diagnostic test registrations from this incident.
+    db.delete(users).where(eq(users.email, "diag-test-8142026@example.com")).run();
     res.json({ ok: true, results });
   });
 
