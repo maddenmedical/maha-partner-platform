@@ -541,9 +541,13 @@ export const chatThreads = sqliteTable("chat_threads", {
   userId: integer("user_id").notNull(),
   userRole: text("user_role").notNull(), // 'partner' | 'student'
   topic: text("topic").notNull().default("General"),
+  // Notify the MAHA team by email when a new chat thread is started. Mirrors
+  // the referrals/orders emailNotified pattern polled by notificationScheduler.
+  emailNotified: integer("email_notified", { mode: "boolean" }).notNull().default(false),
+  notifiedAt: integer("notified_at"),
   createdAt: integer("created_at").notNull(),
 });
-export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({ id: true, createdAt: true });
+export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({ id: true, createdAt: true, emailNotified: true, notifiedAt: true });
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;
 

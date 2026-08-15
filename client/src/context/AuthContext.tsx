@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
+import { navigate } from "wouter/use-hash-location";
 
 export type AuthUser = {
   id: number;
@@ -50,6 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await apiRequest("GET", "/api/auth/me");
         const authUser = await res.json();
         setUser(authUser);
+        // Guard against a stale bookmarked/shared "/register" link opened by
+        // a browser that already has a valid session — that path only exists
+        // in the logged-out shell and would otherwise 404 in the app shell.
+        if (location.hash.replace(/^#\/?/, "") === "register") {
+          navigate("/", { replace: true });
+        }
       } catch {
         // No valid session cookie — fall back to the login screen.
       } finally {
@@ -80,6 +87,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(data.message || "Login failed");
       }
       setUser(data.user);
+      // The hash location (e.g. "/register" if the visitor was on the sign-up
+      // page, or a stale deep link from a previous session) may not exist as a
+      // route in the freshly-mounted role-specific app shell. Reset to the
+      // home tab so a successful login never lands on a 404.
+      navigate("/", { replace: true });
     } finally {
       setLoading(false);
     }
@@ -88,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithUser = useCallback((authUser: AuthUser) => {
     setPendingState(null);
     setUser(authUser);
+    navigate("/", { replace: true });
   }, []);
 
   const logout = useCallback(async () => {
@@ -98,6 +111,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     queryClient.clear();
+    // Reset location too, so signing back in (possibly as a different role)
+    // never inherits a hash path that belongs to the previous role's shell.
+    navigate("/", { replace: true });
   }, []);
 
   const clearPending = useCallback(() => setPendingState(null), []);

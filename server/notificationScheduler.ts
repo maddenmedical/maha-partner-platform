@@ -9,6 +9,7 @@ const CHECK_INTERVAL_MS = 2 * 60_000; // every 2 minutes
 
 const REFERRAL_RECIPIENTS = ["partner@maha.clinic", "coordinator@maha.si"];
 const ORDER_RECIPIENTS = ["partner@maha.clinic", "tina@maha.si"];
+const CHAT_RECIPIENTS = ["partner@maha.clinic"];
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
@@ -76,6 +77,22 @@ export function startNotificationScheduler(storage: IStorage) {
         const orderResults = await sendEmail(ORDER_RECIPIENTS, `New order request from ${partner?.name || "a partner"}`, html);
         if (orderResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {
           await storage.markOrdersNotified([order.id], Date.now());
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      const threads = await storage.listUnnotifiedChatThreads();
+      for (const thread of threads) {
+        const starter = await storage.getUser(thread.userId);
+        const html = `
+          <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
+            <h2>New chat started</h2>
+            <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b> (${escapeHtml(thread.userRole)}) started a new chat: <b>${escapeHtml(thread.topic)}</b>.</p>
+            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Portal.</p>
+          </div>`;
+        const chatResults = await sendEmail(CHAT_RECIPIENTS, `New chat started: ${thread.topic}`, html);
+        if (chatResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {
+          await storage.markChatThreadsNotified([thread.id], Date.now());
         }
         await new Promise((resolve) => setTimeout(resolve, 300));
       }

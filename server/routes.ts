@@ -11,7 +11,7 @@ import { storage, sqliteDb } from "./storage";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
-import { sendEmail, buildRegistrationEmailHtml } from "./email";
+import { sendEmail, buildRegistrationEmailHtml, buildApprovalEmailHtml, buildDeclineEmailHtml } from "./email";
 import {
   registerSchema, loginSchema, changePasswordSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
@@ -38,13 +38,32 @@ import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simp
 const SYMPOSIUM_REDEEM_CODE = "castlemaha2026";
 const SYMPOSIUM_COURSE_NAME = "Maha Symposium lectures";
 
-// Base URL used to build absolute links (approve/decline, document view) inside
-// outbound emails. Falls back to the known published production URL. Published
-// pplx.app sites route backend API calls through /port/<PORT>/... — plain
-// /api/... paths hit the static asset server and 404. Append that prefix here
-// so every link built from APP_BASE_URL + "/api/..." resolves correctly on the
-// live site (and still works if APP_BASE_URL is overridden for another env).
-const APP_BASE_URL = `${process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app"}/port/5000`;
+// Base URL used to build absolute links inside outbound emails. Falls back to
+// the known published production URL.
+const SITE_ORIGIN = process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app";
+// Published pplx.app sites route backend API calls through /port/<PORT>/... —
+// plain /api/... paths hit the static asset server and 404. Append that
+// prefix so every backend link (approve/decline, document view) resolves
+// correctly on the live site (and still works if APP_BASE_URL is overridden
+// for another env).
+const APP_BASE_URL = `${SITE_ORIGIN}/port/5000`;
+// Frontend (non-API) links, e.g. the "Sign in now" button in the approval
+// email, must NOT include the /port/5000 API prefix — the SPA is served from
+// the plain site origin.
+const FRONTEND_SIGNIN_URL = `${SITE_ORIGIN}/`;
+
+// Notifies a registrant of the admin's approve/decline decision. Fire-and-
+// forget from the caller's perspective — failures are logged inside sendEmail
+// and never block the decision itself from taking effect.
+async function sendDecisionEmail(user: { name: string; role: string; email: string }, status: "approved" | "rejected") {
+  const html = status === "approved"
+    ? buildApprovalEmailHtml({ fullName: user.name, role: user.role, signInUrl: FRONTEND_SIGNIN_URL })
+    : buildDeclineEmailHtml({ fullName: user.name, role: user.role, signInUrl: FRONTEND_SIGNIN_URL });
+  const subject = status === "approved"
+    ? "Your MAHA Partner Portal registration has been approved"
+    : "Update on your MAHA Partner Portal registration";
+  await sendEmail([user.email], subject, html);
+}
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -312,8 +331,9 @@ export async function registerRoutes(
     const status = action === "approve" ? "approved" : "rejected";
     await storage.updateUserStatus(user.id, status);
     await storage.setUserApprovalToken(user.id, null);
+    await sendDecisionEmail(user, status);
     const verb = action === "approve" ? "approved" : "declined";
-    res.send(page(`Registration ${verb}`, `${user.name}'s ${user.role} registration request has been ${verb}. They will be notified the next time they try to sign in.`));
+    res.send(page(`Registration ${verb}`, `${user.name}'s ${user.role} registration request has been ${verb}. They have been notified by email.`));
   });
 
   // Token-gated document view so the degree/license file can be opened directly
@@ -1139,6 +1159,12 @@ export async function registerRoutes(
     }
     const updated = await storage.updateUserStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
+    // Mirror the one-click email link's notification behavior here too, so
+    // registrants reviewed from the admin dashboard also hear back.
+    if (status === "approved" || status === "rejected") {
+      await storage.setUserApprovalToken(updated.id, null);
+      await sendDecisionEmail(updated, status);
+    }
     res.json(updated);
   });
 

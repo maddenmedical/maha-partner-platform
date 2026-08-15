@@ -14,8 +14,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Loader2, Upload, CheckCircle2 } from "lucide-react";
+import { ClipboardList, Loader2, Upload, CheckCircle2, FileText } from "lucide-react";
+import { openAuthedFile } from "@/lib/fileAccess";
 import { format } from "date-fns";
 
 const formSchema = insertReferralSchema.omit({ partnerId: true }).extend({
@@ -44,6 +46,7 @@ export default function ReferPatient() {
   });
 
   const { data: referrals, isLoading } = useQuery<Referral[]>({ queryKey: ["/api/referrals/mine"] });
+  const [selected, setSelected] = useState<Referral | null>(null);
 
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
@@ -167,7 +170,12 @@ export default function ReferPatient() {
         ) : (
           <div className="flex flex-col gap-2">
             {referrals.map((r) => (
-              <Card key={r.id} data-testid={`card-referral-${r.id}`}>
+              <Card
+                key={r.id}
+                className="cursor-pointer hover-elevate active-elevate-2"
+                onClick={() => setSelected(r)}
+                data-testid={`card-referral-${r.id}`}
+              >
                 <CardContent className="p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{r.patientFirstName} {r.patientLastName}</p>
@@ -181,6 +189,52 @@ export default function ReferPatient() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent data-testid="dialog-referral-detail">
+          {selected && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{selected.patientFirstName} {selected.patientLastName}</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground/70">{format(new Date(selected.createdAt), "MMM d, yyyy")}</p>
+                  <StatusBadge status={selected.status} />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Patient contact</p>
+                  <p data-testid="text-referral-detail-contact">{selected.patientContact}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Urgency</p>
+                  <p data-testid="text-referral-detail-urgency">{selected.urgency}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Case description</p>
+                  <p className="whitespace-pre-wrap" data-testid="text-referral-detail-description">{selected.caseDescription}</p>
+                </div>
+                {selected.notes && (
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Notes</p>
+                    <p className="whitespace-pre-wrap" data-testid="text-referral-detail-notes">{selected.notes}</p>
+                  </div>
+                )}
+                {selected.attachmentUrl && (
+                  <button
+                    type="button"
+                    onClick={() => openAuthedFile(selected.attachmentUrl!).catch((e) => toast({ title: "Could not open attachment", description: e.message, variant: "destructive" }))}
+                    className="text-primary flex items-center gap-1.5 text-sm"
+                    data-testid="link-referral-detail-attachment"
+                  >
+                    <FileText className="h-4 w-4" /> View attachment
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

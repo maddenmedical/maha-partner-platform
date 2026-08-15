@@ -188,6 +188,8 @@ export interface IStorage {
   getThread(id: number): Promise<ChatThread | undefined>;
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
   listMessagesForThread(threadId: number): Promise<ChatMessage[]>;
+  markChatThreadsNotified(ids: number[], ts: number): Promise<void>;
+  listUnnotifiedChatThreads(): Promise<ChatThread[]>;
 
   // push subscriptions
   upsertPushSubscription(s: InsertPushSubscription): Promise<PushSubscriptionRow>;
@@ -598,7 +600,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createThread(userId: number, userRole: string, topic: string) {
-    return db.insert(chatThreads).values({ userId, userRole, topic, createdAt: Date.now() }).returning().get();
+    return db.insert(chatThreads).values({ userId, userRole, topic, emailNotified: false, notifiedAt: null, createdAt: Date.now() }).returning().get();
   }
   async listThreadsForUser(userId: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.userId, userId)).orderBy(desc(chatThreads.createdAt)).all();
@@ -608,6 +610,14 @@ export class DatabaseStorage implements IStorage {
   }
   async getThread(id: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.id, id)).get();
+  }
+  async markChatThreadsNotified(ids: number[], ts: number) {
+    for (const id of ids) {
+      db.update(chatThreads).set({ emailNotified: true, notifiedAt: ts }).where(eq(chatThreads.id, id)).run();
+    }
+  }
+  async listUnnotifiedChatThreads() {
+    return db.select().from(chatThreads).where(eq(chatThreads.emailNotified, false)).all();
   }
   async createMessage(m: any) {
     return db.insert(chatMessages).values({
