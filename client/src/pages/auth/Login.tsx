@@ -167,6 +167,9 @@ export default function Login() {
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Sign in
             </Button>
+            <Link href="/forgot-password" className="text-sm lg:text-base text-muted-foreground hover:text-foreground text-center -mt-1" data-testid="link-forgot-password">
+              Forgot password?
+            </Link>
           </form>
           {passkeySupported && (
             <>

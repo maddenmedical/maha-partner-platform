@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact,
 } from "lucide-react";
 
 const navItems = [
@@ -31,6 +31,7 @@ const navItems = [
   { href: "/admin/institute", label: "Institute", icon: GraduationCap, testId: "link-admin-institute" },
   { href: "/admin/chat", label: "Chat Inbox", icon: MessageSquare, testId: "link-admin-chat" },
   { href: "/admin/team", label: "Team", icon: Users, testId: "link-admin-team" },
+  { href: "/admin/partners", label: "All Partners", icon: Contact, testId: "link-admin-partners" },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone, testId: "link-admin-announcements" },
   { href: "/admin/case-discussions", label: "Case Discussions", icon: CalendarClock, testId: "link-admin-case-discussions" },
   { href: "/admin/migration", label: "Partner Migration", icon: UploadCloud, testId: "link-admin-migration" },

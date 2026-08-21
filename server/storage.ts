@@ -49,6 +49,8 @@ export interface IStorage {
   getUserByApprovalToken(token: string): Promise<User | undefined>;
   setUserApprovalEmailNotified(id: number, notified: boolean): Promise<void>;
   dismissInstallBanner(id: number): Promise<User | undefined>;
+  setPasswordResetToken(id: number, token: string | null, expiresAt: number | null): Promise<void>;
+  getUserByPasswordResetToken(token: string): Promise<User | undefined>;
   listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
   listAdmins(): Promise<User[]>;
   // migration (bulk-imported legacy partner.maha.clinic accounts)
@@ -245,6 +247,12 @@ export class DatabaseStorage implements IStorage {
   }
   async dismissInstallBanner(id: number) {
     return db.update(users).set({ installBannerDismissedAt: Date.now() }).where(eq(users.id, id)).returning().get();
+  }
+  async setPasswordResetToken(id: number, token: string | null, expiresAt: number | null) {
+    db.update(users).set({ passwordResetToken: token, passwordResetExpiresAt: expiresAt }).where(eq(users.id, id)).run();
+  }
+  async getUserByPasswordResetToken(token: string) {
+    return db.select().from(users).where(eq(users.passwordResetToken, token)).get();
   }
   async listUsersByRoleStatus(role?: string, status?: string) {
     let rows = db.select().from(users).all();
