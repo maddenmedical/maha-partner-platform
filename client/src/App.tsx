@@ -11,6 +11,7 @@ import { Loader2 } from "lucide-react";
 
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
+import Install from "@/pages/Install";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -198,7 +199,15 @@ function App() {
           <AuthProvider>
             <Toaster />
             <Router hook={useHashLocation}>
-              <RootRouter />
+              {/* /install is reachable regardless of auth/bootstrap state — it's the
+                  link partners get in onboarding emails, before they ever sign in. */}
+              <Switch>
+                <Route path="/install/:platform" component={Install} />
+                <Route path="/install" component={Install} />
+                <Route>
+                  <RootRouter />
+                </Route>
+              </Switch>
             </Router>
           </AuthProvider>
         </TooltipProvider>

@@ -21,6 +21,23 @@ export function isIos(): boolean {
   return iOSDevice || iPadOS;
 }
 
+export function isAndroid(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android/.test(navigator.userAgent || "");
+}
+
+// True for "real" macOS — excludes iPadOS, which also reports platform
+// "MacIntel" but is caught by isIos()'s touch-point check first.
+export function isMacOs(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Mac/.test(navigator.platform || "") && !isIos();
+}
+
+export function isWindows(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Win/.test(navigator.platform || navigator.userAgent || "");
+}
+
 export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   return (
