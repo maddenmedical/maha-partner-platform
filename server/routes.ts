@@ -13,7 +13,6 @@ import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
   sendEmail, buildRegistrationEmailHtml, buildApprovalEmailHtml, buildDeclineEmailHtml,
-  buildPasswordResetEmailHtml, buildAdminResetPasswordEmailHtml,
 } from "./email";
 import {
   registerSchema, loginSchema, changePasswordSchema, insertProductSchema, insertPriceTierSchema,
@@ -21,7 +20,7 @@ import {
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
   estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
-  insertCaseDiscussionSchema, forgotPasswordSchema, resetPasswordSchema,
+  insertCaseDiscussionSchema,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
 import { getVapidPublicKey, sendToSubscriptions } from "./push";
@@ -432,42 +431,11 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
-  // Self-service "forgot password". Always returns the same generic response
-  // regardless of whether the email exists, so this endpoint can't be used to
-  // enumerate registered accounts. The reset link points at the SPA's hash
-  // route (not the /port/5000 API prefix) since it's opened directly in a
-  // browser.
-  app.post("/api/auth/forgot-password", async (req, res) => {
-    const parsed = forgotPasswordSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
-    const genericResponse = { message: "If an account exists for that email, a reset link has been sent." };
-    const user = await storage.getUserByEmail(parsed.data.email);
-    if (!user) return res.json(genericResponse);
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
-    await storage.setPasswordResetToken(user.id, token, expiresAt);
-    const resetUrl = `${FRONTEND_SIGNIN_URL}#/reset-password?token=${token}`;
-    await sendEmail(
-      [user.email],
-      "Reset your MAHA Partner Portal password",
-      buildPasswordResetEmailHtml({ fullName: user.name, resetUrl }),
-    );
-    res.json(genericResponse);
-  });
-
-  app.post("/api/auth/reset-password", async (req, res) => {
-    const parsed = resetPasswordSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const { token, newPassword } = parsed.data;
-    const user = await storage.getUserByPasswordResetToken(token);
-    if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt < Date.now()) {
-      return res.status(400).json({ message: "This reset link is invalid or has expired. Please request a new one." });
-    }
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await storage.updateUserPassword(user.id, passwordHash);
-    await storage.setPasswordResetToken(user.id, null, null);
-    res.json({ ok: true });
-  });
+  // Password resets are admin-initiated only (see /api/admin/users/:id/reset-password
+  // below) — there is no self-service "email me a link" flow, since that would
+  // require sending mail to arbitrary partner addresses and Resend's sandbox
+  // mode can't deliver those reliably. The login page instead points partners
+  // to email the clinic directly so an admin can reset it for them.
 
   app.post("/api/auth/dismiss-install-banner", requireAuth, async (req: AuthedRequest, res) => {
     const updated = await storage.dismissInstallBanner(req.user!.id);
@@ -1224,10 +1192,11 @@ export async function registerRoutes(
 
   // Admin-initiated password reset: generates a fresh random password,
   // applies it immediately, and returns the plaintext once so the admin can
-  // relay it to the partner directly (e.g. by phone) — the reliable fallback
-  // to the self-service email flow while Resend is running in sandbox mode
-  // and can only deliver to the account owner's own address. Also makes a
-  // best-effort attempt to email the partner directly.
+  // relay it to the partner directly (e.g. by phone or their own email
+  // client). This is the only password reset path — deliberately no
+  // automated email is sent, since Resend's sandbox mode can only deliver
+  // reliably to the account owner's own address and a paid/verified domain
+  // is out of scope for now.
   app.post("/api/admin/users/:id/reset-password", requireAuth, requireRole("admin"), async (req, res) => {
     const user = await storage.getUser(Number(req.params.id));
     if (!user) return res.status(404).json({ message: "Not found" });
@@ -1235,11 +1204,6 @@ export async function registerRoutes(
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await storage.updateUserPassword(user.id, passwordHash);
     await storage.setPasswordResetToken(user.id, null, null);
-    await sendEmail(
-      [user.email],
-      "Your MAHA Partner Portal password was reset",
-      buildAdminResetPasswordEmailHtml({ fullName: user.name, newPassword, signInUrl: FRONTEND_SIGNIN_URL }),
-    );
     res.json({ id: user.id, name: user.name, email: user.email, newPassword });
   });
 

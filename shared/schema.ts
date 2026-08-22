@@ -97,16 +97,8 @@ export const changePasswordSchema = z.object({
 });
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
-export const forgotPasswordSchema = z.object({
-  email: z.string().email(),
-});
-export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
-
-export const resetPasswordSchema = z.object({
-  token: z.string().min(1),
-  newPassword: z.string().min(6),
-});
-export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+// Note: password resets are admin-initiated only (see AdminPartners /
+// /api/admin/users/:id/reset-password) — no self-service email-link flow.
 
 // ---------- WEBAUTHN CREDENTIALS (Face ID / Fingerprint login) ----------
 // One row per registered passkey/authenticator (a partner or student may

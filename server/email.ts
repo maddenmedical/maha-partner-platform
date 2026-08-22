@@ -144,43 +144,7 @@ export function buildDeclineEmailHtml(r: DecisionEmailInput): string {
   </div>`;
 }
 
-export interface PasswordResetEmailInput {
-  fullName: string;
-  resetUrl: string;
-}
-
-export function buildPasswordResetEmailHtml(r: PasswordResetEmailInput): string {
-  const btn = (href: string, label: string) =>
-    `<a href="${href}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#ffbf42;color:#111;font-weight:600;text-decoration:none;font-size:14px;">${label}</a>`;
-  return `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
-    <h2 style="color:#111;">Reset your password</h2>
-    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, we received a request to reset the password for your MAHA Partner Portal account. Click below to choose a new password.</p>
-    <div style="margin:24px 0;">
-      ${btn(r.resetUrl, "Reset password")}
-    </div>
-    <p style="font-size:12px;color:#999;">This link expires in 1 hour and can only be used once. If you didn't request this, you can safely ignore this email — your password will not be changed.</p>
-  </div>`;
-}
-
-export interface AdminResetPasswordEmailInput {
-  fullName: string;
-  newPassword: string;
-  signInUrl: string;
-}
-
-export function buildAdminResetPasswordEmailHtml(r: AdminResetPasswordEmailInput): string {
-  const btn = (href: string, label: string) =>
-    `<a href="${href}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#ffbf42;color:#111;font-weight:600;text-decoration:none;font-size:14px;">${label}</a>`;
-  return `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
-    <h2 style="color:#111;">Your password was reset</h2>
-    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, a MAHA Partner Portal admin has reset your account password. Your new temporary password is:</p>
-    <p style="font-family:monospace;font-size:18px;font-weight:700;background:#f4f4f4;border-radius:6px;padding:12px 16px;margin:16px 0;letter-spacing:0.5px;">${escapeHtml(r.newPassword)}</p>
-    <p style="color:#444;font-size:14px;">Please sign in and change it to something memorable as soon as you can.</p>
-    <div style="margin:24px 0;">
-      ${btn(r.signInUrl, "Sign in now")}
-    </div>
-    <p style="font-size:12px;color:#999;">If you didn't expect this, please reply to this email right away.</p>
-  </div>`;
-}
+// Note: there is no self-service "forgot password" email flow — password
+// resets are admin-initiated only (see server/routes.ts,
+// /api/admin/users/:id/reset-password), since Resend's sandbox mode can't
+// reliably deliver to arbitrary partner addresses without a verified domain.

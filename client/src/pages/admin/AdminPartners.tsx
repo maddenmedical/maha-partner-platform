@@ -173,8 +173,7 @@ export default function AdminPartners() {
             <AlertDialogTitle>Reset password for {confirmTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               This immediately replaces their current password with a new random one. You'll see the new password
-              on screen so you can relay it yourself — the automatic email to {confirmTarget?.email} is a
-              best-effort extra and may not arrive.
+              on screen so you can relay it to {confirmTarget?.email} yourself — no email is sent automatically.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -214,8 +213,7 @@ export default function AdminPartners() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              We also tried emailing this to the partner, but delivery isn't guaranteed — please relay it to them
-              yourself to be safe.
+              No email was sent automatically — copy this and send it to the partner yourself (email, phone, etc.).
             </p>
           </div>
         </DialogContent>

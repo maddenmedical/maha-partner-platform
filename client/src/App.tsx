@@ -12,7 +12,6 @@ import { Loader2 } from "lucide-react";
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
 import ForgotPassword from "@/pages/auth/ForgotPassword";
-import ResetPassword from "@/pages/auth/ResetPassword";
 import Install from "@/pages/Install";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
@@ -211,14 +210,11 @@ function App() {
               <Switch>
                 <Route path="/install/:platform" component={Install} />
                 <Route path="/install" component={Install} />
-                {/* Reachable regardless of auth/bootstrap state — these links come from
-                    emails and must work even for a signed-out visitor. */}
+                {/* Reachable regardless of auth/bootstrap state — this link is on the
+                    login page and must work even for a signed-out visitor. There is no
+                    /reset-password route: password resets are admin-initiated only, see
+                    AdminPartners — no self-service reset-link email is sent. */}
                 <Route path="/forgot-password" component={ForgotPassword} />
-                {/* RegExp path (not anchored to end): wouter's hash location keeps the
-                    "?token=..." query string glued onto the path, and a plain string
-                    pattern like "/reset-password" is anchored with `/?$` so it would
-                    never match "/reset-password?token=...". */}
-                <Route path={/^\/reset-password(?:\?.*)?$/} component={ResetPassword} />
                 <Route>
                   <RootRouter />
                 </Route>
