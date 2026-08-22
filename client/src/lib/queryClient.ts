@@ -1,6 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 
 // The session lives in an httpOnly cookie set by the server (see
 // server/routes.ts), not in JS-readable storage. This means a login survives

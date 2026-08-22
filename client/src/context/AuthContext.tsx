@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPendingState(null);
     try {
       const res = await fetch(
-        `${"__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__"}/api/auth/login`,
+        `${"__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__"}/api/auth/login`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

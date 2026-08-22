@@ -13,7 +13,7 @@ import {
   CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap,
 } from "lucide-react";
 
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 
 type UpcomingCaseDiscussion = CaseDiscussion & { rsvpCount: number; iAmAttending: boolean };
 
