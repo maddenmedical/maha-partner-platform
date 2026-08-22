@@ -12,6 +12,20 @@ import { createServer } from "node:http";
 const app = express();
 const httpServer = createServer(app);
 
+// Safety net: Node terminates the whole process on an unhandled promise
+// rejection or uncaught exception by default. Route handlers here are async
+// functions without individual try/catch, so any unexpected throw (e.g. a
+// "no such column" error from schema drift, as previously happened in
+// production -- see server/autoMigrate.ts) becomes an unhandled rejection
+// that would otherwise kill the process and 503 every subsequent request
+// until restart, immediately crashing again. Log and keep serving instead.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandled-rejection] request handler threw without being caught:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaught-exception] non-fatal, process kept alive:", err);
+});
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;

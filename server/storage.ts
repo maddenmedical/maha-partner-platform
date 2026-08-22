@@ -22,13 +22,39 @@ import Database from "better-sqlite3";
 import { eq, and, desc, asc, gte, gt, lte, isNull, inArray } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
 
-const sqlite = new Database("data.db");
-sqlite.pragma("journal_mode = WAL");
+// Opening the database, setting WAL mode, and self-healing the schema all
+// run at module load time (before Express even exists), so any throw here
+// kills the whole Node process before it ever calls httpServer.listen() --
+// every request then 503s with an empty body until restart, which crashes
+// again immediately. WAL mode in particular requires shared-memory (mmap)
+// support from the underlying filesystem, which network- or overlay-backed
+// persistent volumes (needed to preserve data.db across redeploys) don't
+// always provide -- so it's a plausible unguarded crash point on top of the
+// schema-drift one autoMigrate.ts already documents. Wrap all of it so a
+// storage-layer problem is loud in the logs instead of silently taking down
+// every route in production.
+let sqlite: Database.Database;
+try {
+  sqlite = new Database("data.db");
+  try {
+    sqlite.pragma("journal_mode = WAL");
+  } catch (e: any) {
+    console.error("[storage] WAL journal mode unsupported on this filesystem, falling back to DELETE:", e?.message || e);
+    try {
+      sqlite.pragma("journal_mode = DELETE");
+    } catch (e2: any) {
+      console.error("[storage] journal_mode fallback also failed, continuing with SQLite defaults:", e2?.message || e2);
+    }
+  }
 
-// Self-heal any schema drift between this build's shared/schema.ts and the
-// persisted data.db file before any query runs against it. See autoMigrate.ts
-// for why this matters.
-autoMigrate(sqlite);
+  // Self-heal any schema drift between this build's shared/schema.ts and the
+  // persisted data.db file before any query runs against it. See
+  // autoMigrate.ts for why this matters.
+  autoMigrate(sqlite);
+} catch (e: any) {
+  console.error("[storage] FATAL: could not open or migrate data.db -- every /api route will fail:", e);
+  throw e;
+}
 
 export const db = drizzle(sqlite);
 

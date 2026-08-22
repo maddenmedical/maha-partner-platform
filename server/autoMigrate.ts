@@ -101,11 +101,34 @@ export function autoMigrate(sqlite: Database.Database) {
     for (const col of Object.values(expectedCols) as any[]) {
       if (actualCols.has(col.name)) continue;
       const sqlType = sqlTypeFor(col.columnType);
+      // SQLite's ALTER TABLE ADD COLUMN rejects a UNIQUE constraint outright
+      // ("Cannot add a UNIQUE column") even though CREATE TABLE allows it.
+      // Add the bare column first, then enforce uniqueness with a separate
+      // index -- functionally equivalent, and index creation on an all-NULL
+      // / sparse new column never conflicts. Without this split, the ADD
+      // COLUMN throws, is swallowed by this try/catch, and the column is
+      // silently never created -- so the very next query referencing it
+      // throws "no such column" *outside* any try/catch, which crashes the
+      // whole process (see file header comment). This is exactly that bug,
+      // triggered by `users.wp_user_id`.
       try {
         sqlite.prepare(`ALTER TABLE "${tableName}" ADD COLUMN "${col.name}" ${sqlType}`).run();
         console.log(`[auto-migrate] added missing column ${tableName}.${col.name} (${sqlType})`);
       } catch (e: any) {
         console.error(`[auto-migrate] FAILED to add ${tableName}.${col.name}:`, e?.message || e);
+        continue;
+      }
+      if (col.isUnique) {
+        try {
+          sqlite
+            .prepare(
+              `CREATE UNIQUE INDEX IF NOT EXISTS "uq_${tableName}_${col.name}" ON "${tableName}"("${col.name}")`,
+            )
+            .run();
+          console.log(`[auto-migrate] created unique index for ${tableName}.${col.name}`);
+        } catch (e: any) {
+          console.error(`[auto-migrate] FAILED to create unique index for ${tableName}.${col.name}:`, e?.message || e);
+        }
       }
     }
   }
