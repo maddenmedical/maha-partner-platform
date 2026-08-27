@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,20 +15,27 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight } from "lucide-react";
 import { format } from "date-fns";
 
 const STATUS_FILTERS = ["all", "pending", "approved", "rejected"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
+const ROLE_FILTERS = ["all", "partner", "student"] as const;
+type RoleFilter = (typeof ROLE_FILTERS)[number];
+
 export default function AdminPartners() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: partners, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/all-partners"] });
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [confirmTarget, setConfirmTarget] = useState<User | null>(null);
   const [result, setResult] = useState<{ name: string; email: string; newPassword: string } | null>(null);
+  const [roleConvertTarget, setRoleConvertTarget] = useState<User | null>(null);
 
   const resetMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -44,11 +51,31 @@ export default function AdminPartners() {
     },
   });
 
+  // Reversible in both directions — an admin can flip a partner to a student
+  // (or back) at any time, e.g. once a partner enrolls in a booked module.
+  const roleMutation = useMutation({
+    mutationFn: async ({ id, role }: { id: number; role: string }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/role`, { role });
+      return res.json();
+    },
+    onSuccess: (updated: User) => {
+      setRoleConvertTarget(null);
+      queryClient.setQueryData<User[]>(["/api/admin/all-partners"], (old) =>
+        old ? old.map((u) => (u.id === updated.id ? updated : u)) : old
+      );
+      toast({ title: `${updated.name} is now a ${updated.role}` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not change role", description: err.message, variant: "destructive" });
+    },
+  });
+
   const filtered = useMemo(() => {
     if (!partners) return [];
     const q = query.trim().toLowerCase();
     return partners.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (!q) return true;
       return (
         u.name.toLowerCase().includes(q) ||
@@ -56,7 +83,7 @@ export default function AdminPartners() {
         (u.businessName || "").toLowerCase().includes(q)
       );
     });
-  }, [partners, query, statusFilter]);
+  }, [partners, query, statusFilter, roleFilter]);
 
   function copyPassword() {
     if (!result) return;
@@ -67,8 +94,8 @@ export default function AdminPartners() {
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <p className="text-sm text-muted-foreground">
-        Every registered partner account, regardless of approval status. Use this to look someone up or reset their
-        password if they've forgotten it.
+        Every registered partner and student account, regardless of approval status. Use this to look someone up,
+        reset their password, or convert them between partner and student.
       </p>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -96,6 +123,20 @@ export default function AdminPartners() {
             </Button>
           ))}
         </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {ROLE_FILTERS.map((r) => (
+            <Button
+              key={r}
+              size="sm"
+              variant={roleFilter === r ? "default" : "outline"}
+              className="capitalize"
+              onClick={() => setRoleFilter(r)}
+              data-testid={`button-role-filter-${r}`}
+            >
+              {r === "all" ? "All roles" : r === "partner" ? "Partners" : "Students"}
+            </Button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
@@ -118,6 +159,9 @@ export default function AdminPartners() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium" data-testid={`text-name-${u.id}`}>{u.name}</p>
                       <StatusBadge status={u.status} />
+                      <Badge variant="outline" className="capitalize no-default-hover-elevate no-default-active-elevate" data-testid={`badge-role-${u.id}`}>
+                        {u.role}
+                      </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground break-words" data-testid={`text-email-${u.id}`}>
                       {u.email}{u.phone ? ` · ${u.phone}` : ""}
@@ -132,15 +176,29 @@ export default function AdminPartners() {
                       Registered {format(new Date(u.createdAt), "MMM d, yyyy")}
                     </p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0 w-full sm:w-auto"
-                    onClick={() => setConfirmTarget(u)}
-                    data-testid={`button-reset-password-${u.id}`}
-                  >
-                    <KeyRound className="h-3.5 w-3.5 mr-1.5" /> Reset password
-                  </Button>
+                  <div className="flex flex-col sm:items-end gap-2 shrink-0 w-full sm:w-auto">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full sm:w-auto"
+                      onClick={() => setConfirmTarget(u)}
+                      data-testid={`button-reset-password-${u.id}`}
+                    >
+                      <KeyRound className="h-3.5 w-3.5 mr-1.5" /> Reset password
+                    </Button>
+                    {(u.role === "partner" || u.role === "student") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        onClick={() => setRoleConvertTarget(u)}
+                        data-testid={`button-convert-role-${u.id}`}
+                      >
+                        <ArrowLeftRight className="h-3.5 w-3.5 mr-1.5" />
+                        Make {u.role === "partner" ? "student" : "partner"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs border-t border-border pt-3">
                   {u.vatNumber && <span className="text-muted-foreground">VAT: {u.vatNumber}</span>}
@@ -188,6 +246,48 @@ export default function AdminPartners() {
             >
               {resetMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Reset password
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!roleConvertTarget} onOpenChange={(open) => !open && setRoleConvertTarget(null)}>
+        <AlertDialogContent data-testid="dialog-confirm-role">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Make {roleConvertTarget?.name} a {roleConvertTarget?.role === "partner" ? "student" : "partner"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {roleConvertTarget?.role === "partner" ? (
+                <>
+                  They'll keep all their referral, order, and course history, and additionally get access to their
+                  booked module: live classes and homework uploads. This can be reversed at any time.
+                </>
+              ) : (
+                <>
+                  They'll keep all their referral, order, and course history, but will lose access to their booked
+                  module (classes and homework). This can be reversed at any time.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-role-convert">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (roleConvertTarget) {
+                  roleMutation.mutate({
+                    id: roleConvertTarget.id,
+                    role: roleConvertTarget.role === "partner" ? "student" : "partner",
+                  });
+                }
+              }}
+              disabled={roleMutation.isPending}
+              data-testid="button-confirm-role-convert"
+            >
+              {roleMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

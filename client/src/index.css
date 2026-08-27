@@ -228,6 +228,16 @@
   }
 }
 
+/* Hides the scrollbar on the horizontally-scrollable bottom nav (used when a
+   role has more tabs than fit an equal-width grid) while keeping it scrollable. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Sticky shimmer for skeletons */
 @keyframes shimmer {
   0% { background-position: -200% 0; }

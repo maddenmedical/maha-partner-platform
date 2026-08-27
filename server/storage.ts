@@ -78,6 +78,7 @@ export interface IStorage {
   setPasswordResetToken(id: number, token: string | null, expiresAt: number | null): Promise<void>;
   getUserByPasswordResetToken(token: string): Promise<User | undefined>;
   listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
+  updateUserRole(id: number, role: string): Promise<User | undefined>;
   listAdmins(): Promise<User[]>;
   // migration (bulk-imported legacy partner.maha.clinic accounts)
   listMigratedUsersAwaitingCredentials(): Promise<User[]>;
@@ -258,6 +259,13 @@ export class DatabaseStorage implements IStorage {
   }
   async updateUserStatus(id: number, status: string) {
     return db.update(users).set({ status }).where(eq(users.id, id)).returning().get();
+  }
+  // Admin-initiated role switch between partner <-> student (reversible). All
+  // of a user's history (referrals, orders, course purchases, homework, class
+  // enrollments) is keyed by userId, not role, so flipping this field alone
+  // is safe and preserves everything.
+  async updateUserRole(id: number, role: string) {
+    return db.update(users).set({ role }).where(eq(users.id, id)).returning().get();
   }
   async updateUserPassword(id: number, passwordHash: string) {
     return db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning().get();

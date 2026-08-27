@@ -521,14 +521,18 @@ export async function registerRoutes(
   });
 
   // ---------- PARTNER: REFERRALS ----------
-  app.post("/api/referrals", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  // Students also get partner functions (referrals, shop, courses, case
+  // discussions) on top of their own classes/homework — see requireRole calls
+  // below and courseHasAccess. Their booked module/cohort content stays
+  // exclusive to students and is never exposed to plain partners.
+  app.post("/api/referrals", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const parsed = insertReferralSchema.safeParse({ ...req.body, partnerId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now() });
     res.json(referral);
   });
 
-  app.get("/api/referrals/mine", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.get("/api/referrals/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const rows = await storage.listReferralsForPartner(req.user!.id);
     res.json(rows);
   });
@@ -635,7 +639,7 @@ export async function registerRoutes(
   });
 
   // ---------- PARTNER: ORDERS ----------
-  app.post("/api/orders", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.post("/api/orders", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const parsed = createOrderSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid order" });
 
@@ -674,7 +678,7 @@ export async function registerRoutes(
     res.json(order);
   });
 
-  app.get("/api/orders/mine", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.get("/api/orders/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const rows = await storage.listOrdersForPartner(req.user!.id);
     const withItems = await Promise.all(
       rows.map(async (o) => ({ ...o, items: await storage.listItemsForOrder(o.id) }))
@@ -703,16 +707,19 @@ export async function registerRoutes(
   });
 
   // ---------- COURSES & LESSONS (Education) ----------
-  // A partner has access to a course when it is 'open' (free, no gate), OR they
-  // have a completed purchase for it (paid unlock or free self-enroll), OR an
-  // admin has manually granted it. Admins and students see everything.
+  // This is the general paid/purchasable video library ("Learn" tab) — a
+  // partner or student has access to a course here when it is 'open' (free,
+  // no gate), OR they have a completed purchase for it (paid unlock or free
+  // self-enroll), OR an admin has manually granted it. This is entirely
+  // separate from a student's booked module/cohort (classes + homework),
+  // which is never exposed here and never purchasable by partners.
   function courseHasAccess(
     role: string,
     course: Course,
     completed: Set<number>,
     granted: Set<number>,
   ): boolean {
-    if (role !== "partner") return true;
+    if (role === "admin") return true;
     if (course.accessType === "open") return true;
     return completed.has(course.id) || granted.has(course.id);
   }
@@ -727,7 +734,7 @@ export async function registerRoutes(
 
     let completed = new Set<number>();
     let granted = new Set<number>();
-    if (req.user!.role === "partner") {
+    if (req.user!.role === "partner" || req.user!.role === "student") {
       completed = new Set((await storage.listCompletedPurchasesForUser(req.user!.id)).map((p) => p.courseId));
       granted = new Set((await storage.listGrantsForPartner(req.user!.id)).map((g) => g.courseId));
     }
@@ -746,7 +753,7 @@ export async function registerRoutes(
 
   // Free self-enroll — creates access without payment (recorded as a completed
   // purchase with amount 0). Only valid for non-paid courses.
-  app.post("/api/courses/:id/enroll", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.post("/api/courses/:id/enroll", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const course = await storage.getCourse(Number(req.params.id));
     if (!course) return res.status(404).json({ message: "Course not found" });
     if (!isFreeCourse(course)) {
@@ -769,7 +776,7 @@ export async function registerRoutes(
   });
 
   // Start a paid checkout. Gates gracefully when Stripe is not configured yet.
-  app.post("/api/courses/:id/checkout", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.post("/api/courses/:id/checkout", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const course = await storage.getCourse(Number(req.params.id));
     if (!course) return res.status(404).json({ message: "Course not found" });
     if (isFreeCourse(course)) {
@@ -818,7 +825,7 @@ export async function registerRoutes(
 
   // Confirm a completed checkout by verifying the session with Stripe directly
   // (avoids needing a separately configured webhook endpoint for now).
-  app.get("/api/courses/checkout/confirm", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.get("/api/courses/checkout/confirm", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const sessionId = typeof req.query.session_id === "string" ? req.query.session_id : null;
     if (!sessionId) return res.status(400).json({ message: "Missing session_id" });
 
@@ -848,7 +855,7 @@ export async function registerRoutes(
   // Redeem the shared Symposium access code (e.g. handed out to attendees of
   // the live event) for free access to the paid "Maha Symposium lectures"
   // course. Single shared code, no expiry, no per-user redemption limit.
-  app.post("/api/courses/redeem-code", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.post("/api/courses/redeem-code", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
     if (code !== SYMPOSIUM_REDEEM_CODE) {
       return res.status(400).json({ message: "Invalid code" });
@@ -1183,11 +1190,33 @@ export async function registerRoutes(
     res.json(await storage.listUsersByRoleStatus("student", "approved"));
   });
 
-  // Full partner directory for the admin "Partners" page — every status
-  // (pending/approved/rejected), unlike /api/admin/partners above which only
-  // returns approved partners (used by the video-access dropdown).
+  // Full partner + student directory for the admin "Partners & Students" page
+  // — every status (pending/approved/rejected) and both roles, so admins can
+  // find a partner-turned-student (or vice versa) and convert them back and
+  // forth. Unlike /api/admin/partners above, which only returns approved
+  // partners (used by the video-access dropdown).
   app.get("/api/admin/all-partners", requireAuth, requireRole("admin"), async (_req, res) => {
-    res.json(await storage.listUsersByRoleStatus("partner"));
+    const partners = await storage.listUsersByRoleStatus("partner");
+    const students = await storage.listUsersByRoleStatus("student");
+    res.json([...partners, ...students].sort((a, b) => b.createdAt - a.createdAt));
+  });
+
+  // Admin-initiated role switch between partner <-> student, reversible any
+  // number of times. All of a user's history (referrals, orders, purchases,
+  // homework, class enrollments) is keyed by their user id, not their role,
+  // so this is safe and preserves everything on both sides of the switch.
+  app.post("/api/admin/users/:id/role", requireAuth, requireRole("admin"), async (req, res) => {
+    const { role } = req.body;
+    if (role !== "partner" && role !== "student") {
+      return res.status(400).json({ message: "Role must be 'partner' or 'student'" });
+    }
+    const user = await storage.getUser(Number(req.params.id));
+    if (!user) return res.status(404).json({ message: "Not found" });
+    if (user.role !== "partner" && user.role !== "student") {
+      return res.status(400).json({ message: "Only partner/student accounts can be converted" });
+    }
+    const updated = await storage.updateUserRole(user.id, role);
+    res.json(updated);
   });
 
   // Admin-initiated password reset: generates a fresh random password,
@@ -1356,7 +1385,7 @@ export async function registerRoutes(
   });
 
   // ---------- HOME SUMMARY ----------
-  app.get("/api/partner/home-summary", requireAuth, requireRole("partner"), async (req: AuthedRequest, res) => {
+  app.get("/api/partner/home-summary", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const referrals = await storage.listReferralsForPartner(req.user!.id);
     const orders = await storage.listOrdersForPartner(req.user!.id);
     const threads = await storage.listThreadsForUser(req.user!.id);
@@ -1499,23 +1528,23 @@ export async function registerRoutes(
   });
 
   // ---------- CASE DISCUSSIONS (partner-facing) ----------
-  app.get("/api/case-discussions", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+  app.get("/api/case-discussions", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
     res.json(await storage.listUpcomingCaseDiscussions(req.user!.id));
   });
 
-  app.post("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+  app.post("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
     const discussion = await storage.getCaseDiscussionById(Number(req.params.id));
     if (!discussion) return res.status(404).json({ message: "Not found" });
     await storage.rsvpToCaseDiscussion(discussion.id, req.user!.id);
     res.json({ ok: true });
   });
 
-  app.delete("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+  app.delete("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
     await storage.cancelCaseDiscussionRsvp(Number(req.params.id), req.user!.id);
     res.json({ ok: true });
   });
 
-  app.get("/api/case-discussions/:id/ical", requireAuth, requireRole("partner", "admin"), async (req: AuthedRequest, res) => {
+  app.get("/api/case-discussions/:id/ical", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
     const discussion = await storage.getCaseDiscussionById(Number(req.params.id));
     if (!discussion) return res.status(404).json({ message: "Not found" });
     const ics = buildCaseDiscussionIcs(discussion);

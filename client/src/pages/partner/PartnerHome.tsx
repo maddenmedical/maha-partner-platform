@@ -3,15 +3,53 @@ import { Link } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { titleAndSurnameOf } from "@/lib/utils";
-import type { CaseDiscussion } from "@shared/schema";
+import type { CaseDiscussion, ClassSession } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   ClipboardList, ShoppingCart, MessageSquare, ArrowRight,
-  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap,
+  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap, FileUp,
 } from "lucide-react";
+import { format } from "date-fns";
+
+type SessionWithNames = ClassSession & { moduleName?: string; cohortName?: string };
+
+// A student's booked module (live classes + homework) is completely separate
+// from the referral/shop/course data above — shown only when role === "student",
+// and never rendered for a plain partner.
+function NextClassCard() {
+  const { data: sessions, isLoading } = useQuery<SessionWithNames[]>({ queryKey: ["/api/students/my-classes"] });
+  const now = Date.now();
+  const nextClass = sessions?.filter((s) => s.datetime >= now).sort((a, b) => a.datetime - b.datetime)[0];
+
+  if (isLoading) return <Skeleton className="h-24 rounded-lg skeleton-shimmer" />;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Your booked module</h2>
+      {nextClass ? (
+        <Link href="/classes" data-testid="card-next-class">
+          <Card className="hover-elevate active-elevate-2 cursor-pointer">
+            <CardContent className="p-4 flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground uppercase tracking-wide">Next class</span>
+              <span className="text-sm font-medium">{nextClass.title}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
+                <CalendarClock className="h-3.5 w-3.5" />
+                {format(new Date(nextClass.datetime), "EEEE, MMM d 'at' HH:mm")}
+              </span>
+            </CardContent>
+          </Card>
+        </Link>
+      ) : (
+        <Card>
+          <CardContent className="p-4 text-sm text-muted-foreground">No upcoming classes scheduled yet.</CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 
@@ -190,14 +228,17 @@ function CaseDiscussionsSection() {
 
 export default function PartnerHome() {
   const { user } = useAuth();
+  const isStudent = user?.role === "student";
   const { data, isLoading } = useQuery<HomeSummary>({ queryKey: ["/api/partner/home-summary"] });
 
   return (
     <div className="max-w-2xl mx-auto p-4 flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {titleAndSurnameOf(user?.name)}</h1>
-        <p className="text-sm text-muted-foreground mt-1">Here is your personal MAHA partner dashboard. Let us know how we can help.</p>
+        <p className="text-sm text-muted-foreground mt-1">Here is your personal MAHA dashboard. Let us know how we can help.</p>
       </div>
+
+      {isStudent && <NextClassCard />}
 
       <div className="grid grid-cols-2 gap-3">
         {isLoading ? (
@@ -259,6 +300,15 @@ export default function PartnerHome() {
           </div>
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
         </Link>
+        {isStudent && (
+          <Link href="/homework" className="flex items-center justify-between rounded-lg border border-card-border bg-card p-4 hover-elevate active-elevate-2" data-testid="link-quick-homework">
+            <div className="flex items-center gap-3">
+              <FileUp className="h-5 w-5 text-chart-3" />
+              <span className="text-sm font-medium">Homework</span>
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        )}
       </div>
 
       <CaseDiscussionsSection />

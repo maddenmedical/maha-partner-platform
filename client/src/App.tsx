@@ -16,14 +16,13 @@ import Install from "@/pages/Install";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare, CalendarClock } from "lucide-react";
 
 import PartnerHome from "@/pages/partner/PartnerHome";
 import ReferPatient from "@/pages/partner/ReferPatient";
 import Shop from "@/pages/partner/Shop";
 import PartnerVideos from "@/pages/partner/Videos";
 
-import StudentHome from "@/pages/student/StudentHome";
 import MyClasses from "@/pages/student/MyClasses";
 import Homework from "@/pages/student/Homework";
 
@@ -53,9 +52,15 @@ const partnerTabs: TabItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
 ];
 
+// A student has everything a partner has (referrals, shop, the paid video
+// library) PLUS their own exclusive booked module: live classes and a
+// homework upload place that partners never see, even for purchase.
 const studentTabs: TabItem[] = [
   { href: "/", label: "Home", icon: Home, testId: "tab-home" },
-  { href: "/classes", label: "Classes", icon: GraduationCap, testId: "tab-classes" },
+  { href: "/refer", label: "Refer", icon: ClipboardList, testId: "tab-refer" },
+  { href: "/shop", label: "Shop", icon: ShoppingCart, testId: "tab-shop" },
+  { href: "/videos", label: "Learn", icon: GraduationCap, testId: "tab-education" },
+  { href: "/classes", label: "Classes", icon: CalendarClock, testId: "tab-classes" },
   { href: "/homework", label: "Homework", icon: FileUp, testId: "tab-homework" },
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
 ];
@@ -95,11 +100,19 @@ function PartnerApp() {
 }
 
 function StudentApp() {
+  // Students get the full partner feature set (referrals, shop, the paid video
+  // library, case discussions — all rendered inside PartnerHome/ReferPatient/
+  // Shop/PartnerVideos, which already branch on role where needed) PLUS their
+  // own exclusive booked module: MyClasses and Homework, never shown to a
+  // plain partner.
   return (
-    <MobileAppLayout tabs={studentTabs} title="MAHA Institute">
+    <MobileAppLayout tabs={studentTabs} title="MAHA Partner Portal">
       <PushPrompt />
       <Switch>
-        <Route path="/" component={StudentHome} />
+        <Route path="/" component={PartnerHome} />
+        <Route path="/refer" component={ReferPatient} />
+        <Route path="/shop" component={Shop} />
+        <Route path="/videos" component={PartnerVideos} />
         <Route path="/classes" component={MyClasses} />
         <Route path="/homework" component={Homework} />
         <Route path="/chat">

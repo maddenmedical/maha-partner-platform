@@ -56,9 +56,15 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
 
       <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-24">{children}</main>
 
+      {/* Wide roles (e.g. a student who also has partner functions) get more
+          tabs than comfortably fit an equal-width grid on a phone screen, so
+          switch to a horizontally scrollable row instead of squeezing labels. */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-10 grid border-t border-border bg-card md:hidden"
-        style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+        className={cn(
+          "fixed bottom-0 left-0 right-0 z-10 border-t border-border bg-card md:hidden",
+          tabs.length > 5 ? "flex overflow-x-auto no-scrollbar" : "grid"
+        )}
+        style={tabs.length > 5 ? undefined : { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
         aria-label="Primary"
       >
         {tabs.map((tab) => {
@@ -69,6 +75,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
               href={tab.href}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-medium hover-elevate active-elevate-2",
+                tabs.length > 5 ? "min-w-[4.25rem] flex-1" : "",
                 active ? "text-primary" : "text-muted-foreground"
               )}
               data-testid={tab.testId}
