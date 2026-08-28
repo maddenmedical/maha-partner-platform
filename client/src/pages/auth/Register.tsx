@@ -45,22 +45,17 @@ export default function Register() {
       setError("Passwords do not match.");
       return;
     }
-    if (role === "partner" && !homepageUrl.trim()) {
-      setError("A homepage/website URL is required for partner registration as proof of practice.");
-      return;
-    }
-    if (!file) {
-      setError("Please upload a degree, license, or certification document.");
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("context", "registration");
-      const uploadRes = await apiRequest("POST", "/api/auth/upload-document", formData, true);
-      const uploadData = await uploadRes.json();
+      let uploadedFileUrl: string | undefined;
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("context", "registration");
+        const uploadRes = await apiRequest("POST", "/api/auth/upload-document", formData, true);
+        const uploadData = await uploadRes.json();
+        uploadedFileUrl = uploadData.url;
+      }
 
       await apiRequest("POST", "/api/auth/register", {
         role,
@@ -78,8 +73,8 @@ export default function Register() {
         address: address || undefined,
         country: country || undefined,
         profession: role === "student" ? profession : undefined,
-        homepageUrl,
-        degreeFileUrl: uploadData.url,
+        homepageUrl: homepageUrl || undefined,
+        degreeFileUrl: uploadedFileUrl,
         additionalInfo,
       });
       setSuccess(true);
@@ -219,8 +214,8 @@ export default function Register() {
 
               {role === "partner" ? (
                 <div className="flex flex-col gap-1.5 col-span-2">
-                  <Label htmlFor="homepageUrl">Homepage / website URL (required)</Label>
-                  <Input id="homepageUrl" required placeholder="https://" value={homepageUrl} onChange={(e) => setHomepageUrl(e.target.value)} data-testid="input-homepage" />
+                  <Label htmlFor="homepageUrl">Homepage / website URL (optional)</Label>
+                  <Input id="homepageUrl" placeholder="https://" value={homepageUrl} onChange={(e) => setHomepageUrl(e.target.value)} data-testid="input-homepage" />
                 </div>
               ) : (
                 <>
@@ -264,7 +259,7 @@ export default function Register() {
               </div>
 
               <div className="flex flex-col gap-1.5 col-span-2">
-                <Label htmlFor="document">Degree / license / certification (PDF or image)</Label>
+                <Label htmlFor="document">Degree / license / certification (PDF or image, optional)</Label>
                 <label
                   htmlFor="document"
                   className="flex items-center gap-2 border border-input rounded-md px-3 py-2 text-sm cursor-pointer hover-elevate active-elevate-2"
