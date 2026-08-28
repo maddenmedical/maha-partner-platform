@@ -78,7 +78,7 @@ export interface RegistrationEmailInput {
   city?: string | null;
   address?: string | null;
   country?: string | null;
-  additionalInfo: string;
+  additionalInfo?: string | null;
   degreeFileUrl?: string | null;
   approveUrl: string;
   declineUrl: string;

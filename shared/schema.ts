@@ -79,9 +79,8 @@ export const registerSchema = z.object({
   profession: z.string().optional(),
   homepageUrl: z.string().optional(),
   degreeFileUrl: z.string().optional(),
-  // Applicant must self-attest to being a medical specialist and describe
-  // their qualification/specialty.
-  additionalInfo: z.string().min(10, "Please provide additional information about your medical specialty or qualification"),
+  // Applicant may optionally describe their qualification/specialty.
+  additionalInfo: z.string().optional(),
 });
 export type RegisterInput = z.infer<typeof registerSchema>;
 

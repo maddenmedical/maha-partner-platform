@@ -75,7 +75,7 @@ export default function Register() {
         profession: role === "student" ? profession : undefined,
         homepageUrl: homepageUrl || undefined,
         degreeFileUrl: uploadedFileUrl,
-        additionalInfo,
+        additionalInfo: additionalInfo || undefined,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -246,11 +246,9 @@ export default function Register() {
               )}
 
               <div className="flex flex-col gap-1.5 col-span-2">
-                <Label htmlFor="additionalInfo">Additional information</Label>
+                <Label htmlFor="additionalInfo">Additional information (optional)</Label>
                 <Textarea
                   id="additionalInfo"
-                  required
-                  minLength={10}
                   placeholder="Please describe your medical specialty and qualifications (e.g. dentist, physician, naturopath) so we can verify your eligibility."
                   value={additionalInfo}
                   onChange={(e) => setAdditionalInfo(e.target.value)}
