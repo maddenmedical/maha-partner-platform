@@ -10,6 +10,9 @@ export type AuthUser = {
   email: string;
   status: string;
   installBannerDismissedAt: number | null;
+  prefix: string | null;
+  firstName: string | null;
+  lastName: string | null;
 };
 
 type PendingState = { pending: true; status: "pending" | "rejected" } | null;

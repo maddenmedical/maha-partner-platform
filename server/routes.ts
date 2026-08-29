@@ -78,7 +78,48 @@ const upload = multer({
 });
 
 interface AuthedRequest extends Request {
-  user?: { id: number; role: string; name: string; email: string; status: string; installBannerDismissedAt: number | null };
+  user?: PublicUser;
+}
+
+type PublicUser = {
+  id: number;
+  role: string;
+  name: string;
+  email: string;
+  status: string;
+  installBannerDismissedAt: number | null;
+  prefix: string | null;
+  firstName: string | null;
+  lastName: string | null;
+};
+
+// Shapes a full DB user row down to the fields safe to send to the frontend.
+// Includes `prefix`/`firstName`/`lastName` (kept separate from the free-text
+// `name` and from post-nominal `suffix`) so the dashboard greeting can build
+// "{prefix} {lastName}" or "{firstName} {lastName}" without ever parsing a
+// concatenated string or leaking credentials like "DDS, PhD" into a greeting.
+function toPublicUser(user: {
+  id: number;
+  role: string;
+  name: string;
+  email: string;
+  status: string;
+  installBannerDismissedAt: number | null;
+  prefix?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): PublicUser {
+  return {
+    id: user.id,
+    role: user.role,
+    name: user.name,
+    email: user.email,
+    status: user.status,
+    installBannerDismissedAt: user.installBannerDismissedAt,
+    prefix: user.prefix ?? null,
+    firstName: user.firstName ?? null,
+    lastName: user.lastName ?? null,
+  };
 }
 
 // The session lives in an httpOnly cookie rather than a client-readable
@@ -145,7 +186,7 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
     await storage.updateSessionExpiry(token, newExpiry);
     setSessionCookie(res, token, newExpiry);
   }
-  req.user = { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt };
+  req.user = toPublicUser(user);
   next();
 }
 
@@ -160,7 +201,7 @@ async function getOptionalUser(req: Request): Promise<AuthedRequest["user"] | un
   if (!session || session.expiresAt < Date.now()) return undefined;
   const user = await storage.getUser(session.userId);
   if (!user || user.status !== "approved") return undefined;
-  return { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt };
+  return toPublicUser(user);
 }
 
 function requireRole(...roles: string[]) {
@@ -403,7 +444,7 @@ export async function registerRoutes(
     await storage.createSession({ token, userId: user.id, expiresAt });
     setSessionCookie(res, token, expiresAt);
     res.json({
-      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
+      user: toPublicUser(user),
     });
   });
 
@@ -440,7 +481,7 @@ export async function registerRoutes(
   app.post("/api/auth/dismiss-install-banner", requireAuth, async (req: AuthedRequest, res) => {
     const updated = await storage.dismissInstallBanner(req.user!.id);
     if (!updated) return res.status(404).json({ message: "User not found" });
-    res.json({ id: updated.id, role: updated.role, name: updated.name, email: updated.email, status: updated.status, installBannerDismissedAt: updated.installBannerDismissedAt });
+    res.json(toPublicUser(updated));
   });
 
   // ---------- WEBAUTHN (Face ID / Fingerprint login) ----------
@@ -504,7 +545,7 @@ export async function registerRoutes(
     await storage.createSession({ token, userId: user.id, expiresAt });
     setSessionCookie(res, token, expiresAt);
     res.json({
-      user: { id: user.id, role: user.role, name: user.name, email: user.email, status: user.status, installBannerDismissedAt: user.installBannerDismissedAt },
+      user: toPublicUser(user),
     });
   });
 
