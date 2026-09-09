@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE } from "@/lib/queryClient";
 import type { Course, Video } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,7 +85,7 @@ export default function Videos() {
 
   const redeemMutation = useMutation({
     mutationFn: async ({ courseId, code }: { courseId: number; code: string }) => {
-      const res = await fetch("/api/courses/redeem-code", {
+      const res = await fetch(`${API_BASE}/api/courses/redeem-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -111,7 +111,7 @@ export default function Videos() {
     mutationFn: async (courseId: number) => {
       // Manual fetch (not apiRequest) so we can inspect the 503 gate body
       // without the shared error-throwing wrapper swallowing it.
-      const res = await fetch(`/api/courses/${courseId}/checkout`, { method: "POST", credentials: "include" });
+      const res = await fetch(`${API_BASE}/api/courses/${courseId}/checkout`, { method: "POST", credentials: "include" });
       if (res.status === 503) {
         const body = await res.json().catch(() => ({}));
         if (body?.error === "payments_not_configured") {
