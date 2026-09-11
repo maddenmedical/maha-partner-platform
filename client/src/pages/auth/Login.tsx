@@ -119,7 +119,7 @@ export default function Login() {
               <span className="font-semibold">50%</span> of your patients have root canals
             </p>
           </div>
-          <p className="text-sm lg:text-base text-[#e8ded0]/80 mt-3 lg:mt-4 max-w-sm">MAHA Partner Plattform</p>
+          <p className="text-sm lg:text-base text-[#e8ded0]/80 mt-3 lg:mt-4 max-w-sm">MAHA Partner Platform</p>
         </div>
       </div>
 
@@ -127,7 +127,7 @@ export default function Login() {
       <Card className="w-full max-w-lg md:max-w-xl lg:max-w-2xl xl:max-w-3xl shadow-lg">
         <CardHeader className="flex flex-col items-center gap-3 lg:gap-4 pb-2 pt-8 lg:pt-10">
           <MahaWordmark width={280} />
-          <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Plattform — sign in to your account</p>
+          <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Platform — sign in to your account</p>
         </CardHeader>
         <CardContent className="p-8 lg:p-12 pt-4 lg:pt-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-5 lg:gap-6">

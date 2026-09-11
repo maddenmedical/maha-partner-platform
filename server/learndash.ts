@@ -1,5 +1,5 @@
 // Integration with LearnDash running on partner.maha.clinic (WordPress + LearnDash + WooCommerce).
-// This lets a course purchase/enroll/grant inside the Partner Plattform automatically
+// This lets a course purchase/enroll/grant inside the Partner Platform automatically
 // enroll the same person on the LearnDash site, so lesson progress/tracking lives
 // there. Every function here is best-effort: if LearnDash isn't configured, or the
 // WordPress site is briefly unreachable, callers must not let that block the

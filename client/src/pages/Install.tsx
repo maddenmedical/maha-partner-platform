@@ -168,7 +168,7 @@ function DesktopGuide({ platform }: { platform: "windows" | "mac" }) {
           <Step n={2}>
             <span>Or open the</span>
             <IconChip icon={MoreVertical} />
-            <span>menu and choose "Install MAHA Partner Plattform" / "Apps &rarr; Install this site as an app"</span>
+            <span>menu and choose "Install MAHA Partner Platform" / "Apps &rarr; Install this site as an app"</span>
           </Step>
           <Step n={3}>
             <span>Confirm — MAHA opens in its own window and pins to your {platform === "windows" ? "taskbar" : "Dock"}.</span>
@@ -200,7 +200,7 @@ export default function Install() {
     <div className="min-h-dvh flex flex-col items-center bg-background px-4 py-12">
       <div className="flex flex-col items-center gap-2 mb-8">
         <MahaWordmark width={220} />
-        <p className="text-base text-muted-foreground text-center">Install the MAHA Partner Plattform app</p>
+        <p className="text-base text-muted-foreground text-center">Install the MAHA Partner Platform app</p>
       </div>
 
       <Card className="w-full max-w-lg shadow-lg" data-testid="card-install-guide">

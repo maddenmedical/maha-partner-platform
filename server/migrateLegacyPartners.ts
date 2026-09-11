@@ -122,7 +122,7 @@ function uniqueUsername(base: string, taken: Set<string>): string {
 }
 
 export async function runLegacyPartnerImport(): Promise<LegacyImportSummary> {
-  console.log("=== Legacy partner import (partner.maha.clinic -> Partner Plattform) ===\n");
+  console.log("=== Legacy partner import (partner.maha.clinic -> Partner Platform) ===\n");
 
   console.log("Fetching WordPress users...");
   const wpUsers: WpUser[] = await wpFetch("/wp-json/wp/v2/users?per_page=100&context=edit");

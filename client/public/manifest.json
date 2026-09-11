@@ -1,7 +1,7 @@
 {
-  "name": "MAHA Partner Plattform",
+  "name": "MAHA Partner Platform",
   "short_name": "MAHA",
-  "description": "MAHA Partner Plattform — referrals, B2B ordering, and education.",
+  "description": "MAHA Partner Platform — referrals, B2B ordering, and education.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
