@@ -15,7 +15,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, Plus, Trash2, Pencil, Loader2, Lock, Users, PlayCircle, AlertCircle } from "lucide-react";
 
-type CourseWithLessons = Course & { lessons: Video[]; lessonCount: number; hasAccess: boolean };
+// /api/courses never sends the raw video URL (see server/routes.ts) — only
+// a hasVideo flag. The edit form fetches the real URL on demand from the
+// admin-only /api/admin/videos/:id endpoint.
+type LessonSummary = Omit<Video, "url"> & { hasVideo: boolean };
+type CourseWithLessons = Course & { lessons: LessonSummary[]; lessonCount: number; hasAccess: boolean };
 type LearnDashCourse = { id: number; title: string; link: string };
 type LearnDashCoursesResponse = { configured: boolean; courses: LearnDashCourse[]; error?: string };
 type Grant = { id: number; partnerId: number; partnerName?: string; partnerEmail?: string };
@@ -56,8 +60,9 @@ export default function AdminVideos() {
 
   // Lesson create/edit dialog
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
-  const [editingLesson, setEditingLesson] = useState<Video | null>(null);
+  const [editingLesson, setEditingLesson] = useState<LessonSummary | null>(null);
   const [lessonForm, setLessonForm] = useState({ courseId: 0, title: "", description: "", url: "" });
+  const [lessonUrlLoading, setLessonUrlLoading] = useState(false);
 
   // Grants dialog
   const [grantsOpen, setGrantsOpen] = useState<Course | null>(null);
@@ -94,10 +99,20 @@ export default function AdminVideos() {
     setLessonForm({ courseId, title: "", description: "", url: "" });
     setLessonDialogOpen(true);
   }
-  function openEditLesson(v: Video) {
+  async function openEditLesson(v: LessonSummary) {
     setEditingLesson(v);
-    setLessonForm({ courseId: v.courseId || 0, title: v.title, description: v.description || "", url: v.url || "" });
+    setLessonForm({ courseId: v.courseId || 0, title: v.title, description: v.description || "", url: "" });
     setLessonDialogOpen(true);
+    setLessonUrlLoading(true);
+    try {
+      const res = await apiRequest("GET", `/api/admin/videos/${v.id}`);
+      const full: Video = await res.json();
+      setLessonForm((prev) => ({ ...prev, url: full.url || "" }));
+    } catch {
+      toast({ title: "Could not load the current video link", variant: "destructive" });
+    } finally {
+      setLessonUrlLoading(false);
+    }
   }
 
   const saveCourseMutation = useMutation({
@@ -232,14 +247,14 @@ export default function AdminVideos() {
                 <div className="flex flex-col divide-y divide-border rounded-md border">
                   {c.lessons.map((v) => (
                     <div key={v.id} className="flex items-center gap-3 p-2.5" data-testid={`row-lesson-${v.id}`}>
-                      {v.url ? (
+                      {v.hasVideo ? (
                         <PlayCircle className="h-4 w-4 text-primary shrink-0" />
                       ) : (
                         <PlayCircle className="h-4 w-4 text-muted-foreground/40 shrink-0" />
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm leading-snug">{v.title}</p>
-                        {!v.url && (
+                        {!v.hasVideo && (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground mt-0.5" data-testid={`badge-no-link-${v.id}`}>
                             <AlertCircle className="h-3 w-3" /> No video link yet — add one
                           </span>
@@ -415,7 +430,7 @@ export default function AdminVideos() {
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="l-url">Video link (optional)</Label>
-              <Input id="l-url" value={lessonForm.url} onChange={(e) => setLessonForm({ ...lessonForm, url: e.target.value })} placeholder="Add the video URL when available" data-testid="input-lesson-url" />
+              <Input id="l-url" value={lessonForm.url} onChange={(e) => setLessonForm({ ...lessonForm, url: e.target.value })} placeholder={lessonUrlLoading ? "Loading current link…" : "Add the video URL when available"} disabled={lessonUrlLoading} data-testid="input-lesson-url" />
             </div>
           </div>
           <DialogFooter>

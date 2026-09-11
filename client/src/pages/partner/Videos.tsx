@@ -8,10 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { PlayCircle, Lock, GraduationCap, Loader2, CheckCircle2, Ticket } from "lucide-react";
 
-type CourseWithLessons = Course & { lessons: Video[]; lessonCount: number; hasAccess: boolean };
+// The API never sends the raw video URL (see server/routes.ts) — only a
+// hasVideo flag. Playback goes through the authenticated stream endpoint.
+type LessonSummary = Omit<Video, "url"> & { hasVideo: boolean };
+type CourseWithLessons = Course & { lessons: LessonSummary[]; lessonCount: number; hasAccess: boolean };
 
 function formatPrice(cents: number, currency: string) {
   const symbol = currency.toLowerCase() === "eur" ? "€" : "";
@@ -39,6 +43,7 @@ export default function Videos() {
   const { data: courses, isLoading } = useQuery<CourseWithLessons[]>({ queryKey: ["/api/courses"] });
   const confirmedRef = useRef(false);
   const [redeemCode, setRedeemCode] = useState<Record<number, string>>({});
+  const [playingLesson, setPlayingLesson] = useState<LessonSummary | null>(null);
 
   // After Stripe redirects back with ?session_id=..., confirm the purchase.
   useEffect(() => {
@@ -186,19 +191,18 @@ export default function Videos() {
                     </div>
                     <ul className="flex flex-col divide-y divide-border rounded-md border">
                       {course.lessons.map((lesson) => {
-                        const playable = !!lesson.url;
+                        const playable = lesson.hasVideo;
                         return (
                           <li key={lesson.id} className="flex items-center gap-3 p-3" data-testid={`lesson-${lesson.id}`}>
                             {playable ? (
-                              <a
-                                href={lesson.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => setPlayingLesson(lesson)}
                                 className="text-primary shrink-0"
                                 data-testid={`link-watch-${lesson.id}`}
                               >
                                 <PlayCircle className="h-5 w-5" />
-                              </a>
+                              </button>
                             ) : (
                               <PlayCircle className="h-5 w-5 text-muted-foreground/40 shrink-0" />
                             )}
@@ -268,6 +272,25 @@ export default function Videos() {
           );
         })
       )}
+
+      <Dialog open={!!playingLesson} onOpenChange={(open) => !open && setPlayingLesson(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{playingLesson?.title}</DialogTitle>
+          </DialogHeader>
+          {playingLesson && (
+            <video
+              key={playingLesson.id}
+              controls
+              autoPlay
+              controlsList="nodownload"
+              className="w-full rounded-md bg-black"
+              src={`${API_BASE}/api/videos/${playingLesson.id}/stream`}
+              data-testid={`video-player-${playingLesson.id}`}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

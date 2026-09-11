@@ -782,14 +782,78 @@ export async function registerRoutes(
 
     const result = allCourses.map((c) => {
       const lessons = allVideos.filter((v) => v.courseId === c.id);
+      // Never send the raw video URL to the browser — it's an unauthenticated
+      // external link (e.g. a WordPress upload) that anyone could copy from
+      // devtools and share around. The frontend plays lessons through
+      // /api/videos/:id/stream instead, which re-checks entitlement on every
+      // request and is scoped to the viewer's own logged-in session.
+      const safeLessons = lessons.map(({ url, ...rest }) => ({ ...rest, hasVideo: !!url }));
       return {
         ...c,
-        lessons,
+        lessons: safeLessons,
         lessonCount: lessons.length,
         hasAccess: courseHasAccess(req.user!.role, c, completed, granted),
       };
     });
     res.json(result);
+  });
+
+  // Stream a lesson's video through the backend instead of handing the
+  // browser a direct, unauthenticated link to the underlying file host.
+  // Re-checks entitlement on every request (not just once at page load) and
+  // forwards Range headers so seeking/scrubbing still works. A copied
+  // request URL is useless to anyone else since it relies on the viewer's
+  // own __Host-sid session cookie, which the browser only ever sends on
+  // same-origin requests.
+  app.get("/api/videos/:id/stream", requireAuth, async (req: AuthedRequest, res) => {
+    const video = await storage.getVideo(Number(req.params.id));
+    if (!video || !video.url) return res.status(404).json({ message: "Video not found" });
+
+    const course = video.courseId ? await storage.getCourse(video.courseId) : undefined;
+    if (!course) return res.status(404).json({ message: "Video not found" });
+
+    let completed = new Set<number>();
+    let granted = new Set<number>();
+    if (req.user!.role === "partner" || req.user!.role === "student") {
+      completed = new Set((await storage.listCompletedPurchasesForUser(req.user!.id)).map((p) => p.courseId));
+      granted = new Set((await storage.listGrantsForPartner(req.user!.id)).map((g) => g.courseId));
+    }
+    if (!courseHasAccess(req.user!.role, course, completed, granted)) {
+      return res.status(403).json({ message: "You don't have access to this lesson" });
+    }
+
+    try {
+      const upstreamHeaders: Record<string, string> = {};
+      if (req.headers.range) upstreamHeaders.Range = String(req.headers.range);
+      const upstream = await fetch(video.url, { headers: upstreamHeaders });
+      if (!upstream.ok && upstream.status !== 206) {
+        return res.status(502).json({ message: "Failed to fetch video" });
+      }
+      res.status(upstream.status);
+      const passthroughHeaders = ["content-type", "content-length", "content-range", "accept-ranges"];
+      for (const h of passthroughHeaders) {
+        const v = upstream.headers.get(h);
+        if (v) res.setHeader(h, v);
+      }
+      if (!upstream.body) return res.end();
+      const { Readable } = await import("node:stream");
+      const nodeStream = Readable.fromWeb(upstream.body as any);
+      nodeStream.on("error", () => {
+        if (!res.headersSent) res.status(502).json({ message: "Video stream failed" });
+        else res.end();
+      });
+      nodeStream.pipe(res);
+    } catch {
+      res.status(502).json({ message: "Failed to fetch video" });
+    }
+  });
+
+  // Admin-only: fetch a single lesson including its real video URL, used to
+  // prefill the edit form. Never exposed through /api/courses (see above).
+  app.get("/api/admin/videos/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const video = await storage.getVideo(Number(req.params.id));
+    if (!video) return res.status(404).json({ message: "Not found" });
+    res.json(video);
   });
 
   // Free self-enroll — creates access without payment (recorded as a completed
