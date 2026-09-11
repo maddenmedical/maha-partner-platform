@@ -88,7 +88,7 @@ export function startNotificationScheduler(storage: IStorage) {
           <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
             <h2>New chat started</h2>
             <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b> (${escapeHtml(thread.userRole)}) started a new chat: <b>${escapeHtml(thread.topic)}</b>.</p>
-            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Portal.</p>
+            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Plattform.</p>
           </div>`;
         const chatResults = await sendEmail(CHAT_RECIPIENTS, `New chat started: ${thread.topic}`, html);
         if (chatResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {

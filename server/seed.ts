@@ -314,7 +314,7 @@ async function main() {
   console.log(`Seeded ${productDefs.length} products.`);
 
   console.log("Seeding courses and lessons...");
-  // Real MAHA education structure (verbatim titles from the live partner portal).
+  // Real MAHA education structure (verbatim titles from the live partner platform).
   // Lesson URLs are intentionally empty placeholders — the real video links are not
   // yet available and must NOT be fabricated; an admin fills them in later.
   const courseDefs: {

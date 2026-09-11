@@ -34,7 +34,7 @@ import type {
   WebAuthnCredential,
 } from "@simplewebauthn/server";
 
-export const RP_NAME = "MAHA Partner Portal";
+export const RP_NAME = "MAHA Partner Plattform";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface PendingChallenge {

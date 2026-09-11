@@ -41,7 +41,7 @@ export function buildCaseDiscussionIcs(discussion: CaseDiscussion): string {
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//MAHA Clinic//Partner Portal//EN",
+    "PRODID:-//MAHA Clinic//Partner Plattform//EN",
     "CALSCALE:GREGORIAN",
     "BEGIN:VEVENT",
     `UID:case-discussion-${discussion.id}@maha.clinic`,

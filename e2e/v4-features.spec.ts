@@ -29,11 +29,11 @@ test.describe("Login page — branding + hero photo", () => {
     { name: "desktop", width: 1280, height: 900 },
     { name: "mobile", width: 375, height: 812 },
   ]) {
-    test(`renders on ${vp.name} with Partner Portal branding, no "Institute" tagline`, async ({ page }) => {
+    test(`renders on ${vp.name} with Partner Plattform branding, no "Institute" tagline`, async ({ page }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto("/");
       await expect(page.getByTestId("button-submit-login")).toBeVisible();
-      await expect(page.getByText("Partner Portal — sign in to your account")).toBeVisible();
+      await expect(page.getByText("Partner Plattform — sign in to your account")).toBeVisible();
       // "Institute" must not appear as a top-level tagline on login.
       const bodyText = await page.locator("body").innerText();
       expect(bodyText).not.toMatch(/Institute/);

@@ -82,7 +82,7 @@ const ADMIN_TITLES: Record<string, string> = {
 
 function PartnerApp() {
   return (
-    <MobileAppLayout tabs={partnerTabs} title="MAHA Partner Portal">
+    <MobileAppLayout tabs={partnerTabs} title="MAHA Partner Plattform">
       <PushPrompt />
       <Switch>
         <Route path="/" component={PartnerHome} />
@@ -106,7 +106,7 @@ function StudentApp() {
   // own exclusive booked module: MyClasses and Homework, never shown to a
   // plain partner.
   return (
-    <MobileAppLayout tabs={studentTabs} title="MAHA Partner Portal">
+    <MobileAppLayout tabs={studentTabs} title="MAHA Partner Plattform">
       <PushPrompt />
       <Switch>
         <Route path="/" component={PartnerHome} />

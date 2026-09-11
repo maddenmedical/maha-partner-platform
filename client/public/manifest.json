@@ -1,7 +1,7 @@
 {
-  "name": "MAHA Partner Portal",
+  "name": "MAHA Partner Plattform",
   "short_name": "MAHA",
-  "description": "MAHA Partner Portal — referrals, B2B ordering, and education.",
+  "description": "MAHA Partner Plattform — referrals, B2B ordering, and education.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

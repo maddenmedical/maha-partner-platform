@@ -62,8 +62,8 @@ async function sendDecisionEmail(user: { name: string; role: string; email: stri
     ? buildApprovalEmailHtml({ fullName: user.name, role: user.role, signInUrl: FRONTEND_SIGNIN_URL })
     : buildDeclineEmailHtml({ fullName: user.name, role: user.role, signInUrl: FRONTEND_SIGNIN_URL });
   const subject = status === "approved"
-    ? "Your MAHA Partner Portal registration has been approved"
-    : "Update on your MAHA Partner Portal registration";
+    ? "Your MAHA Partner Plattform registration has been approved"
+    : "Update on your MAHA Partner Plattform registration";
   await sendEmail([user.email], subject, html);
 }
 

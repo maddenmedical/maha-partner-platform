@@ -16,7 +16,7 @@ const RESEND_TOKEN = process.env.CUSTOM_CRED_API_RESEND_COM_TOKEN;
 // Resend's sandbox (unverified domain) only allows sending FROM the
 // resend.dev test domain. Once a custom domain (e.g. maha.clinic) is
 // verified in Resend, update this to an address on that domain.
-const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || "MAHA Partner Portal <onboarding@resend.dev>";
+const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || "MAHA Partner Plattform <onboarding@resend.dev>";
 
 export type EmailResult = { to: string; ok: boolean; error?: string };
 
@@ -90,7 +90,7 @@ export function buildRegistrationEmailHtml(r: RegistrationEmailInput): string {
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
     <h2 style="color:#111;">New ${escapeHtml(r.role)} registration request</h2>
-    <p style="color:#444;font-size:14px;">Someone just requested access to the MAHA Partner Portal. Review the details below and approve or decline.</p>
+    <p style="color:#444;font-size:14px;">Someone just requested access to the MAHA Partner Plattform. Review the details below and approve or decline.</p>
     <table style="width:100%;border-collapse:collapse;margin:16px 0;border-top:1px solid #eee;border-bottom:1px solid #eee;padding:8px 0;">
       ${row("Name", r.fullName)}
       ${row("Role requested", r.role)}
@@ -127,7 +127,7 @@ export function buildApprovalEmailHtml(r: DecisionEmailInput): string {
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
     <h2 style="color:#111;">You're approved!</h2>
-    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, your ${escapeHtml(r.role)} registration for the MAHA Partner Portal has been approved. You can now sign in with the email and password you registered with.</p>
+    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, your ${escapeHtml(r.role)} registration for the MAHA Partner Plattform has been approved. You can now sign in with the email and password you registered with.</p>
     <div style="margin:24px 0;">
       ${btn(r.signInUrl, "Sign in now")}
     </div>
@@ -139,7 +139,7 @@ export function buildDeclineEmailHtml(r: DecisionEmailInput): string {
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
     <h2 style="color:#111;">Registration update</h2>
-    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, thanks for your interest in the MAHA Partner Portal. After review, we're unable to approve your ${escapeHtml(r.role)} registration request at this time.</p>
+    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, thanks for your interest in the MAHA Partner Plattform. After review, we're unable to approve your ${escapeHtml(r.role)} registration request at this time.</p>
     <p style="color:#444;font-size:14px;">If you believe this is a mistake or would like more information, please reply to this email and we'll follow up.</p>
   </div>`;
 }

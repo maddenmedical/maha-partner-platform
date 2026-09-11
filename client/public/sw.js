@@ -1,4 +1,4 @@
-// MAHA Partner Portal service worker — push notifications only (no offline cache).
+// MAHA Partner Plattform service worker — push notifications only (no offline cache).
 
 self.addEventListener("push", (event) => {
   let payload = {};
@@ -7,7 +7,7 @@ self.addEventListener("push", (event) => {
   } catch (e) {
     payload = { title: "MAHA", body: event.data ? event.data.text() : "" };
   }
-  const title = payload.title || "MAHA Partner Portal";
+  const title = payload.title || "MAHA Partner Plattform";
   const options = {
     body: payload.body || "",
     icon: "./icon-192.png",
