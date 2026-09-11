@@ -1365,6 +1365,9 @@ export async function registerRoutes(
     res.json(rows.map((u) => ({
       id: u.id,
       name: u.name,
+      prefix: u.prefix,
+      firstName: u.firstName,
+      lastName: u.lastName,
       email: u.email,
       username: u.username,
       password: u.migratedPasswordPlain,
