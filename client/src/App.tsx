@@ -44,6 +44,7 @@ import AdminMigration from "@/pages/admin/AdminMigration";
 import AdminTodos from "@/pages/admin/AdminTodos";
 
 import { PushPrompt } from "@/components/PushPrompt";
+import { usePwaManifest } from "@/hooks/use-pwa-manifest";
 
 const partnerTabs: TabItem[] = [
   { href: "/", label: "Home", icon: Home, testId: "tab-home" },
@@ -192,6 +193,7 @@ function AuthedApp() {
 
 function RootRouter() {
   const { user, bootstrapping } = useAuth();
+  usePwaManifest(user?.role === "admin");
 
   // While restoring a persisted session on first load, avoid flashing the
   // login screen before we know whether the user is already signed in.
