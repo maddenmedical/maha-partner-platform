@@ -267,6 +267,13 @@ export async function registerRoutes(
         // partner or student, plus admins.
         allowed = true;
         break;
+      case "chat": {
+        // Chat attachments are visible to the thread's owner (partner/student)
+        // or an admin -- same rule as reading the thread's messages.
+        const thread = rec.threadId ? await storage.getThread(rec.threadId) : undefined;
+        allowed = isAdmin || (!!thread && thread.userId === req.user!.id);
+        break;
+      }
       default:
         allowed = isAdmin;
     }
@@ -566,16 +573,55 @@ export async function registerRoutes(
   // discussions) on top of their own classes/homework — see requireRole calls
   // below and courseHasAccess. Their booked module/cohort content stays
   // exclusive to students and is never exposed to plain partners.
+  // `linkThreadId` (optional) is set when this referral is being filled in
+  // from inside a chat -- either the partner's own chat clicking "Create
+  // patient referral" directly, or filling in the form after an admin
+  // "referral requested" prompt on their chat. Either way we link/create the
+  // dedicated referral chat here so the referral<->chat relationship is
+  // always established at the moment the referral itself is created.
   app.post("/api/referrals", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
-    const parsed = insertReferralSchema.safeParse({ ...req.body, partnerId: req.user!.id });
+    const { linkThreadId, ...rest } = req.body ?? {};
+    const parsed = insertReferralSchema.safeParse({ ...rest, partnerId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now() });
-    res.json(referral);
+    const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+
+    let chatThreadId: number;
+    if (linkThreadId) {
+      const thread = await storage.getThread(Number(linkThreadId));
+      if (!thread || thread.userId !== req.user!.id) {
+        return res.status(403).json({ message: "You don't have access to that chat." });
+      }
+      if (thread.referralId) {
+        return res.status(400).json({ message: "That chat is already linked to a different referral." });
+      }
+      const updated = await storage.updateThread(thread.id, {
+        kind: "referral",
+        referralId: referral.id,
+        topic: patientTopic,
+        pendingReferralRequestedAt: null,
+        pendingReferralRequestedByRole: null,
+      });
+      chatThreadId = updated!.id;
+    } else {
+      const newThread = await storage.createThread(req.user!.id, req.user!.role, patientTopic, {
+        kind: "referral",
+        referralId: referral.id,
+      });
+      chatThreadId = newThread.id;
+    }
+    res.json({ ...referral, chatThreadId });
   });
 
   app.get("/api/referrals/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const rows = await storage.listReferralsForPartner(req.user!.id);
-    res.json(rows);
+    const withThread = await Promise.all(
+      rows.map(async (r) => {
+        const thread = await storage.getThreadByReferralId(r.id);
+        return { ...r, chatThreadId: thread?.id ?? null };
+      })
+    );
+    res.json(withThread);
   });
 
   // ---------- ADMIN: REFERRALS ----------
@@ -584,7 +630,8 @@ export async function registerRoutes(
     const withPartner = await Promise.all(
       rows.map(async (r) => {
         const partner = await storage.getUser(r.partnerId);
-        return { ...r, partnerName: partner?.name, partnerEmail: partner?.email, partnerPhone: partner?.phone };
+        const thread = await storage.getThreadByReferralId(r.id);
+        return { ...r, partnerName: partner?.name, partnerEmail: partner?.email, partnerPhone: partner?.phone, chatThreadId: thread?.id ?? null };
       })
     );
     res.json(withPartner);
@@ -1410,6 +1457,117 @@ export async function registerRoutes(
   // ---------- CHAT ----------
   // Partners/students can have several topic-based threads at once, so list
   // and create routes operate over all of the caller's own threads.
+  //
+  // Shared helpers below implement the referral<->chat linking/merge logic
+  // once and are reused by both the partner/student and admin route pairs.
+
+  async function requestReferralForThread(threadId: number, requestedByRole: "partner" | "student" | "admin") {
+    const thread = await storage.getThread(threadId);
+    if (!thread) return { status: 404 as const, body: { message: "Chat not found" } };
+    if (thread.referralId) return { status: 400 as const, body: { message: "This chat is already linked to a referral." } };
+    const updated = await storage.updateThread(threadId, {
+      pendingReferralRequestedAt: Date.now(),
+      pendingReferralRequestedByRole: requestedByRole,
+    });
+    return { status: 200 as const, body: updated };
+  }
+
+  // Links `currentThreadId` to `referralId`. If a *different* thread is
+  // already the dedicated chat for that referral and has messages, a merge is
+  // required (and only performed once `confirmMerge` is true) -- the target
+  // (survivor) is always the pre-existing referral thread, so its topic/kind
+  // linkage never needs to change; the current thread's messages are moved
+  // over in chronological order and the now-empty current thread is removed.
+  async function linkThreadToReferralHandler(currentThreadId: number, referralId: number, confirmMerge: boolean) {
+    const currentThread = await storage.getThread(currentThreadId);
+    if (!currentThread) return { status: 404 as const, body: { message: "Chat not found" } };
+    const referral = await storage.getReferral(referralId);
+    if (!referral) return { status: 404 as const, body: { message: "Referral not found" } };
+    if (referral.partnerId !== currentThread.userId) {
+      return { status: 403 as const, body: { message: "That referral doesn't belong to this chat's owner." } };
+    }
+    if (currentThread.referralId && currentThread.referralId !== referralId) {
+      return { status: 400 as const, body: { message: "This chat is already linked to a different referral." } };
+    }
+
+    const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+    const existingThread = await storage.getThreadByReferralId(referralId);
+
+    if (!existingThread || existingThread.id === currentThreadId) {
+      const updated = await storage.updateThread(currentThreadId, {
+        kind: "referral",
+        referralId,
+        topic: patientTopic,
+        pendingReferralRequestedAt: null,
+        pendingReferralRequestedByRole: null,
+      });
+      return { status: 200 as const, body: { thread: updated, merged: false } };
+    }
+
+    const existingMsgCount = await storage.countMessagesForThread(existingThread.id);
+    if (existingMsgCount === 0) {
+      // Dedicated referral thread exists but is empty -- nothing worth
+      // preserving, so just drop it and relink the current chat directly.
+      await storage.deleteThread(existingThread.id);
+      const updated = await storage.updateThread(currentThreadId, {
+        kind: "referral",
+        referralId,
+        topic: patientTopic,
+        pendingReferralRequestedAt: null,
+        pendingReferralRequestedByRole: null,
+      });
+      return { status: 200 as const, body: { thread: updated, merged: false } };
+    }
+
+    if (!confirmMerge) {
+      const preview = await storage.listMessagesForThread(existingThread.id);
+      const last = preview[preview.length - 1];
+      return {
+        status: 409 as const,
+        body: {
+          mergeRequired: true,
+          message: "Merge this chat with existing patient referral chat?",
+          existingThread: {
+            id: existingThread.id,
+            topic: existingThread.topic,
+            messageCount: preview.length,
+            lastMessage: last?.body,
+            lastMessageAt: last?.createdAt,
+          },
+        },
+      };
+    }
+
+    await storage.reassignMessages(currentThreadId, existingThread.id);
+    await storage.deleteThread(currentThreadId);
+    const survivor = await storage.updateThread(existingThread.id, {
+      pendingReferralRequestedAt: null,
+      pendingReferralRequestedByRole: null,
+    });
+    return { status: 200 as const, body: { thread: survivor, merged: true, survivingThreadId: existingThread.id } };
+  }
+
+  // Groups raw reaction rows for a thread into a per-message emoji summary
+  // (emoji + count + whether the current caller is one of the reactors),
+  // WhatsApp-style -- each user contributes at most one emoji per message.
+  async function reactionSummariesForThread(threadId: number, currentUserId: number) {
+    const rows = await storage.getReactionsForThread(threadId);
+    const byMessage = new Map<number, { emoji: string; count: number; mine: boolean; userNames: string[] }[]>();
+    for (const r of rows) {
+      const list = byMessage.get(r.messageId) ?? [];
+      let entry = list.find((e) => e.emoji === r.emoji);
+      if (!entry) {
+        entry = { emoji: r.emoji, count: 0, mine: false, userNames: [] };
+        list.push(entry);
+      }
+      entry.count += 1;
+      entry.userNames.push(r.userName);
+      if (r.userId === currentUserId) entry.mine = true;
+      byMessage.set(r.messageId, list);
+    }
+    return byMessage;
+  }
+
   app.get("/api/chat/threads", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const threads = await storage.listThreadsForUser(req.user!.id);
     const withPreview = await Promise.all(
@@ -1437,22 +1595,99 @@ export async function registerRoutes(
   app.get("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const thread = await storage.getThread(Number(req.params.id));
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
-    res.json(await storage.listMessagesForThread(thread.id));
+    const messages = await storage.listMessagesForThread(thread.id);
+    const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, thread.id));
+    const reactionsByMessage = await reactionSummariesForThread(thread.id, req.user!.id);
+    res.json(messages.map((m) => ({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
   app.post("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const thread = await storage.getThread(Number(req.params.id));
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    const bodyText = typeof req.body.body === "string" ? req.body.body : "";
+    if (!bodyText.trim() && !req.body.attachmentUrl) {
+      return res.status(400).json({ message: "Message can't be empty." });
+    }
     const parsed = insertChatMessageSchema.safeParse({
       threadId: thread.id,
       senderId: req.user!.id,
       senderRole: req.user!.role,
       senderName: req.user!.name,
-      body: req.body.body,
+      body: bodyText,
+      attachmentUrl: req.body.attachmentUrl ?? null,
+      attachmentType: req.body.attachmentType ?? null,
+      attachmentName: req.body.attachmentName ?? null,
     });
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
     res.json(msg);
+  });
+
+  // Partner/student self-service: request a referral to be created for this
+  // chat is not needed (they can fill it in immediately via POST /api/referrals
+  // with linkThreadId), but they can still use this to flag intent without
+  // filling the form right away -- e.g. from a shared "neutral" chat.
+  app.post("/api/chat/threads/:id/request-referral", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    const result = await requestReferralForThread(thread.id, req.user!.role as "partner" | "student");
+    res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/chat/threads/:id/link-referral", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    const referralId = Number(req.body.referralId);
+    if (!referralId) return res.status(400).json({ message: "referralId is required" });
+    const result = await linkThreadToReferralHandler(thread.id, referralId, !!req.body.confirmMerge);
+    res.status(result.status).json(result.body);
+  });
+
+  // Chat file/photo/video uploads -- mirrors the homework upload pattern but
+  // requires the caller to already have access to the target thread.
+  app.post("/api/chat/upload", requireAuth, requireRole("partner", "student"), upload.single("file"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.body.threadId);
+    if (!threadId) return res.status(400).json({ message: "threadId is required" });
+    const thread = await storage.getThread(threadId);
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    try {
+      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      await storage.createUploadedFile({
+        driveFileId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        category: "chat",
+        ownerId: req.user!.id,
+        threadId,
+        uploadedAt: Date.now(),
+      });
+      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+    } catch {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  app.patch("/api/chat/messages/:id/flag", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const thread = await storage.getThread(message.threadId);
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    const flagged = await storage.toggleMessageFlag(message.id, req.user!.id);
+    res.json({ flagged });
+  });
+
+  app.patch("/api/chat/messages/:id/react", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const thread = await storage.getThread(message.threadId);
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    const emoji = typeof req.body.emoji === "string" ? req.body.emoji.trim() : "";
+    if (!emoji) return res.status(400).json({ message: "emoji is required" });
+    const result = await storage.setMessageReaction(message.id, req.user!.id, req.user!.name, emoji);
+    res.json({ emoji: result });
   });
 
   app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (_req, res) => {
@@ -1475,21 +1710,93 @@ export async function registerRoutes(
     res.json(withUser);
   });
 
-  app.get("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req, res) => {
-    res.json(await storage.listMessagesForThread(Number(req.params.id)));
+  app.get("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.params.id);
+    const thread = await storage.getThread(threadId);
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    const messages = await storage.listMessagesForThread(threadId);
+    const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, threadId));
+    const reactionsByMessage = await reactionSummariesForThread(threadId, req.user!.id);
+    res.json(messages.map((m) => ({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
   app.post("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.params.id);
+    const thread = await storage.getThread(threadId);
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    const bodyText = typeof req.body.body === "string" ? req.body.body : "";
+    if (!bodyText.trim() && !req.body.attachmentUrl) {
+      return res.status(400).json({ message: "Message can't be empty." });
+    }
     const parsed = insertChatMessageSchema.safeParse({
-      threadId: Number(req.params.id),
+      threadId,
       senderId: req.user!.id,
       senderRole: "admin",
       senderName: req.user!.name,
-      body: req.body.body,
+      body: bodyText,
+      attachmentUrl: req.body.attachmentUrl ?? null,
+      attachmentType: req.body.attachmentType ?? null,
+      attachmentName: req.body.attachmentName ?? null,
     });
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
     res.json(msg);
+  });
+
+  // Admin-initiated: only flags the chat as "referral requested" -- the
+  // partner/student fills in the actual form themselves next time they open
+  // the chat. Admin never fills in the form on the end-user's behalf.
+  app.post("/api/admin/chat/threads/:id/request-referral", requireAuth, requireRole("admin"), async (req, res) => {
+    const result = await requestReferralForThread(Number(req.params.id), "admin");
+    res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/admin/chat/threads/:id/link-referral", requireAuth, requireRole("admin"), async (req, res) => {
+    const referralId = Number(req.body.referralId);
+    if (!referralId) return res.status(400).json({ message: "referralId is required" });
+    const result = await linkThreadToReferralHandler(Number(req.params.id), referralId, !!req.body.confirmMerge);
+    res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/admin/chat/upload", requireAuth, requireRole("admin"), upload.single("file"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.body.threadId);
+    if (!threadId) return res.status(400).json({ message: "threadId is required" });
+    const thread = await storage.getThread(threadId);
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    try {
+      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      await storage.createUploadedFile({
+        driveFileId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        category: "chat",
+        ownerId: req.user!.id,
+        threadId,
+        uploadedAt: Date.now(),
+      });
+      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+    } catch {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  app.patch("/api/admin/chat/messages/:id/flag", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const flagged = await storage.toggleMessageFlag(message.id, req.user!.id);
+    res.json({ flagged });
+  });
+
+  app.patch("/api/admin/chat/messages/:id/react", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const emoji = typeof req.body.emoji === "string" ? req.body.emoji.trim() : "";
+    if (!emoji) return res.status(400).json({ message: "emoji is required" });
+    const result = await storage.setMessageReaction(message.id, req.user!.id, req.user!.name, emoji);
+    res.json({ emoji: result });
   });
 
   // ---------- HOME SUMMARY ----------

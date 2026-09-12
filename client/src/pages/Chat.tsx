@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
@@ -15,10 +14,14 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Send, MessageSquare, Loader2, Plus } from "lucide-react";
+import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import type { ChatThread, ChatMessage } from "@shared/schema";
+import { consumePendingThreadId } from "@/lib/chatNav";
+import { ChatComposer } from "@/components/chat/ChatComposer";
+import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
+import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
+import { ReferralFormDialog } from "@/components/chat/ReferralFormDialog";
+import type { ChatThread, Referral } from "@shared/schema";
 
 interface ThreadRow extends ChatThread {
   lastMessage?: string;
@@ -29,6 +32,7 @@ interface ThreadRow extends ChatThread {
 export default function Chat({ label = "Chat with MAHA Team" }: { label?: string }) {
   const queryClient = useQueryClient();
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
+  const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [topic, setTopic] = useState("");
 
@@ -48,14 +52,28 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
     },
   });
 
-  // Keep the selected thread's preview data in sync as the list refetches.
+  // Keep the selected thread's data in sync as the list refetches (topic,
+  // referral link, pending-request flag can all change from actions taken
+  // inside ThreadDetail, not just new messages).
   useEffect(() => {
     if (!selectedThread || !threads) return;
     const fresh = threads.find((t) => t.id === selectedThread.id);
-    if (fresh && (fresh.lastMessage !== selectedThread.lastMessage || fresh.messageCount !== selectedThread.messageCount)) {
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(selectedThread)) {
       setSelectedThread(fresh);
     }
   }, [threads, selectedThread]);
+
+  // Resolves a pending thread id set by another page (e.g. "Open chat" from
+  // a referral, or the surviving thread id after a merge) once it shows up
+  // in the refetched thread list.
+  useEffect(() => {
+    if (!pendingSelectId || !threads) return;
+    const target = threads.find((t) => t.id === pendingSelectId);
+    if (target) {
+      setSelectedThread(target);
+      setPendingSelectId(null);
+    }
+  }, [pendingSelectId, threads]);
 
   function handleCreateThread(e: React.FormEvent) {
     e.preventDefault();
@@ -129,11 +147,15 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
                   onClick={() => setSelectedThread(t)}
                   className={cn(
                     "text-left rounded-lg border p-3 hover-elevate active-elevate-2",
-                    selectedThread?.id === t.id ? "border-primary bg-primary/5" : "border-card-border bg-card"
+                    selectedThread?.id === t.id ? "border-primary bg-primary/5" : "border-card-border bg-card",
+                    t.kind === "referral" && selectedThread?.id !== t.id && "border-l-2 border-l-primary"
                   )}
                   data-testid={`button-thread-${t.id}`}
                 >
-                  <span className="text-sm font-medium truncate block">{t.topic}</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    <span className="text-sm font-medium truncate block">{t.topic}</span>
+                  </span>
                   <p className="text-xs text-muted-foreground truncate mt-0.5">{t.lastMessage || "No messages yet"}</p>
                 </button>
               ))
@@ -142,7 +164,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
 
         <div className="flex-1 min-w-0 hidden sm:flex">
           {selectedThread ? (
-            <ThreadDetail thread={selectedThread} />
+            <ThreadDetail thread={selectedThread} onSelectSurvivor={(id) => setPendingSelectId(id)} />
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
               Select a chat, or start a new one, to view messages
@@ -156,9 +178,12 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
               <Button variant="ghost" size="sm" onClick={() => setSelectedThread(null)} data-testid="button-close-thread-mobile">
                 Back
               </Button>
-              <span className="text-sm font-medium truncate">{selectedThread.topic}</span>
+              <span className="flex items-center gap-1.5 text-sm font-medium truncate">
+                {selectedThread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+                {selectedThread.topic}
+              </span>
             </div>
-            <ThreadDetail thread={selectedThread} />
+            <ThreadDetail thread={selectedThread} onSelectSurvivor={(id) => setPendingSelectId(id)} />
           </div>
         )}
       </div>
@@ -166,14 +191,17 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   );
 }
 
-function ThreadDetail({ thread }: { thread: ThreadRow }) {
+function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelectSurvivor: (id: number) => void }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [body, setBody] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState("");
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [referralDialogOpen, setReferralDialogOpen] = useState(false);
 
-  const { data: messages, isLoading } = useQuery<ChatMessage[]>({
-    queryKey: ["/api/chat/threads", thread.id, "messages"],
+  const messagesKey = ["/api/chat/threads", thread.id, "messages"];
+  const { data: messages, isLoading } = useQuery<ChatMessageWithMeta[]>({
+    queryKey: messagesKey,
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/chat/threads/${thread.id}/messages`);
       return res.json();
@@ -181,30 +209,85 @@ function ThreadDetail({ thread }: { thread: ThreadRow }) {
     refetchInterval: 5000,
   });
 
-  const mutation = useMutation({
-    mutationFn: (text: string) => apiRequest("POST", `/api/chat/threads/${thread.id}/messages`, { body: text }),
+  const { data: myReferrals } = useQuery<(Referral & { chatThreadId: number | null })[]>({
+    queryKey: ["/api/referrals/mine"],
+  });
+  const unlinkedReferrals = (myReferrals || []).filter((r) => !r.chatThreadId);
+
+  const sendMutation = useMutation({
+    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
+      apiRequest("POST", `/api/chat/threads/${thread.id}/messages`, payload),
     onSuccess: () => {
-      setBody("");
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", thread.id, "messages"] });
+      queryClient.invalidateQueries({ queryKey: messagesKey });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+  });
+
+  const flagMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("PATCH", `/api/chat/messages/${id}/flag`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
+  });
+
+  const reactMutation = useMutation({
+    mutationFn: ({ id, emoji }: { id: number; emoji: string }) => apiRequest("PATCH", `/api/chat/messages/${id}/react`, { emoji }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
   });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages?.length]);
 
-  function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    if (!body.trim()) return;
-    mutation.mutate(body.trim());
-  }
+  const filteredMessages = (messages || []).filter((m) => {
+    if (flaggedOnly && !m.flaggedByMe) return false;
+    if (search.trim() && !m.body.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
-      <div className="hidden sm:block border-b border-border pb-2 -mt-1">
-        <span className="text-sm font-medium">{thread.topic}</span>
+      <div className="hidden sm:flex items-center gap-1.5 border-b border-border pb-2 -mt-1">
+        {thread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+        <span className="text-sm font-medium truncate">{thread.topic}</span>
       </div>
+
+      <ReferralLinkPanel
+        thread={thread}
+        role={(user?.role as "partner" | "student") || "partner"}
+        basePath="/api/chat"
+        threadsQueryKey={["/api/chat/threads"]}
+        unlinkedReferrals={unlinkedReferrals}
+        onCreateReferralClick={() => setReferralDialogOpen(true)}
+        onThreadChanged={(result) => {
+          queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
+          if (result?.survivingThreadId) onSelectSurvivor(result.survivingThreadId);
+        }}
+      />
+
+      {(messages?.length ?? 0) > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search messages..."
+              className="h-8 pl-7 text-xs"
+              data-testid="input-search-messages"
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant={flaggedOnly ? "default" : "outline"}
+            className="h-8 gap-1.5 shrink-0"
+            onClick={() => setFlaggedOnly((v) => !v)}
+            data-testid="button-toggle-flagged"
+          >
+            <Star className="h-3.5 w-3.5" /> Flagged
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
           <>
@@ -216,52 +299,41 @@ function ThreadDetail({ thread }: { thread: ThreadRow }) {
             <MessageSquare className="h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm max-w-xs">No messages yet. Say hello — the MAHA team typically responds within one business day.</p>
           </div>
+        ) : filteredMessages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground gap-2">
+            <p className="text-sm">No messages match your search or filter.</p>
+          </div>
         ) : (
-          messages.map((m) => {
+          filteredMessages.map((m) => {
             const isMe = m.senderId === user?.id && m.senderRole === user?.role;
             return (
-              <div
+              <ChatMessageBubble
                 key={m.id}
-                className={cn("flex flex-col max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
-                data-testid={`message-${m.id}`}
-              >
-                <div
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm",
-                    isMe ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
-                  )}
-                >
-                  {m.body}
-                </div>
-                <span className="text-xs text-muted-foreground mt-1 px-1">
-                  {isMe ? "You" : m.senderName} · {format(new Date(m.createdAt), "MMM d, HH:mm")}
-                </span>
-              </div>
+                message={m}
+                isMe={isMe}
+                onToggleFlag={(id) => flagMutation.mutate(id)}
+                onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
+              />
             );
           })
         )}
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={handleSend} className="flex items-end gap-2 border-t border-border pt-3">
-        <Textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Type a message..."
-          rows={1}
-          className="resize-none min-h-9"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend(e);
-            }
-          }}
-          data-testid="textarea-chat-message"
-        />
-        <Button type="submit" size="icon" disabled={mutation.isPending || !body.trim()} data-testid="button-send-message">
-          {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
-      </form>
+      <ChatComposer
+        uploadUrl="/api/chat/upload"
+        threadId={thread.id}
+        onSend={(payload) => sendMutation.mutateAsync(payload)}
+        sending={sendMutation.isPending}
+        testIdPrefix="chat"
+      />
+
+      <ReferralFormDialog
+        open={referralDialogOpen}
+        onOpenChange={setReferralDialogOpen}
+        linkThreadId={thread.id}
+        onSuccess={() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] })}
+      />
     </div>
   );
 }

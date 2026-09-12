@@ -1,7 +1,7 @@
 import {
   users, sessions, products, priceTiers, orders, orderItems, referrals,
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
-  classSessions, homeworkSubmissions, chatThreads, chatMessages, uploadedFiles,
+  classSessions, homeworkSubmissions, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources,
 } from "@shared/schema";
@@ -211,14 +211,28 @@ export interface IStorage {
   deleteProductResource(id: number): Promise<void>;
 
   // chat
-  createThread(userId: number, userRole: string, topic: string): Promise<ChatThread>;
+  createThread(userId: number, userRole: string, topic: string, opts?: { kind?: string; referralId?: number }): Promise<ChatThread>;
   listThreadsForUser(userId: number): Promise<ChatThread[]>;
   listThreads(): Promise<ChatThread[]>;
   getThread(id: number): Promise<ChatThread | undefined>;
+  getThreadByReferralId(referralId: number): Promise<ChatThread | undefined>;
+  updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null }>): Promise<ChatThread | undefined>;
+  deleteThread(id: number): Promise<void>;
+  reassignMessages(sourceThreadId: number, targetThreadId: number): Promise<void>;
+  countMessagesForThread(threadId: number): Promise<number>;
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
   listMessagesForThread(threadId: number): Promise<ChatMessage[]>;
+  getMessage(id: number): Promise<ChatMessage | undefined>;
   markChatThreadsNotified(ids: number[], ts: number): Promise<void>;
   listUnnotifiedChatThreads(): Promise<ChatThread[]>;
+
+  // chat message flags (per-user star/flag)
+  toggleMessageFlag(messageId: number, userId: number): Promise<boolean>;
+  getFlaggedMessageIdsForUser(userId: number, threadId: number): Promise<number[]>;
+
+  // chat message reactions (one emoji per user per message, WhatsApp-style)
+  setMessageReaction(messageId: number, userId: number, userName: string, emoji: string): Promise<string | null>;
+  getReactionsForThread(threadId: number): Promise<{ messageId: number; userId: number; userName: string; emoji: string }[]>;
 
   // push subscriptions
   upsertPushSubscription(s: InsertPushSubscription): Promise<PushSubscriptionRow>;
@@ -641,8 +655,15 @@ export class DatabaseStorage implements IStorage {
     db.delete(productResources).where(eq(productResources.id, id)).run();
   }
 
-  async createThread(userId: number, userRole: string, topic: string) {
-    return db.insert(chatThreads).values({ userId, userRole, topic, emailNotified: false, notifiedAt: null, createdAt: Date.now() }).returning().get();
+  async createThread(userId: number, userRole: string, topic: string, opts?: { kind?: string; referralId?: number }) {
+    return db.insert(chatThreads).values({
+      userId, userRole, topic,
+      kind: opts?.kind ?? "general",
+      referralId: opts?.referralId ?? null,
+      pendingReferralRequestedAt: null,
+      pendingReferralRequestedByRole: null,
+      emailNotified: false, notifiedAt: null, createdAt: Date.now(),
+    }).returning().get();
   }
   async listThreadsForUser(userId: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.userId, userId)).orderBy(desc(chatThreads.createdAt)).all();
@@ -652,6 +673,27 @@ export class DatabaseStorage implements IStorage {
   }
   async getThread(id: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.id, id)).get();
+  }
+  async getThreadByReferralId(referralId: number) {
+    return db.select().from(chatThreads).where(eq(chatThreads.referralId, referralId)).get();
+  }
+  async updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null }>) {
+    return db.update(chatThreads).set(patch).where(eq(chatThreads.id, id)).returning().get();
+  }
+  async deleteThread(id: number) {
+    const msgIds = db.select({ id: chatMessages.id }).from(chatMessages).where(eq(chatMessages.threadId, id)).all().map((r) => r.id);
+    if (msgIds.length > 0) {
+      db.delete(chatMessageFlags).where(inArray(chatMessageFlags.messageId, msgIds)).run();
+      db.delete(chatMessageReactions).where(inArray(chatMessageReactions.messageId, msgIds)).run();
+    }
+    db.delete(chatMessages).where(eq(chatMessages.threadId, id)).run();
+    db.delete(chatThreads).where(eq(chatThreads.id, id)).run();
+  }
+  async reassignMessages(sourceThreadId: number, targetThreadId: number) {
+    db.update(chatMessages).set({ threadId: targetThreadId }).where(eq(chatMessages.threadId, sourceThreadId)).run();
+  }
+  async countMessagesForThread(threadId: number) {
+    return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).all().length;
   }
   async markChatThreadsNotified(ids: number[], ts: number) {
     for (const id of ids) {
@@ -668,11 +710,59 @@ export class DatabaseStorage implements IStorage {
       senderRole: m.senderRole,
       senderName: m.senderName,
       body: m.body,
+      attachmentUrl: m.attachmentUrl ?? null,
+      attachmentType: m.attachmentType ?? null,
+      attachmentName: m.attachmentName ?? null,
       createdAt: m.createdAt,
     }).returning().get();
   }
+  async getMessage(id: number) {
+    return db.select().from(chatMessages).where(eq(chatMessages.id, id)).get();
+  }
+  async toggleMessageFlag(messageId: number, userId: number) {
+    const existing = db.select().from(chatMessageFlags)
+      .where(and(eq(chatMessageFlags.messageId, messageId), eq(chatMessageFlags.userId, userId)))
+      .get();
+    if (existing) {
+      db.delete(chatMessageFlags).where(eq(chatMessageFlags.id, existing.id)).run();
+      return false;
+    }
+    db.insert(chatMessageFlags).values({ messageId, userId, createdAt: Date.now() }).run();
+    return true;
+  }
+  async getFlaggedMessageIdsForUser(userId: number, threadId: number) {
+    const rows = db.select({ messageId: chatMessageFlags.messageId })
+      .from(chatMessageFlags)
+      .innerJoin(chatMessages, eq(chatMessages.id, chatMessageFlags.messageId))
+      .where(and(eq(chatMessageFlags.userId, userId), eq(chatMessages.threadId, threadId)))
+      .all();
+    return rows.map((r) => r.messageId);
+  }
   async listMessagesForThread(threadId: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(chatMessages.createdAt).all();
+  }
+  async setMessageReaction(messageId: number, userId: number, userName: string, emoji: string) {
+    const existing = db.select().from(chatMessageReactions)
+      .where(and(eq(chatMessageReactions.messageId, messageId), eq(chatMessageReactions.userId, userId)))
+      .get();
+    if (existing) {
+      db.delete(chatMessageReactions).where(eq(chatMessageReactions.id, existing.id)).run();
+      if (existing.emoji === emoji) return null; // tapping the same emoji again removes it
+    }
+    db.insert(chatMessageReactions).values({ messageId, userId, userName, emoji, createdAt: Date.now() }).run();
+    return emoji;
+  }
+  async getReactionsForThread(threadId: number) {
+    return db.select({
+      messageId: chatMessageReactions.messageId,
+      userId: chatMessageReactions.userId,
+      userName: chatMessageReactions.userName,
+      emoji: chatMessageReactions.emoji,
+    })
+      .from(chatMessageReactions)
+      .innerJoin(chatMessages, eq(chatMessages.id, chatMessageReactions.messageId))
+      .where(eq(chatMessages.threadId, threadId))
+      .all();
   }
 
   async upsertPushSubscription(s: InsertPushSubscription) {

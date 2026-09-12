@@ -16,9 +16,13 @@ import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Loader2, Upload, CheckCircle2, FileText } from "lucide-react";
+import { ClipboardList, Loader2, Upload, CheckCircle2, FileText, MessageSquare } from "lucide-react";
 import { openAuthedFile } from "@/lib/fileAccess";
+import { setPendingThreadId } from "@/lib/chatNav";
+import { useLocation } from "wouter";
 import { format } from "date-fns";
+
+type ReferralRow = Referral & { chatThreadId: number | null };
 
 const formSchema = insertReferralSchema.omit({ partnerId: true }).extend({
   attachmentUrl: z.string().optional(),
@@ -45,8 +49,14 @@ export default function ReferPatient() {
     },
   });
 
-  const { data: referrals, isLoading } = useQuery<Referral[]>({ queryKey: ["/api/referrals/mine"] });
-  const [selected, setSelected] = useState<Referral | null>(null);
+  const { data: referrals, isLoading } = useQuery<ReferralRow[]>({ queryKey: ["/api/referrals/mine"] });
+  const [selected, setSelected] = useState<ReferralRow | null>(null);
+  const [, navigate] = useLocation();
+
+  function openReferralChat(threadId: number) {
+    setPendingThreadId(threadId);
+    navigate("/chat");
+  }
 
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
@@ -181,6 +191,16 @@ export default function ReferPatient() {
                     <p className="text-sm font-medium truncate">{r.patientFirstName} {r.patientLastName}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{r.caseDescription}</p>
                     <p className="text-xs text-muted-foreground/70 mt-1">{format(new Date(r.createdAt), "MMM d, yyyy")}</p>
+                    {r.chatThreadId && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); openReferralChat(r.chatThreadId!); }}
+                        className="text-primary flex items-center gap-1 text-xs mt-1.5"
+                        data-testid={`link-open-chat-${r.id}`}
+                      >
+                        <MessageSquare className="h-3 w-3" /> Open chat
+                      </button>
+                    )}
                   </div>
                   <StatusBadge status={r.status} />
                 </CardContent>

@@ -534,8 +534,9 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
   filename: text("filename").notNull(),
   mimeType: text("mime_type").notNull(),
   size: integer("size").notNull(),
-  category: text("category").notNull(), // 'homework' | 'registration' | 'referral' | 'product'
+  category: text("category").notNull(), // 'homework' | 'registration' | 'referral' | 'product' | 'chat'
   ownerId: integer("owner_id"),
+  threadId: integer("thread_id"), // set when category='chat' — enables file-access checks via thread membership
   uploadedAt: integer("uploaded_at").notNull(),
 });
 export const insertUploadedFileSchema = createInsertSchema(uploadedFiles).omit({ id: true });
@@ -548,13 +549,24 @@ export const chatThreads = sqliteTable("chat_threads", {
   userId: integer("user_id").notNull(),
   userRole: text("user_role").notNull(), // 'partner' | 'student'
   topic: text("topic").notNull().default("General"),
+  // 'general' — ordinary chat. 'referral' — dedicated to one patient referral.
+  kind: text("kind").notNull().default("general"),
+  // 1:1 link to a referral. A referral has at most one linked thread.
+  referralId: integer("referral_id"),
+  // Set when someone (partner or admin) requests a referral be created for
+  // this chat but hasn't filled in the form yet. Cleared once referralId is set.
+  pendingReferralRequestedAt: integer("pending_referral_requested_at"),
+  pendingReferralRequestedByRole: text("pending_referral_requested_by_role"), // 'partner' | 'student' | 'admin'
   // Notify the MAHA team by email when a new chat thread is started. Mirrors
   // the referrals/orders emailNotified pattern polled by notificationScheduler.
   emailNotified: integer("email_notified", { mode: "boolean" }).notNull().default(false),
   notifiedAt: integer("notified_at"),
   createdAt: integer("created_at").notNull(),
 });
-export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({ id: true, createdAt: true, emailNotified: true, notifiedAt: true });
+export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({
+  id: true, createdAt: true, emailNotified: true, notifiedAt: true,
+  kind: true, referralId: true, pendingReferralRequestedAt: true, pendingReferralRequestedByRole: true,
+});
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;
 
@@ -566,11 +578,34 @@ export const chatMessages = sqliteTable("chat_messages", {
   senderRole: text("sender_role").notNull(), // 'partner' | 'student' | 'admin'
   senderName: text("sender_name").notNull(),
   body: text("body").notNull(),
+  attachmentUrl: text("attachment_url"),
+  attachmentType: text("attachment_type"), // 'image' | 'video' | 'document' | 'audio' (voice note)
+  attachmentName: text("attachment_name"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+
+// ---------- CHAT MESSAGE FLAGS (per-user "star for later") ----------
+export const chatMessageFlags = sqliteTable("chat_message_flags", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  messageId: integer("message_id").notNull(),
+  userId: integer("user_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export type ChatMessageFlag = typeof chatMessageFlags.$inferSelect;
+
+// ---------- CHAT MESSAGE REACTIONS (one emoji per user per message, WhatsApp-style) ----------
+export const chatMessageReactions = sqliteTable("chat_message_reactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  messageId: integer("message_id").notNull(),
+  userId: integer("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  emoji: text("emoji").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export type ChatMessageReaction = typeof chatMessageReactions.$inferSelect;
 
 // ---------- PUSH SUBSCRIPTIONS ----------
 // One row per browser/device push endpoint. `userId` ties the endpoint to an

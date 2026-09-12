@@ -12,12 +12,14 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Inbox, FileText } from "lucide-react";
+import { Inbox, FileText, MessageSquare } from "lucide-react";
 import { openAuthedFile } from "@/lib/fileAccess";
+import { setPendingThreadId } from "@/lib/chatNav";
+import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
-type ReferralWithPartner = Referral & { partnerName?: string; partnerEmail?: string; partnerPhone?: string };
+type ReferralWithPartner = Referral & { partnerName?: string; partnerEmail?: string; partnerPhone?: string; chatThreadId?: number | null };
 
 const STATUS_OPTIONS = ["New", "Contacted", "Scheduled", "Closed"];
 
@@ -28,6 +30,12 @@ export default function AdminReferrals() {
   const [selected, setSelected] = useState<ReferralWithPartner | null>(null);
 
   const { data: referrals, isLoading } = useQuery<ReferralWithPartner[]>({ queryKey: ["/api/admin/referrals"] });
+  const [, navigate] = useLocation();
+
+  function openReferralChat(threadId: number) {
+    setPendingThreadId(threadId);
+    navigate("/admin/chat");
+  }
 
   const mutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
@@ -69,6 +77,7 @@ export default function AdminReferrals() {
                   <th className="px-4 py-3 font-medium">Urgency</th>
                   <th className="px-4 py-3 font-medium">Date</th>
                   <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Chat</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,6 +105,20 @@ export default function AdminReferrals() {
                           </SelectContent>
                         </Select>
                       </div>
+                    </td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {r.chatThreadId ? (
+                        <button
+                          type="button"
+                          onClick={() => openReferralChat(r.chatThreadId!)}
+                          className="text-primary flex items-center gap-1 text-xs"
+                          data-testid={`link-open-chat-${r.id}`}
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" /> Open
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
