@@ -214,6 +214,16 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor }: { thread: Thread
     onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
   });
 
+  const [deleteMessageId, setDeleteMessageId] = useState<number | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/chat/messages/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: messagesKey });
+      setDeleteMessageId(null);
+    },
+    onError: (err: any) => toast({ title: "Could not delete message", description: err.message, variant: "destructive" }),
+  });
+
   const { toast } = useToast();
   const { user } = useAuth();
   const { data: admins } = useQuery<User[]>({ queryKey: ["/api/admin/team"] });
@@ -306,6 +316,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor }: { thread: Thread
               onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
               isAdmin
               onCreateTodo={(id) => setTodoMessageId(id)}
+              onDelete={(id) => setDeleteMessageId(id)}
               onNavigateToThread={onSelectSurvivor}
             />
           ))
@@ -366,6 +377,31 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor }: { thread: Thread
               data-testid="button-submit-todo"
             >
               Create to-do
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteMessageId !== null} onOpenChange={(open) => !open && setDeleteMessageId(null)}>
+        <DialogContent data-testid="dialog-delete-message">
+          <DialogHeader>
+            <DialogTitle>Delete this message?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            The message will be replaced with "This message was deleted" for everyone in this chat. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteMessageId(null)} data-testid="button-cancel-delete-message">
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMessageId !== null && deleteMutation.mutate(deleteMessageId)}
+              data-testid="button-confirm-delete-message"
+            >
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

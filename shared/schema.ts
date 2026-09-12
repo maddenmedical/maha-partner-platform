@@ -604,8 +604,13 @@ export const chatMessages = sqliteTable("chat_messages", {
   attachmentType: text("attachment_type"), // 'image' | 'video' | 'document' | 'audio' (voice note)
   attachmentName: text("attachment_name"),
   createdAt: integer("created_at").notNull(),
+  // Soft delete (admin-only). Kept as a row (not removed) so thread flow,
+  // reactions, flags, and admin to-dos linked to this messageId stay valid.
+  // Body/attachment are blanked out at the API layer whenever this is set.
+  deletedAt: integer("deleted_at"),
+  deletedByName: text("deleted_by_name"),
 });
-export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, deletedAt: true, deletedByName: true });
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 

@@ -1658,6 +1658,16 @@ export async function registerRoutes(
     return byMessage;
   }
 
+  // A soft-deleted message (admin-only delete) keeps its row -- flags,
+  // reactions, and admin to-dos still point at a valid messageId -- but its
+  // content is blanked out here at the API boundary so every consumer
+  // (partner/student and admin chat views alike) renders a neutral
+  // "message was deleted" placeholder instead of leftover content.
+  function redactDeletedMessage<T extends { deletedAt: number | null; body: string; attachmentUrl: string | null; attachmentType: string | null; attachmentName: string | null }>(m: T): T {
+    if (!m.deletedAt) return m;
+    return { ...m, body: "", attachmentUrl: null, attachmentType: null, attachmentName: null };
+  }
+
   app.get("/api/chat/threads", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const threads = await storage.listThreadsForUser(req.user!.id);
     const withPreview = await Promise.all(
@@ -1707,7 +1717,7 @@ export async function registerRoutes(
     const messages = await storage.listMessagesForThread(thread.id);
     const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, thread.id));
     const reactionsByMessage = await reactionSummariesForThread(thread.id, req.user!.id);
-    res.json(messages.map((m) => ({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
+    res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
   app.post("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
@@ -1868,7 +1878,7 @@ export async function registerRoutes(
     const messages = await storage.listMessagesForThread(threadId);
     const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, threadId));
     const reactionsByMessage = await reactionSummariesForThread(threadId, req.user!.id);
-    res.json(messages.map((m) => ({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
+    res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
   app.post("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
@@ -1948,6 +1958,17 @@ export async function registerRoutes(
     if (!emoji) return res.status(400).json({ message: "emoji is required" });
     const result = await storage.setMessageReaction(message.id, req.user!.id, req.user!.name, emoji);
     res.json({ emoji: result });
+  });
+
+  // Admin-only message delete. Soft delete: the row stays (so flags,
+  // reactions, and any admin to-do linked to this messageId remain valid),
+  // but content is blanked out for every viewer via redactDeletedMessage
+  // above. Idempotent -- deleting an already-deleted message just returns it.
+  app.delete("/api/admin/chat/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const updated = message.deletedAt ? message : await storage.deleteMessage(message.id, req.user!.name);
+    res.json(redactDeletedMessage(updated));
   });
 
   // Cross-chat search: find matching messages across EVERY partner/student

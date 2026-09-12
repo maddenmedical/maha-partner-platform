@@ -226,6 +226,7 @@ export interface IStorage {
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
   listMessagesForThread(threadId: number): Promise<ChatMessage[]>;
   getMessage(id: number): Promise<ChatMessage | undefined>;
+  deleteMessage(id: number, deletedByName: string): Promise<ChatMessage>;
   markChatThreadsNotified(ids: number[], ts: number): Promise<void>;
   listUnnotifiedChatThreads(): Promise<ChatThread[]>;
 
@@ -753,6 +754,13 @@ export class DatabaseStorage implements IStorage {
   async getMessage(id: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.id, id)).get();
   }
+  async deleteMessage(id: number, deletedByName: string) {
+    return db.update(chatMessages)
+      .set({ deletedAt: Date.now(), deletedByName })
+      .where(eq(chatMessages.id, id))
+      .returning()
+      .get();
+  }
   async toggleMessageFlag(messageId: number, userId: number) {
     const existing = db.select().from(chatMessageFlags)
       .where(and(eq(chatMessageFlags.messageId, messageId), eq(chatMessageFlags.userId, userId)))
@@ -793,8 +801,11 @@ export class DatabaseStorage implements IStorage {
   }
   async searchMessages(query: string, threadIds?: number[]) {
     const q = `%${query.toLowerCase()}%`;
-    const scopeClause = threadIds ? inArray(chatMessages.threadId, threadIds) : undefined;
-    const whereClause = scopeClause ? and(scopeClause, like(chatMessages.body, q)) : like(chatMessages.body, q);
+    // Deleted messages keep their row (and original body) for audit purposes,
+    // but must never surface through search -- exclude them here.
+    const notDeleted = isNull(chatMessages.deletedAt);
+    const scopeClause = threadIds ? and(notDeleted, inArray(chatMessages.threadId, threadIds)) : notDeleted;
+    const whereClause = and(scopeClause, like(chatMessages.body, q));
     const rows = db
       .select({
         id: chatMessages.id,
@@ -807,6 +818,8 @@ export class DatabaseStorage implements IStorage {
         attachmentType: chatMessages.attachmentType,
         attachmentName: chatMessages.attachmentName,
         createdAt: chatMessages.createdAt,
+        deletedAt: chatMessages.deletedAt,
+        deletedByName: chatMessages.deletedByName,
         threadTopic: chatThreads.topic,
         threadKind: chatThreads.kind,
       })

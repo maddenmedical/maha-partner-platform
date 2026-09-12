@@ -2,7 +2,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare } from "lucide-react";
+import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2 } from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
 import { useToast } from "@/hooks/use-toast";
 import { mentionTokenRegex } from "@/lib/chatMentions";
@@ -57,19 +57,22 @@ interface ChatMessageBubbleProps {
   isMe: boolean;
   onToggleFlag: (id: number) => void;
   onReact: (id: number, emoji: string) => void;
-  // Admin-only extras: downloading voice notes as mp3, and handing a message
-  // off to another admin as a to-do. Omitted/false for partner & student views.
+  // Admin-only extras: downloading voice notes as mp3, handing a message
+  // off to another admin as a to-do, and deleting a message. Omitted/false
+  // for partner & student views.
   isAdmin?: boolean;
   onCreateTodo?: (messageId: number) => void;
+  onDelete?: (messageId: number) => void;
   // Jumps the viewer to a different thread when they click an @-mention
   // chip inside this message (see chatMentions.ts). Omit to render chips
   // as plain inert labels.
   onNavigateToThread?: (threadId: number) => void;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onNavigateToThread }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onNavigateToThread }: ChatMessageBubbleProps) {
   const { toast } = useToast();
   const attachmentSrc = m.attachmentUrl ? `${API_BASE}${m.attachmentUrl}` : null;
+  const isDeleted = !!m.deletedAt;
 
   function handleOpenAttachment() {
     if (!m.attachmentUrl) return;
@@ -85,6 +88,22 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
     const filename = (m.attachmentName || "voice-note").replace(/\.[^.]+$/, "");
     downloadAuthedFile(`/api/admin/files/${driveFileId}/download-mp3`, `${filename}.mp3`).catch((e) =>
       toast({ title: "Could not download mp3", description: e.message, variant: "destructive" })
+    );
+  }
+
+  if (isDeleted) {
+    return (
+      <div
+        className={cn("group flex flex-col max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
+        data-testid={`message-${m.id}`}
+      >
+        <div className="rounded-lg px-3 py-2 text-sm italic text-muted-foreground bg-muted/50 border border-dashed border-border">
+          This message was deleted{isAdmin && m.deletedByName ? ` by ${m.deletedByName}` : ""}.
+        </div>
+        <span className="text-xs text-muted-foreground mt-1 px-1">
+          {isMe ? "You" : m.senderName} · {format(new Date(m.createdAt), "MMM d, HH:mm")}
+        </span>
+      </div>
     );
   }
 
@@ -174,6 +193,18 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             title="Create to-do for another admin"
           >
             <ListTodo className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {isAdmin && onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(m.id)}
+            className="shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+            data-testid={`button-delete-message-${m.id}`}
+            aria-label="Delete message"
+            title="Delete message"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
