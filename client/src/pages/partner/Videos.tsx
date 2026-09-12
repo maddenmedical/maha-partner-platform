@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, API_BASE } from "@/lib/queryClient";
 import type { Course, Video } from "@shared/schema";
@@ -10,7 +11,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { PlayCircle, Lock, GraduationCap, Loader2, CheckCircle2, Ticket } from "lucide-react";
+import { PlayCircle, Lock, GraduationCap, Loader2, CheckCircle2, Ticket, Microscope, ArrowRight } from "lucide-react";
 
 // The API never sends the raw video URL (see server/routes.ts) — only a
 // hasVideo flag. Playback goes through the authenticated stream endpoint.
@@ -155,6 +156,21 @@ export default function Videos() {
         <h1 className="text-xl font-semibold">Education</h1>
         <p className="text-sm text-muted-foreground mt-1">Clinical courses and lectures from the MAHA team.</p>
       </div>
+
+      <Link
+        href="/institute"
+        className="flex items-center justify-between rounded-lg border border-card-border bg-primary/10 p-4 hover-elevate active-elevate-2"
+        data-testid="link-banner-institute"
+      >
+        <div className="flex items-center gap-3">
+          <Microscope className="h-5 w-5 text-primary" />
+          <div>
+            <p className="text-sm font-medium">MAHA Institute mentorship programme</p>
+            <p className="text-xs text-muted-foreground">Small-group mentorship with Dr. Perko</p>
+          </div>
+        </div>
+        <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+      </Link>
 
       {isLoading ? (
         <div className="flex flex-col gap-4">

@@ -23,6 +23,7 @@ import PartnerHome from "@/pages/partner/PartnerHome";
 import ReferPatient from "@/pages/partner/ReferPatient";
 import Shop from "@/pages/partner/Shop";
 import PartnerVideos from "@/pages/partner/Videos";
+import Institute from "@/pages/partner/Institute";
 
 import MyClasses from "@/pages/student/MyClasses";
 import Homework from "@/pages/student/Homework";
@@ -94,6 +95,7 @@ function PartnerApp() {
         <Route path="/refer" component={ReferPatient} />
         <Route path="/shop" component={Shop} />
         <Route path="/videos" component={PartnerVideos} />
+        <Route path="/institute" component={Institute} />
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
@@ -118,6 +120,7 @@ function StudentApp() {
         <Route path="/refer" component={ReferPatient} />
         <Route path="/shop" component={Shop} />
         <Route path="/videos" component={PartnerVideos} />
+        <Route path="/institute" component={Institute} />
         <Route path="/classes" component={MyClasses} />
         <Route path="/homework" component={Homework} />
         <Route path="/chat">

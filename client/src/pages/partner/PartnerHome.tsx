@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   ClipboardList, ShoppingCart, MessageSquare, ArrowRight,
-  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap, FileUp,
+  CalendarClock, Users, CheckCircle2, CalendarPlus, Video, Lock, Loader2, GraduationCap, FileUp, Microscope,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -297,6 +297,13 @@ export default function PartnerHome() {
           <div className="flex items-center gap-3">
             <GraduationCap className="h-5 w-5 text-chart-2" />
             <span className="text-sm font-medium">Learn</span>
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+        <Link href="/institute" className="flex items-center justify-between rounded-lg border border-card-border bg-card p-4 hover-elevate active-elevate-2" data-testid="link-quick-institute">
+          <div className="flex items-center gap-3">
+            <Microscope className="h-5 w-5 text-primary" />
+            <span className="text-sm font-medium">MAHA Institute mentorship</span>
           </div>
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
         </Link>
