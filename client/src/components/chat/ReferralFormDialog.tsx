@@ -22,15 +22,17 @@ type FormValues = z.infer<typeof formSchema>;
 interface ReferralFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  linkThreadId: number;
+  linkThreadId?: number;
   onSuccess: (referral: Referral & { chatThreadId: number }) => void;
 }
 
 // The same short referral form as the standalone "Refer a Patient" page,
 // used inline from within a chat -- either the partner/student's own
 // "Create patient referral" click, or filling in the form after an admin
-// "referral requested" prompt. Always passes linkThreadId so the backend
-// links (or creates) the dedicated referral chat for this same conversation.
+// "referral requested" prompt. When linkThreadId is passed, the backend
+// links (or creates) the dedicated referral chat for that conversation.
+// When omitted (e.g. the "new patient" branch of "New chat"), the backend
+// creates a brand-new dedicated referral chat instead.
 export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess }: ReferralFormDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -66,7 +68,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
       const res = await apiRequest("POST", "/api/referrals", {
         ...values,
         attachmentUrl: attachmentUrl || undefined,
-        linkThreadId,
+        ...(linkThreadId ? { linkThreadId } : {}),
       });
       return res.json();
     },

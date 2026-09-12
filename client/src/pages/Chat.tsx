@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star } from "lucide-react";
+import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId } from "@/lib/chatNav";
 import { ChatComposer } from "@/components/chat/ChatComposer";
@@ -35,11 +35,19 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [newChatStep, setNewChatStep] = useState<"choose" | "pick-referral" | "topic">("choose");
+  const [newPatientDialogOpen, setNewPatientDialogOpen] = useState(false);
   const [topic, setTopic] = useState("");
 
   const { data: threads, isLoading } = useQuery<ThreadRow[]>({
     queryKey: ["/api/chat/threads"],
     refetchInterval: 5000,
+  });
+
+  // Same query/key ThreadDetail's referral-link panel uses -- react-query
+  // dedupes and shares the cache, so this doesn't add an extra request.
+  const { data: myReferrals } = useQuery<(Referral & { chatThreadId: number | null })[]>({
+    queryKey: ["/api/referrals/mine"],
   });
 
   const createThread = useMutation({
@@ -52,6 +60,36 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
       setSelectedThread({ ...thread, messageCount: 0 });
     },
   });
+
+  // Fallback for the rare referral that has no dedicated chat thread yet --
+  // creates one and links it via the same merge-safe backend logic used
+  // elsewhere, then opens it. In the normal case (referral already has a
+  // chatThreadId) this mutation isn't needed -- picking just opens it directly.
+  const linkExistingReferralMutation = useMutation({
+    mutationFn: async (referral: Referral) => {
+      const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+      const threadRes = await apiRequest("POST", "/api/chat/threads", { topic: patientTopic });
+      const newThread = await threadRes.json();
+      const linkRes = await apiRequest("POST", `/api/chat/threads/${newThread.id}/link-referral`, { referralId: referral.id });
+      const linkData = await linkRes.json();
+      return (linkData.survivingThreadId ?? linkData.thread?.id ?? newThread.id) as number;
+    },
+    onSuccess: async (threadId) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
+      setNewChatOpen(false);
+      setPendingSelectId(threadId);
+    },
+  });
+
+  function handlePickReferral(referral: Referral & { chatThreadId: number | null }) {
+    if (referral.chatThreadId) {
+      setNewChatOpen(false);
+      setPendingSelectId(referral.chatThreadId);
+    } else {
+      linkExistingReferralMutation.mutate(referral);
+    }
+  }
 
   // Keep the selected thread's data in sync as the list refetches (topic,
   // referral link, pending-request flag can all change from actions taken
@@ -93,40 +131,149 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
         </div>
         <div className="flex items-center gap-2 shrink-0">
         <CrossChatSearch searchUrl="/api/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="chat-search" />
-        <Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
+        <Dialog
+          open={newChatOpen}
+          onOpenChange={(open) => {
+            setNewChatOpen(open);
+            if (open) setNewChatStep("choose");
+          }}
+        >
           <DialogTrigger asChild>
             <Button size="sm" className="gap-1.5 shrink-0" data-testid="button-new-chat">
               <Plus className="h-4 w-4" /> New chat
             </Button>
           </DialogTrigger>
           <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Start a new chat</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleCreateThread} className="space-y-3">
-              <div>
-                <label className="text-sm font-medium mb-1.5 block" htmlFor="chat-topic-input">
-                  What would you like to talk about?
-                </label>
-                <Input
-                  id="chat-topic-input"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="e.g. Order question, Referral follow-up..."
-                  autoFocus
-                  data-testid="input-chat-topic"
-                />
-              </div>
-              <DialogFooter>
-                <Button type="submit" disabled={createThread.isPending || !topic.trim()} data-testid="button-create-chat">
-                  {createThread.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start chat"}
-                </Button>
-              </DialogFooter>
-            </form>
+            {newChatStep === "choose" && (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Start a new chat</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewChatStep("pick-referral")}
+                    className="flex items-start gap-3 rounded-lg border border-card-border p-3 text-left hover-elevate active-elevate-2"
+                    data-testid="button-choice-existing-referral"
+                  >
+                    <Stethoscope className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                    <span>
+                      <span className="text-sm font-medium block">An existing patient referral</span>
+                      <span className="text-xs text-muted-foreground">Pick which one to open its chat</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewChatOpen(false);
+                      setNewPatientDialogOpen(true);
+                    }}
+                    className="flex items-start gap-3 rounded-lg border border-card-border p-3 text-left hover-elevate active-elevate-2"
+                    data-testid="button-choice-new-patient"
+                  >
+                    <ClipboardPlus className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                    <span>
+                      <span className="text-sm font-medium block">A new patient</span>
+                      <span className="text-xs text-muted-foreground">Create a patient referral to get started</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewChatStep("topic")}
+                    className="flex items-start gap-3 rounded-lg border border-card-border p-3 text-left hover-elevate active-elevate-2"
+                    data-testid="button-choice-something-else"
+                  >
+                    <MessageSquare className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                    <span>
+                      <span className="text-sm font-medium block">Something else</span>
+                      <span className="text-xs text-muted-foreground">Start a regular chat with the MAHA team</span>
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
+
+            {newChatStep === "pick-referral" && (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Which patient referral?</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+                  {!myReferrals || myReferrals.length === 0 ? (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-referrals">
+                      You don't have any patient referrals yet.
+                    </p>
+                  ) : (
+                    myReferrals
+                      .slice()
+                      .sort((a, b) => b.createdAt - a.createdAt)
+                      .map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => handlePickReferral(r)}
+                          disabled={linkExistingReferralMutation.isPending}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-card-border p-2.5 text-left hover-elevate active-elevate-2 disabled:opacity-60"
+                          data-testid={`button-pick-referral-${r.id}`}
+                        >
+                          <span className="text-sm font-medium truncate">{r.patientFirstName} {r.patientLastName}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">{r.status}</span>
+                        </button>
+                      ))
+                  )}
+                </div>
+                <DialogFooter className="sm:justify-start">
+                  <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setNewChatStep("choose")} data-testid="button-back-new-chat">
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
+
+            {newChatStep === "topic" && (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Start a new chat</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleCreateThread} className="space-y-3">
+                  <div>
+                    <label className="text-sm font-medium mb-1.5 block" htmlFor="chat-topic-input">
+                      What would you like to talk about?
+                    </label>
+                    <Input
+                      id="chat-topic-input"
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                      placeholder="e.g. Order question, Referral follow-up..."
+                      autoFocus
+                      data-testid="input-chat-topic"
+                    />
+                  </div>
+                  <DialogFooter className="sm:justify-between">
+                    <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setNewChatStep("choose")} data-testid="button-back-new-chat">
+                      <ArrowLeft className="h-3.5 w-3.5" /> Back
+                    </Button>
+                    <Button type="submit" disabled={createThread.isPending || !topic.trim()} data-testid="button-create-chat">
+                      {createThread.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start chat"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </>
+            )}
           </DialogContent>
         </Dialog>
         </div>
       </div>
+
+      <ReferralFormDialog
+        open={newPatientDialogOpen}
+        onOpenChange={setNewPatientDialogOpen}
+        onSuccess={async (data) => {
+          await queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+          await queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
+          setPendingSelectId(data.chatThreadId);
+        }}
+      />
 
       <div className="flex flex-1 min-h-0 gap-4">
         <div className="w-full sm:w-72 shrink-0 flex flex-col gap-2 overflow-y-auto overscroll-contain">
