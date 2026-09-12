@@ -594,11 +594,19 @@ export const chatThreads = sqliteTable("chat_threads", {
   // the referrals/orders emailNotified pattern polled by notificationScheduler.
   emailNotified: integer("email_notified", { mode: "boolean" }).notNull().default(false),
   notifiedAt: integer("notified_at"),
+  // Unread-marker tracking (Item 10). Set to the current time whenever the
+  // owning partner/student, or any admin, opens this thread (fetches its
+  // messages). A thread reads as "unread" for a side whenever the most
+  // recent message was sent by the OTHER side and is newer than that side's
+  // last-read timestamp here.
+  ownerLastReadAt: integer("owner_last_read_at"),
+  adminLastReadAt: integer("admin_last_read_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({
   id: true, createdAt: true, emailNotified: true, notifiedAt: true,
   kind: true, referralId: true, pendingReferralRequestedAt: true, pendingReferralRequestedByRole: true,
+  ownerLastReadAt: true, adminLastReadAt: true,
 });
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;

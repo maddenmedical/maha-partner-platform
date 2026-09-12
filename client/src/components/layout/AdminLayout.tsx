@@ -1,8 +1,10 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
+import type { Referral, Order } from "@shared/schema";
 import {
   Sidebar,
   SidebarContent,
@@ -10,6 +12,7 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -40,6 +43,21 @@ const navItems = [
 
 function AdminSidebar() {
   const [location] = useLocation();
+
+  // Unread markers (Item 10): a small badge pill per nav item showing what
+  // still needs attention. Referrals/orders reuse their existing status
+  // field ('New' / 'Requested' = not yet triaged); chat reuses the
+  // adminLastReadAt-derived `unread` flag from the threads endpoint.
+  const { data: referrals } = useQuery<Referral[]>({ queryKey: ["/api/admin/referrals"], refetchInterval: 15000 });
+  const { data: orders } = useQuery<Order[]>({ queryKey: ["/api/admin/orders"], refetchInterval: 15000 });
+  const { data: threads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/admin/chat/threads"], refetchInterval: 15000 });
+
+  const badgeCounts: Record<string, number> = {
+    "/admin/referrals": referrals?.filter((r) => r.status === "New").length ?? 0,
+    "/admin/orders": orders?.filter((o) => o.status === "Requested").length ?? 0,
+    "/admin/chat": threads?.filter((t) => t.unread).length ?? 0,
+  };
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-2">
@@ -56,16 +74,24 @@ function AdminSidebar() {
           <SidebarGroupLabel>Management</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => (
-                <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton asChild isActive={location.startsWith(item.href)} tooltip={item.label} data-testid={item.testId}>
-                    <Link href={item.href}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {navItems.map((item) => {
+                const count = badgeCounts[item.href] ?? 0;
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton asChild isActive={location.startsWith(item.href)} tooltip={item.label} data-testid={item.testId}>
+                      <Link href={item.href}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                    {count > 0 && (
+                      <SidebarMenuBadge className="bg-primary text-primary-foreground" data-testid={`badge-unread-${item.testId}`}>
+                        {count}
+                      </SidebarMenuBadge>
+                    )}
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

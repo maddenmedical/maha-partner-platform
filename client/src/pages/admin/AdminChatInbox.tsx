@@ -37,6 +37,7 @@ interface ThreadRow {
   pendingReferralRequestedAt: number | null;
   pendingReferralRequestedByRole: "partner" | "student" | "admin" | null;
   createdAt: number;
+  unread?: boolean;
 }
 
 interface AdminReferralRow extends Referral {
@@ -85,7 +86,10 @@ export default function AdminChatInbox() {
         ) : !threads || threads.length === 0 ? (
           <EmptyState icon={MessageSquare} title="No conversations" description="Partner and student messages will appear here." />
         ) : (
-          threads.map((t) => (
+          threads
+            .slice()
+            .sort((a, b) => (b.lastMessageAt || b.createdAt) - (a.lastMessageAt || a.createdAt))
+            .map((t) => (
             <button
               key={t.id}
               onClick={() => setSelectedThread(t)}
@@ -98,13 +102,14 @@ export default function AdminChatInbox() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 min-w-0">
+                  {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
                   {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                  <span className="text-sm font-medium truncate">{t.userName}</span>
+                  <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
                 </span>
                 <Badge variant="outline" className="text-xs capitalize no-default-hover-elevate no-default-active-elevate shrink-0">{t.userRole}</Badge>
               </div>
               {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5">{t.topic}</span>}
-              <p className="text-xs text-muted-foreground truncate mt-0.5">{t.lastMessage || "No messages yet"}</p>
+              <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
             </button>
           ))
         )}

@@ -13,6 +13,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Inbox, FileText, MessageSquare } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { openAuthedFile } from "@/lib/fileAccess";
 import { setPendingThreadId } from "@/lib/chatNav";
 import { useLocation } from "wouter";
@@ -84,11 +85,19 @@ export default function AdminReferrals() {
                 {filtered.map((r) => (
                   <tr
                     key={r.id}
-                    className="border-b border-border last:border-0 hover-elevate active-elevate-2 cursor-pointer"
+                    className={cn(
+                      "border-b border-border last:border-0 hover-elevate active-elevate-2 cursor-pointer",
+                      r.status === "New" && "bg-chart-4/5"
+                    )}
                     onClick={() => setSelected(r)}
                     data-testid={`row-referral-${r.id}`}
                   >
-                    <td className="px-4 py-3 font-medium">{r.patientFirstName} {r.patientLastName}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <span className="flex items-center gap-2">
+                        {r.status === "New" && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-referral-${r.id}`} />}
+                        {r.patientFirstName} {r.patientLastName}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{r.partnerName}</td>
                     <td className="px-4 py-3"><StatusBadge status={r.urgency} /></td>
                     <td className="px-4 py-3 text-muted-foreground tabular-nums">{format(new Date(r.createdAt), "MMM d, yyyy")}</td>

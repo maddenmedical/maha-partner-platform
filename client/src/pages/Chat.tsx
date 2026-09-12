@@ -29,6 +29,7 @@ interface ThreadRow extends ChatThread {
   lastMessage?: string;
   lastMessageAt?: number;
   messageCount: number;
+  unread?: boolean;
 }
 
 export default function Chat({ label = "Chat with MAHA Team" }: { label?: string }) {
@@ -305,10 +306,11 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
                   data-testid={`button-thread-${t.id}`}
                 >
                   <span className="flex items-center gap-1.5 min-w-0">
+                    {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
                     {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                    <span className="text-sm font-medium truncate block">{t.topic}</span>
+                    <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.topic}</span>
                   </span>
-                  <p className="text-xs text-muted-foreground truncate mt-0.5">{t.lastMessage || "No messages yet"}</p>
+                  <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
                 </button>
               ))
           )}

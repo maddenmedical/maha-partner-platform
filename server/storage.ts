@@ -219,7 +219,7 @@ export interface IStorage {
   listThreads(): Promise<ChatThread[]>;
   getThread(id: number): Promise<ChatThread | undefined>;
   getThreadByReferralId(referralId: number): Promise<ChatThread | undefined>;
-  updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null }>): Promise<ChatThread | undefined>;
+  updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null }>): Promise<ChatThread | undefined>;
   deleteThread(id: number): Promise<void>;
   reassignMessages(sourceThreadId: number, targetThreadId: number): Promise<void>;
   countMessagesForThread(threadId: number): Promise<number>;
@@ -712,7 +712,7 @@ export class DatabaseStorage implements IStorage {
   async getThreadByReferralId(referralId: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.referralId, referralId)).get();
   }
-  async updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null }>) {
+  async updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null }>) {
     return db.update(chatThreads).set(patch).where(eq(chatThreads.id, id)).returning().get();
   }
   async deleteThread(id: number) {

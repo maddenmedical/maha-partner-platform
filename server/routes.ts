@@ -1695,11 +1695,15 @@ export async function registerRoutes(
       threads.map(async (t) => {
         const messages = await storage.listMessagesForThread(t.id);
         const last = messages[messages.length - 1];
+        // Unread-for-owner (Item 10): the most recent message came from an
+        // admin and is newer than the last time this owner opened the thread.
+        const unread = !!last && last.senderRole === "admin" && last.createdAt > (t.ownerLastReadAt ?? 0);
         return {
           ...t,
           lastMessage: last?.body,
           lastMessageAt: last?.createdAt,
           messageCount: messages.length,
+          unread,
         };
       })
     );
@@ -1738,6 +1742,8 @@ export async function registerRoutes(
     const messages = await storage.listMessagesForThread(thread.id);
     const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, thread.id));
     const reactionsByMessage = await reactionSummariesForThread(thread.id, req.user!.id);
+    // Opening the thread clears the unread marker for its owner (Item 10).
+    await storage.updateThread(thread.id, { ownerLastReadAt: Date.now() });
     res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
@@ -1847,6 +1853,10 @@ export async function registerRoutes(
         const user = await storage.getUser(t.userId);
         const messages = await storage.listMessagesForThread(t.id);
         const last = messages[messages.length - 1];
+        // Unread-for-admin (Item 10): most recent message came from the
+        // partner/student owner and is newer than any admin's last open of
+        // this thread. Any admin opening it clears it for the whole team.
+        const unread = !!last && last.senderRole !== "admin" && last.createdAt > (t.adminLastReadAt ?? 0);
         return {
           ...t,
           userName: user?.name,
@@ -1854,6 +1864,7 @@ export async function registerRoutes(
           lastMessage: last?.body,
           lastMessageAt: last?.createdAt,
           messageCount: messages.length,
+          unread,
         };
       })
     );
@@ -1899,6 +1910,8 @@ export async function registerRoutes(
     const messages = await storage.listMessagesForThread(threadId);
     const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, threadId));
     const reactionsByMessage = await reactionSummariesForThread(threadId, req.user!.id);
+    // Opening the thread clears the unread marker for the whole admin team (Item 10).
+    await storage.updateThread(threadId, { adminLastReadAt: Date.now() });
     res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 

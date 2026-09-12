@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
@@ -20,6 +21,12 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
+
+  // Unread marker (Item 10): a small dot on the Chat tab when the MAHA team
+  // has sent a message the partner/student hasn't opened yet. Shares the
+  // same query/cache the Chat page itself uses, so this adds no extra load.
+  const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/chat/threads"], refetchInterval: 15000 });
+  const hasUnreadChat = !!chatThreads?.some((t) => t.unread);
 
   return (
     <div className="h-dvh flex flex-col bg-background overflow-hidden">
@@ -80,7 +87,12 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
               )}
               data-testid={tab.testId}
             >
-              <tab.icon className="h-5 w-5" />
+              <span className="relative">
+                <tab.icon className="h-5 w-5" />
+                {tab.href === "/chat" && hasUnreadChat && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab" />
+                )}
+              </span>
               <span>{tab.label}</span>
             </Link>
           );
@@ -101,7 +113,12 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
                 )}
                 data-testid={`${tab.testId}-desktop`}
               >
-                <tab.icon className="h-5 w-5" />
+                <span className="relative">
+                  <tab.icon className="h-5 w-5" />
+                  {tab.href === "/chat" && hasUnreadChat && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab-desktop" />
+                  )}
+                </span>
                 <span>{tab.label}</span>
               </Link>
             );
