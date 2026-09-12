@@ -1782,6 +1782,45 @@ export async function registerRoutes(
     res.json(thread);
   });
 
+  // MAHA Institute application: instead of a mailto link, the partner-side
+  // Institute page runs an in-app chat-style questionnaire. On completion it
+  // posts the full Q&A here in one call, which creates a dedicated chat
+  // thread (kind: "institute") with the answers as the opening message --
+  // this reuses the existing createThread/emailNotified flow, so admins get
+  // the normal "New chat started" email automatically with no extra code.
+  // An admin then continues the conversation with the partner from the
+  // regular chat inbox.
+  app.post("/api/chat/institute-application", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const specialty = req.body.specialty === "Medical" || req.body.specialty === "Dental" ? req.body.specialty : null;
+    const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
+    if (!specialty || answers.length === 0) {
+      return res.status(400).json({ message: "Missing specialty or answers." });
+    }
+    const cleanAnswers: { question: string; answer: string }[] = answers
+      .map((a: any) => ({
+        question: typeof a?.question === "string" ? a.question.trim() : "",
+        answer: typeof a?.answer === "string" ? a.answer.trim() : "",
+      }))
+      .filter((a: { question: string; answer: string }) => a.question && a.answer);
+    if (cleanAnswers.length === 0) {
+      return res.status(400).json({ message: "Missing specialty or answers." });
+    }
+    const topic = `MAHA Institute Application — ${req.user!.name} (${specialty})`;
+    const thread = await storage.createThread(req.user!.id, req.user!.role, topic, { kind: "institute" });
+    const body =
+      `New MAHA Institute application from ${req.user!.name} (${specialty}).\n\n` +
+      cleanAnswers.map((a) => `${a.question}\n${a.answer}`).join("\n\n");
+    const message = await storage.createMessage({
+      threadId: thread.id,
+      senderId: req.user!.id,
+      senderRole: req.user!.role,
+      senderName: req.user!.name,
+      body,
+      createdAt: Date.now(),
+    });
+    res.json({ threadId: thread.id, messageId: message.id });
+  });
+
   app.get("/api/chat/threads/:id/messages", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const thread = await storage.getThread(Number(req.params.id));
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });

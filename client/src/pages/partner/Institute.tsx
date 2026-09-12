@@ -1,15 +1,20 @@
-import { Mail, Users2, Layers, BookOpen, Stethoscope, Wrench, ArrowRight } from "lucide-react";
-import statsImage from "@/assets/brand/stats-institute-perko.jpg";
+import { useState } from "react";
+import { MessageCircle, Users2, Layers, BookOpen, Stethoscope, Wrench, Play } from "lucide-react";
+import handshakeImage from "@/assets/brand/handshake-supplement.jpg";
 import perkoImage from "@/assets/brand/perko-microscope-solo.jpg";
 import { MahaLogo } from "@/components/MahaLogo";
+import { InstituteApplyChat } from "@/components/institute/InstituteApplyChat";
 
-const APPLY_MAILTO =
-  "mailto:education@maha.clinic?subject=" +
-  encodeURIComponent("MAHA Institute — Application") +
-  "&body=" +
-  encodeURIComponent(
-    "Hello MAHA Institute team,\n\nI would like to apply for a place. A little about me:\n\nBackground: \nClinical focus: \nWhat I want to change in my practice: \n\nThank you,\n"
-  );
+const INTRO_VIDEO_ID = "BrxPxQteNdA";
+const MEDICAL_VIDEO_ID = "4yG86A9d8P8";
+const DENTAL_VIDEO_ID = "0kbqOWvS_hY";
+
+const stats = [
+  { value: "90%", label: "of your patients have gum inflammation" },
+  { value: "60\u201380%", label: "have gut dysbiosis" },
+  { value: "50%", label: "have periodontal infections" },
+  { value: "50%", label: "have root canals" },
+];
 
 const mentorshipPoints = [
   {
@@ -77,22 +82,40 @@ const leaveWith = [
   },
 ];
 
-function ApplyButton({ className = "", testId }: { className?: string; testId: string }) {
+function ApplyButton({ className = "", testId, onClick }: { className?: string; testId: string; onClick: () => void }) {
   return (
-    <a
-      href={APPLY_MAILTO}
+    <button
+      type="button"
+      onClick={onClick}
       className={
         "inline-flex items-center justify-center gap-2 rounded-md bg-primary text-primary-foreground text-sm font-medium px-5 py-2.5 hover-elevate active-elevate-2 " +
         className
       }
       data-testid={testId}
     >
-      <Mail className="h-4 w-4" /> Apply for a place
-    </a>
+      <MessageCircle className="h-4 w-4" /> Start Your Application
+    </button>
+  );
+}
+
+function YouTubeEmbed({ videoId, title, testId }: { videoId: string; title: string; testId: string }) {
+  return (
+    <div className="rounded-lg overflow-hidden bg-muted aspect-video" data-testid={testId}>
+      <iframe
+        className="w-full h-full"
+        src={`https://www.youtube.com/embed/${videoId}`}
+        title={title}
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+      />
+    </div>
   );
 }
 
 export default function Institute() {
+  const [applyOpen, setApplyOpen] = useState(false);
+
   return (
     <div className="flex flex-col" data-testid="page-institute">
       {/* Hero */}
@@ -112,18 +135,25 @@ export default function Institute() {
         </p>
       </section>
 
-      {/* Stats visual */}
-      <section className="w-full">
-        <img
-          src={statsImage}
-          alt="90% of your patients have gum inflammation, 60–80% have gut dysbiosis, 50% have periodontal infections, 50% have root canals"
-          className="w-full h-auto object-cover"
-          data-testid="img-institute-stats"
-        />
+      {/* Intro video */}
+      <section className="max-w-2xl mx-auto w-full px-4 pb-6">
+        <YouTubeEmbed videoId={INTRO_VIDEO_ID} title="MAHA Institute" testId="video-institute-intro" />
+      </section>
+
+      {/* Stats */}
+      <section className="bg-primary/15">
+        <div className="max-w-2xl mx-auto w-full px-4 py-8 grid grid-cols-2 gap-5">
+          {stats.map((stat) => (
+            <div key={stat.label} data-testid={`stat-institute-${stat.label.slice(0, 12).toLowerCase().replace(/[^a-z]+/g, "-")}`}>
+              <p className="font-serif text-3xl text-primary tabular-nums">{stat.value}</p>
+              <p className="text-sm text-foreground/80 mt-1 leading-snug">{stat.label}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       {/* A Mentorship, Not a Course */}
-      <section className="bg-primary/15">
+      <section className="bg-card">
         <div className="max-w-2xl mx-auto w-full px-4 py-8 flex flex-col gap-6">
           <div>
             <h2 className="font-serif text-xl" data-testid="text-mentorship-heading">
@@ -134,7 +164,7 @@ export default function Institute() {
           <div className="flex flex-col gap-5">
             {mentorshipPoints.map((point) => (
               <div key={point.title} className="flex gap-3" data-testid={`row-mentorship-${point.title.toLowerCase().replace(/[^a-z]+/g, "-")}`}>
-                <div className="h-9 w-9 rounded-md bg-background/70 flex items-center justify-center shrink-0">
+                <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center shrink-0">
                   <point.icon className="h-4.5 w-4.5 text-foreground" />
                 </div>
                 <div>
@@ -144,16 +174,13 @@ export default function Institute() {
               </div>
             ))}
           </div>
-          <div className="rounded-lg bg-background/60 p-4">
+          <div className="rounded-lg bg-primary/10 p-4">
             <p className="text-sm font-semibold">Applying for a Place</p>
             <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-              Write to{" "}
-              <a href={APPLY_MAILTO} className="text-foreground underline underline-offset-2" data-testid="link-apply-email-inline">
-                education@maha.clinic
-              </a>{" "}
-              with your background, your clinical focus and what you want to change in your practice. We compose
-              each group individually and agree the schedule with its participants.
+              No forms, no emails to write — just answer a few quick questions in chat and one of our admins will
+              personally continue the conversation with you to agree the details.
             </p>
+            <ApplyButton className="mt-3" testId="button-apply-inline" onClick={() => setApplyOpen(true)} />
           </div>
         </div>
       </section>
@@ -163,7 +190,7 @@ export default function Institute() {
         <img
           src={perkoImage}
           alt="Dr. Perko examining a sample under a clinical microscope"
-          className="w-full h-48 object-cover"
+          className="w-full h-56 sm:h-64 object-cover object-top"
           data-testid="img-institute-perko"
         />
       </section>
@@ -201,6 +228,38 @@ export default function Institute() {
         </div>
       </section>
 
+      {/* Handshake image break */}
+      <section className="w-full">
+        <img
+          src={handshakeImage}
+          alt="Dr. Perko greeting a patient in the MAHA clinic"
+          className="w-full h-56 sm:h-64 object-cover"
+          data-testid="img-institute-handshake"
+        />
+      </section>
+
+      {/* Videos by specialty */}
+      <section className="max-w-2xl mx-auto w-full px-4 py-8 flex flex-col gap-6">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+            <Play className="h-3.5 w-3.5" /> See the Modules in Action
+          </p>
+          <h2 className="font-serif text-xl mt-1" data-testid="text-videos-heading">
+            Built for Your Specialty
+          </h2>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div className="flex flex-col gap-2">
+            <YouTubeEmbed videoId={MEDICAL_VIDEO_ID} title="MAHA Institute Non Dental Modules" testId="video-institute-medical" />
+            <p className="text-xs font-medium text-muted-foreground">For Medical Professionals</p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <YouTubeEmbed videoId={DENTAL_VIDEO_ID} title="MAHA Institute Dental Modules" testId="video-institute-dental" />
+            <p className="text-xs font-medium text-muted-foreground">For Dental Professionals</p>
+          </div>
+        </div>
+      </section>
+
       {/* Closing CTA */}
       <section className="bg-foreground text-background">
         <div className="max-w-2xl mx-auto w-full px-4 py-10 flex flex-col gap-5">
@@ -208,10 +267,11 @@ export default function Institute() {
             Ready to Think Differently?
           </h2>
           <p className="text-sm text-background/70 leading-relaxed">
-            Write to education@maha.clinic with your name, your clinical focus and the cases you would like to work
-            on. We will discuss your goals and place you in a group that fits your level and your ambitions.
+            Answer a few quick questions in chat about your background, your clinical focus and the cases you would
+            like to work on. We will discuss your goals and place you in a group that fits your level and your
+            ambitions.
           </p>
-          <ApplyButton className="self-start" testId="button-apply-cta" />
+          <ApplyButton className="self-start" testId="button-apply-cta" onClick={() => setApplyOpen(true)} />
         </div>
       </section>
 
@@ -240,13 +300,12 @@ export default function Institute() {
           <div>
             <p className="text-sm font-medium">MAHA</p>
             <p className="text-xs text-muted-foreground">Slovenska cesta 54, 1000 Ljubljana, Slovenija</p>
-            <a href={APPLY_MAILTO} className="text-xs text-primary" data-testid="link-apply-email-footer">
-              education@maha.clinic
-            </a>
           </div>
-          <ApplyButton testId="button-apply-footer" />
+          <ApplyButton testId="button-apply-footer" onClick={() => setApplyOpen(true)} />
         </div>
       </section>
+
+      <InstituteApplyChat open={applyOpen} onOpenChange={setApplyOpen} />
     </div>
   );
 }

@@ -243,12 +243,18 @@ export const orders = sqliteTable("orders", {
   destinationCountry: text("destination_country"),
   // Estimated (not carrier-integrated) shipping cost in cents, computed at checkout time.
   estimatedShippingCost: integer("estimated_shipping_cost"),
+  // Set when an admin has viewed this order (distinct from `status` — an
+  // order can be seen but still awaiting action). Drives the sidebar
+  // unread badge so it clears once opened, instead of staying lit until
+  // the workflow status itself changes.
+  adminSeenAt: integer("admin_seen_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertOrderSchema = createInsertSchema(orders).omit({
   id: true,
   emailNotified: true,
   notifiedAt: true,
+  adminSeenAt: true,
   createdAt: true,
   status: true,
 });
@@ -411,12 +417,17 @@ export const referrals = sqliteTable("referrals", {
   // coordination (see Privacy Policy §5 / Terms §3). Recorded at submission
   // time, not just checked client-side, so there's an audit trail per referral.
   patientConsentAttestedAt: integer("patient_consent_attested_at"),
+  // Set when an admin has viewed this referral's detail (distinct from
+  // `status` — a referral can be seen but still awaiting triage). Drives
+  // the sidebar unread badge so it clears once opened.
+  adminSeenAt: integer("admin_seen_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertReferralSchema = createInsertSchema(referrals).omit({
   id: true,
   emailNotified: true,
   notifiedAt: true,
+  adminSeenAt: true,
   createdAt: true,
   status: true,
   patientConsentAttestedAt: true,
