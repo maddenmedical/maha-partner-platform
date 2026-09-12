@@ -96,6 +96,28 @@ export const changePasswordSchema = z.object({
 });
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
+// Self-service profile editing -- every field optional so a user can update
+// just the ones they touched. Mirrors registerSchema's validation rules for
+// any field that is present.
+export const updateProfileSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  prefix: z.string().optional(),
+  suffix: z.string().optional(),
+  email: z.string().email().optional(),
+  username: z.string().min(3).optional(),
+  phone: z.string().min(3).optional(),
+  businessName: z.string().optional(),
+  vatNumber: z.string().optional(),
+  city: z.string().optional(),
+  address: z.string().optional(),
+  country: z.string().optional(),
+  profession: z.string().optional(),
+  homepageUrl: z.string().optional(),
+  degreeFileUrl: z.string().optional(),
+});
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+
 // Note: password resets are admin-initiated only (see AdminPartners /
 // /api/admin/users/:id/reset-password) — no self-service email-link flow.
 

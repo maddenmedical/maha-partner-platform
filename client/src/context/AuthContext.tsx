@@ -13,6 +13,17 @@ export type AuthUser = {
   prefix: string | null;
   firstName: string | null;
   lastName: string | null;
+  suffix: string | null;
+  username: string | null;
+  phone: string | null;
+  businessName: string | null;
+  vatNumber: string | null;
+  profession: string | null;
+  homepageUrl: string | null;
+  degreeFileUrl: string | null;
+  city: string | null;
+  address: string | null;
+  country: string | null;
 };
 
 type PendingState = { pending: true; status: "pending" | "rejected" } | null;
@@ -33,6 +44,10 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   clearPending: () => void;
   markInstallBannerDismissed: () => void;
+  // Merge a fresh copy of the user (e.g. after a profile edit save) into
+  // the cached auth state so the header/greeting/etc. update immediately
+  // without a full page reload.
+  updateUser: (patch: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -125,9 +140,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => (prev ? { ...prev, installBannerDismissedAt: Date.now() } : prev));
   }, []);
 
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, clearPending, markInstallBannerDismissed }}
+      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, clearPending, markInstallBannerDismissed, updateUser }}
     >
       {children}
     </AuthContext.Provider>

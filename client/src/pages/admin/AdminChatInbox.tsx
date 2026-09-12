@@ -12,6 +12,7 @@ import { consumePendingThreadId } from "@/lib/chatNav";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
+import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import type { Referral } from "@shared/schema";
 
 interface ThreadRow {
@@ -63,7 +64,11 @@ export default function AdminChatInbox() {
   }, [pendingSelectId, threads]);
 
   return (
-    <div className="flex h-[calc(100dvh-6.5rem)] gap-4 max-w-5xl -m-1">
+    <div className="flex flex-col h-[calc(100dvh-6.5rem)] max-w-5xl -m-1">
+      <div className="mb-3 flex justify-end shrink-0">
+        <CrossChatSearch searchUrl="/api/admin/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="admin-chat-search" />
+      </div>
+      <div className="flex flex-1 min-h-0 gap-4">
       <div className="w-full sm:w-72 shrink-0 flex flex-col gap-2 overflow-y-auto overscroll-contain">
         {isLoading ? (
           <>
@@ -120,6 +125,7 @@ export default function AdminChatInbox() {
           <ThreadDetail thread={selectedThread} onSelectSurvivor={(id) => setPendingSelectId(id)} />
         </div>
       )}
+      </div>
     </div>
   );
 }

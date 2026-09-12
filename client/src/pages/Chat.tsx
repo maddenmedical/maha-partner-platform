@@ -21,6 +21,7 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { ReferralFormDialog } from "@/components/chat/ReferralFormDialog";
+import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import type { ChatThread, Referral } from "@shared/schema";
 
 interface ThreadRow extends ChatThread {
@@ -90,6 +91,8 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
             Start a new chat for each topic, and jump back into past conversations any time.
           </p>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+        <CrossChatSearch searchUrl="/api/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="chat-search" />
         <Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
           <DialogTrigger asChild>
             <Button size="sm" className="gap-1.5 shrink-0" data-testid="button-new-chat">
@@ -122,6 +125,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0 gap-4">

@@ -19,7 +19,7 @@ import type {
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, asc, gte, gt, lte, isNull, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, gte, gt, lte, isNull, inArray, like } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
 
 // Opening the database, setting WAL mode, and self-healing the schema all
@@ -79,6 +79,8 @@ export interface IStorage {
   getUserByPasswordResetToken(token: string): Promise<User | undefined>;
   listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
   updateUserRole(id: number, role: string): Promise<User | undefined>;
+  updateUserProfile(id: number, patch: Record<string, any>): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
   listAdmins(): Promise<User[]>;
   // migration (bulk-imported legacy partner.maha.clinic accounts)
   listMigratedUsersAwaitingCredentials(): Promise<User[]>;
@@ -229,6 +231,9 @@ export interface IStorage {
   // chat message flags (per-user star/flag)
   toggleMessageFlag(messageId: number, userId: number): Promise<boolean>;
   getFlaggedMessageIdsForUser(userId: number, threadId: number): Promise<number[]>;
+  // Cross-chat search. `threadIds` scopes the search (e.g. one user's own
+  // threads); omit to search across every thread (admin-wide).
+  searchMessages(query: string, threadIds?: number[]): Promise<(ChatMessage & { threadTopic: string; threadKind: string })[]>;
 
   // chat message reactions (one emoji per user per message, WhatsApp-style)
   setMessageReaction(messageId: number, userId: number, userName: string, emoji: string): Promise<string | null>;
@@ -283,6 +288,28 @@ export class DatabaseStorage implements IStorage {
   }
   async updateUserPassword(id: number, passwordHash: string) {
     return db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning().get();
+  }
+  async getUserByUsername(username: string) {
+    return db.select().from(users).where(eq(users.username, username)).get();
+  }
+  // Self-service profile edits (name parts, contact info, email, username,
+  // degree file, etc). Caller has already checked email/username
+  // uniqueness -- this just persists the patch and keeps the combined
+  // `name` field (used for greetings, admin lists, chat sender names, ...)
+  // in sync whenever any of its source parts change.
+  async updateUserProfile(id: number, patch: Record<string, any>) {
+    const current = await this.getUser(id);
+    if (!current) return undefined;
+    const next = { ...patch };
+    const namePartsChanged = ["prefix", "firstName", "lastName", "suffix"].some((k) => k in patch);
+    if (namePartsChanged) {
+      const prefix = "prefix" in patch ? patch.prefix : current.prefix;
+      const firstName = "firstName" in patch ? patch.firstName : current.firstName;
+      const lastName = "lastName" in patch ? patch.lastName : current.lastName;
+      const suffix = "suffix" in patch ? patch.suffix : current.suffix;
+      next.name = [prefix, firstName, lastName, suffix].filter(Boolean).join(" ");
+    }
+    return db.update(users).set(next).where(eq(users.id, id)).returning().get();
   }
   async setUserApprovalToken(id: number, token: string | null) {
     db.update(users).set({ approvalToken: token }).where(eq(users.id, id)).run();
@@ -737,6 +764,33 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(chatMessageFlags.userId, userId), eq(chatMessages.threadId, threadId)))
       .all();
     return rows.map((r) => r.messageId);
+  }
+  async searchMessages(query: string, threadIds?: number[]) {
+    const q = `%${query.toLowerCase()}%`;
+    const scopeClause = threadIds ? inArray(chatMessages.threadId, threadIds) : undefined;
+    const whereClause = scopeClause ? and(scopeClause, like(chatMessages.body, q)) : like(chatMessages.body, q);
+    const rows = db
+      .select({
+        id: chatMessages.id,
+        threadId: chatMessages.threadId,
+        senderId: chatMessages.senderId,
+        senderRole: chatMessages.senderRole,
+        senderName: chatMessages.senderName,
+        body: chatMessages.body,
+        attachmentUrl: chatMessages.attachmentUrl,
+        attachmentType: chatMessages.attachmentType,
+        attachmentName: chatMessages.attachmentName,
+        createdAt: chatMessages.createdAt,
+        threadTopic: chatThreads.topic,
+        threadKind: chatThreads.kind,
+      })
+      .from(chatMessages)
+      .innerJoin(chatThreads, eq(chatThreads.id, chatMessages.threadId))
+      .where(whereClause)
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(50)
+      .all();
+    return rows;
   }
   async listMessagesForThread(threadId: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(chatMessages.createdAt).all();

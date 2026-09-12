@@ -40,11 +40,11 @@ const navItems = [
 function AdminSidebar() {
   const [location] = useLocation();
   return (
-    <Sidebar>
-      <SidebarHeader className="p-4">
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-2">
         <div className="flex items-center gap-2">
           <MahaLogo size={26} className="shrink-0" forceLight />
-          <div className="min-w-0">
+          <div className="min-w-0 group-data-[collapsible=icon]:hidden">
             <p className="text-sm font-semibold text-sidebar-foreground truncate">MAHA Admin</p>
             <p className="text-xs text-sidebar-foreground/60 truncate">Clinic &amp; Institute</p>
           </div>
@@ -57,7 +57,7 @@ function AdminSidebar() {
             <SidebarMenu>
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton asChild isActive={location.startsWith(item.href)} data-testid={item.testId}>
+                  <SidebarMenuButton asChild isActive={location.startsWith(item.href)} tooltip={item.label} data-testid={item.testId}>
                     <Link href={item.href}>
                       <item.icon />
                       <span>{item.label}</span>

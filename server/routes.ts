@@ -15,7 +15,7 @@ import {
   sendEmail, buildRegistrationEmailHtml, buildApprovalEmailHtml, buildDeclineEmailHtml,
 } from "./email";
 import {
-  registerSchema, loginSchema, changePasswordSchema, insertProductSchema, insertPriceTierSchema,
+  registerSchema, loginSchema, changePasswordSchema, updateProfileSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
@@ -91,6 +91,17 @@ type PublicUser = {
   prefix: string | null;
   firstName: string | null;
   lastName: string | null;
+  suffix: string | null;
+  username: string | null;
+  phone: string | null;
+  businessName: string | null;
+  vatNumber: string | null;
+  profession: string | null;
+  homepageUrl: string | null;
+  degreeFileUrl: string | null;
+  city: string | null;
+  address: string | null;
+  country: string | null;
 };
 
 // Shapes a full DB user row down to the fields safe to send to the frontend.
@@ -108,6 +119,17 @@ function toPublicUser(user: {
   prefix?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  suffix?: string | null;
+  username?: string | null;
+  phone?: string | null;
+  businessName?: string | null;
+  vatNumber?: string | null;
+  profession?: string | null;
+  homepageUrl?: string | null;
+  degreeFileUrl?: string | null;
+  city?: string | null;
+  address?: string | null;
+  country?: string | null;
 }): PublicUser {
   return {
     id: user.id,
@@ -119,6 +141,17 @@ function toPublicUser(user: {
     prefix: user.prefix ?? null,
     firstName: user.firstName ?? null,
     lastName: user.lastName ?? null,
+    suffix: user.suffix ?? null,
+    username: user.username ?? null,
+    phone: user.phone ?? null,
+    businessName: user.businessName ?? null,
+    vatNumber: user.vatNumber ?? null,
+    profession: user.profession ?? null,
+    homepageUrl: user.homepageUrl ?? null,
+    degreeFileUrl: user.degreeFileUrl ?? null,
+    city: user.city ?? null,
+    address: user.address ?? null,
+    country: user.country ?? null,
   };
 }
 
@@ -477,6 +510,29 @@ export async function registerRoutes(
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await storage.updateUserPassword(user.id, passwordHash);
     res.json({ ok: true });
+  });
+
+  // Self-service profile editing -- works for every role (partner, student,
+  // admin). Every field is optional; the client only sends what changed.
+  app.patch("/api/auth/profile", requireAuth, async (req: AuthedRequest, res) => {
+    const parsed = updateProfileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const patch = parsed.data;
+    if (patch.email) {
+      const existing = await storage.getUserByEmail(patch.email);
+      if (existing && existing.id !== req.user!.id) {
+        return res.status(400).json({ message: "That email is already in use by another account" });
+      }
+    }
+    if (patch.username) {
+      const existing = await storage.getUserByUsername(patch.username);
+      if (existing && existing.id !== req.user!.id) {
+        return res.status(400).json({ message: "That username is already in use by another account" });
+      }
+    }
+    const updated = await storage.updateUserProfile(req.user!.id, patch);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ user: toPublicUser(updated) });
   });
 
   // Password resets are admin-initiated only (see /api/admin/users/:id/reset-password
@@ -1690,6 +1746,16 @@ export async function registerRoutes(
     res.json({ emoji: result });
   });
 
+  // Cross-chat search: find matching messages across ALL of this partner/
+  // student's own threads at once, not just the one currently open.
+  app.get("/api/chat/search", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!q) return res.json([]);
+    const myThreads = await storage.listThreadsForUser(req.user!.id);
+    const results = await storage.searchMessages(q, myThreads.map((t) => t.id));
+    res.json(results);
+  });
+
   app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (_req, res) => {
     const threads = await storage.listThreads();
     const withUser = await Promise.all(
@@ -1797,6 +1863,22 @@ export async function registerRoutes(
     if (!emoji) return res.status(400).json({ message: "emoji is required" });
     const result = await storage.setMessageReaction(message.id, req.user!.id, req.user!.name, emoji);
     res.json({ emoji: result });
+  });
+
+  // Cross-chat search: find matching messages across EVERY partner/student
+  // thread at once, so the admin doesn't have to open each conversation.
+  app.get("/api/admin/chat/search", requireAuth, requireRole("admin"), async (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!q) return res.json([]);
+    const results = await storage.searchMessages(q);
+    const withOwner = await Promise.all(
+      results.map(async (m) => {
+        const thread = await storage.getThread(m.threadId);
+        const owner = thread ? await storage.getUser(thread.userId) : undefined;
+        return { ...m, ownerName: owner?.name ?? null };
+      })
+    );
+    res.json(withOwner);
   });
 
   // ---------- HOME SUMMARY ----------
