@@ -34,13 +34,17 @@ import { autoMigrate } from "./autoMigrate";
 // schema-drift one autoMigrate.ts already documents. Wrap all of it so a
 // storage-layer problem is loud in the logs instead of silently taking down
 // every route in production.
+// Exported so other modules (e.g. the admin backup-transfer routes) can
+// locate the live database file on disk without duplicating the fallback.
+export const DB_FILE_PATH = process.env.SQLITE_DB_PATH || "data.db";
+
 let sqlite: Database.Database;
 try {
   // SQLITE_DB_PATH lets a deployment point at a mounted persistent disk
   // (e.g. Render: "/var/data/data.db") instead of the ephemeral local
   // filesystem. Defaults to the project-root "data.db" used locally and
   // in the pplx.app sandbox.
-  sqlite = new Database(process.env.SQLITE_DB_PATH || "data.db");
+  sqlite = new Database(DB_FILE_PATH);
   try {
     sqlite.pragma("journal_mode = WAL");
   } catch (e: any) {

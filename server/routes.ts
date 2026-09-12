@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
-import { storage, sqliteDb } from "./storage";
+import { storage, sqliteDb, DB_FILE_PATH } from "./storage";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { convertDriveAudioToMp3, cleanupTempFiles } from "./audioConvert";
 import { backupDatabaseToDrive } from "./backup";
@@ -2409,6 +2409,94 @@ export async function registerRoutes(
     }
     res.json(result);
   });
+
+  // ---------- CROSS-DEPLOYMENT DATABASE TRANSFER (admin) ----------
+  // One-off migration helper: lets an admin pull the latest Drive backup
+  // from one deployment (e.g. the pplx.app instance) and load it into
+  // another (e.g. a fresh Render instance). Guarded by normal admin session
+  // auth OR a shared-secret header, since the two deployments don't share a
+  // login session. The header path only activates when BACKUP_ADMIN_TOKEN
+  // is explicitly set — leave it unset to disable entirely once migration
+  // is done.
+  function hasValidBackupToken(req: Request): boolean {
+    const expected = process.env.BACKUP_ADMIN_TOKEN;
+    if (!expected) return false;
+    const provided = req.headers["x-backup-token"];
+    if (typeof provided !== "string" || provided.length !== expected.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+    } catch {
+      return false;
+    }
+  }
+  function requireAdminOrBackupToken(req: Request, res: Response, next: NextFunction) {
+    if (hasValidBackupToken(req)) return next();
+    return requireAuth(req as AuthedRequest, res, () =>
+      requireRole("admin")(req as AuthedRequest, res, next),
+    );
+  }
+
+  // Streams the most recent Drive backup file as a raw .db download.
+  app.get("/api/admin/backups/download/latest", requireAdminOrBackupToken, async (_req, res) => {
+    try {
+      const folderId = await getOrCreateBackupFolderId();
+      const files = await listFolderFiles(folderId);
+      const backups = files
+        .filter((f) => f.name.startsWith("maha-backup-"))
+        .sort((a, b) => b.name.localeCompare(a.name));
+      const latest = backups[0];
+      if (!latest) return res.status(404).json({ message: "No backups found in Drive" });
+      res.setHeader("Content-Type", "application/x-sqlite3");
+      res.setHeader("Content-Disposition", `attachment; filename="${latest.name}"`);
+      const stream = await streamFromDrive(latest.id);
+      (stream as any).pipe(res);
+    } catch (err: any) {
+      console.error("[backup-transfer] download/latest failed:", err);
+      res.status(500).json({ message: err?.message || "Failed to download latest backup" });
+    }
+  });
+
+  // Accepts an uploaded .db file and atomically swaps it in as the live
+  // database, after safety-backing-up the current file. Exits the process
+  // afterward so the platform's process manager restarts with a clean,
+  // freshly-opened connection to the restored file (swapping the file out
+  // from under the currently-open connection is not safe to do in place).
+  app.post(
+    "/api/admin/backups/restore",
+    requireAdminOrBackupToken,
+    upload.single("file"),
+    async (req, res) => {
+      try {
+        const file = (req as any).file as Express.Multer.File | undefined;
+        if (!file || !file.buffer || file.buffer.length < 16) {
+          return res.status(400).json({ message: "No file uploaded" });
+        }
+        const magic = file.buffer.subarray(0, 16).toString("utf8");
+        if (!magic.startsWith("SQLite format 3")) {
+          return res.status(400).json({ message: "Uploaded file is not a SQLite database" });
+        }
+        const incomingPath = `${DB_FILE_PATH}.incoming`;
+        fs.writeFileSync(incomingPath, file.buffer);
+        if (fs.existsSync(DB_FILE_PATH)) {
+          const backupPath = `${DB_FILE_PATH}.pre-restore-${Date.now()}.bak`;
+          fs.copyFileSync(DB_FILE_PATH, backupPath);
+        }
+        fs.renameSync(incomingPath, DB_FILE_PATH);
+        res.json({ ok: true, message: "Database restored. Restarting to load it." });
+        setTimeout(() => {
+          try {
+            sqliteDb.close();
+          } catch {
+            /* ignore */
+          }
+          process.exit(0);
+        }, 500);
+      } catch (err: any) {
+        console.error("[backup-transfer] restore failed:", err);
+        res.status(500).json({ message: err?.message || "Failed to restore database" });
+      }
+    },
+  );
 
   return httpServer;
 }

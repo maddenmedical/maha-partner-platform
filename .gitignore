@@ -9,3 +9,4 @@ data.db-shm
 data.db-wal
 .db-backup/
 migrations/
+gws*.err
