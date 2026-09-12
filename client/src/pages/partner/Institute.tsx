@@ -232,8 +232,8 @@ export default function Institute() {
       <section className="w-full">
         <img
           src={labReviewImage}
-          alt="A clinician reviewing lab imaging results with a colleague"
-          className="w-full h-64 sm:h-80 object-cover object-center"
+          alt="A clinician pointing out cell imaging findings on a lab monitor to a colleague"
+          className="w-full h-64 sm:h-80 object-cover object-[center_18%]"
           data-testid="img-institute-handshake"
         />
       </section>
