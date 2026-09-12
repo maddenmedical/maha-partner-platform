@@ -6,12 +6,14 @@
 // recipient below will start delivering automatically with no code changes.
 //
 // Auth: in local/dev (started via the platform's credential-proxy tooling)
-// requests to api.resend.com are transparently authenticated. In production
+// requests to api.resend.com are transparently authenticated. On pplx.app
 // (published site), CUSTOM_CRED_API_RESEND_COM_TOKEN is injected as a literal
-// env var, so we set the Authorization header explicitly when it's present.
+// env var. On any other host (e.g. Render), neither of those exist, so we
+// also accept a plain RESEND_API_KEY set directly in that host's own
+// environment-variable configuration.
 
 const RESEND_BASE_URL = process.env.CUSTOM_CRED_API_RESEND_COM_URL || "https://api.resend.com";
-const RESEND_TOKEN = process.env.CUSTOM_CRED_API_RESEND_COM_TOKEN;
+const RESEND_TOKEN = process.env.CUSTOM_CRED_API_RESEND_COM_TOKEN || process.env.RESEND_API_KEY;
 
 // Resend's sandbox (unverified domain) only allows sending FROM the
 // resend.dev test domain. Once a custom domain (e.g. maha.clinic) is

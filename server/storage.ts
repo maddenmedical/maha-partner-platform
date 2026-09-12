@@ -36,7 +36,11 @@ import { autoMigrate } from "./autoMigrate";
 // every route in production.
 let sqlite: Database.Database;
 try {
-  sqlite = new Database("data.db");
+  // SQLITE_DB_PATH lets a deployment point at a mounted persistent disk
+  // (e.g. Render: "/var/data/data.db") instead of the ephemeral local
+  // filesystem. Defaults to the project-root "data.db" used locally and
+  // in the pplx.app sandbox.
+  sqlite = new Database(process.env.SQLITE_DB_PATH || "data.db");
   try {
     sqlite.pragma("journal_mode = WAL");
   } catch (e: any) {
