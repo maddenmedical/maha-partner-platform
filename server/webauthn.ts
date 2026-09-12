@@ -68,12 +68,45 @@ function takeChallenge(challenge: string): { ok: true; userId?: number } | { ok:
   return { ok: true, userId: entry.userId };
 }
 
+// Known-good public origin for the published site, mirroring the same
+// APP_BASE_URL/SITE_ORIGIN fallback pattern used in server/routes.ts for
+// outbound email links. This exists because published pplx.app sites run
+// behind a proxy: the request Express actually sees reports an internal
+// sandbox hostname (e.g. "5001-....e2b.p.perplexity.ai"), never the public
+// "maha-partner-portal.pplx.app" domain the browser is actually on.
+// WebAuthn requires rpID/origin to exactly match what the browser sees, so
+// trusting req.hostname/req.protocol directly breaks every passkey
+// registration and login in production.
+const PUBLIC_SITE_ORIGIN = process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app";
+const PUBLIC_SITE_HOSTNAME = new URL(PUBLIC_SITE_ORIGIN).hostname;
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+// The browser sends the real page Origin on same-origin fetches, so prefer
+// that - it cannot be mangled by an intermediate proxy. Only fall back to
+// request-derived values for local dev, and to the known public origin
+// otherwise - never to the proxy's internal hostname.
+function resolvePublicOrigin(req: Request): string {
+  const originHeader = req.headers.origin;
+  if (typeof originHeader === "string" && originHeader) return originHeader;
+  if (isLocalHost(req.hostname)) return `${req.protocol}://${req.get("host")}`;
+  return PUBLIC_SITE_ORIGIN;
+}
+
 export function getRpID(req: Request): string {
-  return req.hostname;
+  if (isLocalHost(req.hostname)) return req.hostname;
+  const origin = resolvePublicOrigin(req);
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return PUBLIC_SITE_HOSTNAME;
+  }
 }
 
 export function getOrigin(req: Request): string {
-  return req.headers.origin || `${req.protocol}://${req.get("host")}`;
+  return resolvePublicOrigin(req);
 }
 
 function toTransports(json: string | null): AuthenticatorTransportFuture[] | undefined {
