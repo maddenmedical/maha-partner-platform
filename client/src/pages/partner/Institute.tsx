@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { MessageCircle, Users2, Layers, BookOpen, Stethoscope, Wrench, Play } from "lucide-react";
-import teamProcedureImage from "@/assets/brand/institute-team-procedure.jpg";
-import diagnosticHandsImage from "@/assets/brand/institute-diagnostic-hands.jpg";
+import surgicalTeamImage from "@/assets/brand/institute-surgical-team.jpg";
+import labReviewImage from "@/assets/brand/institute-lab-review.jpg";
 import { MahaLogo } from "@/components/MahaLogo";
 import { InstituteApplyChat } from "@/components/institute/InstituteApplyChat";
 
@@ -185,12 +185,12 @@ export default function Institute() {
         </div>
       </section>
 
-      {/* Team procedure image break */}
+      {/* Surgical team image break */}
       <section className="w-full">
         <img
-          src={teamProcedureImage}
-          alt="The MAHA clinical team collaborating during a procedure"
-          className="w-full h-64 sm:h-80 object-cover object-center"
+          src={surgicalTeamImage}
+          alt="Two clinicians performing microscope-assisted endodontic treatment together"
+          className="w-full h-64 sm:h-80 object-cover object-[center_18%]"
           data-testid="img-institute-perko"
         />
       </section>
@@ -228,11 +228,11 @@ export default function Institute() {
         </div>
       </section>
 
-      {/* Diagnostic hands image break */}
+      {/* Lab review image break */}
       <section className="w-full">
         <img
-          src={diagnosticHandsImage}
-          alt="Hands-on diagnostic testing at the MAHA clinic"
+          src={labReviewImage}
+          alt="A clinician reviewing lab imaging results with a colleague"
           className="w-full h-64 sm:h-80 object-cover object-center"
           data-testid="img-institute-handshake"
         />
