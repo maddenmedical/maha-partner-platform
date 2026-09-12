@@ -132,7 +132,7 @@ export interface IStorage {
   listItemsForOrder(orderId: number): Promise<OrderItem[]>;
 
   // referrals
-  createReferral(r: InsertReferral & { createdAt: number }): Promise<Referral>;
+  createReferral(r: InsertReferral & { createdAt: number; patientConsentAttestedAt?: number | null }): Promise<Referral>;
   listReferralsForPartner(partnerId: number): Promise<Referral[]>;
   listAllReferrals(): Promise<Referral[]>;
   getReferral(id: number): Promise<Referral | undefined>;
@@ -486,6 +486,7 @@ export class DatabaseStorage implements IStorage {
       status: "New",
       emailNotified: false,
       notifiedAt: null,
+      patientConsentAttestedAt: r.patientConsentAttestedAt ?? null,
       createdAt: r.createdAt,
     }).returning().get();
   }

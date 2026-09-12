@@ -203,7 +203,12 @@ export default function Login() {
           </p>
         </CardContent>
       </Card>
-      <p className="text-[10px] text-muted-foreground/40 mt-8" data-testid="text-app-credit">
+      <p className="text-xs text-muted-foreground/60 mt-8" data-testid="text-legal-links">
+        <a href="#/legal/privacy" className="underline underline-offset-2">Privacy Policy</a>
+        {" · "}
+        <a href="#/legal/terms" className="underline underline-offset-2">Terms of Use</a>
+      </p>
+      <p className="text-[10px] text-muted-foreground/40 mt-2" data-testid="text-app-credit">
         Webapp provided by Madden Medical e.U.
       </p>
       </div>

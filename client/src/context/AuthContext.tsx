@@ -24,6 +24,7 @@ export type AuthUser = {
   city: string | null;
   address: string | null;
   country: string | null;
+  legalAcceptedVersion: string | null;
 };
 
 type PendingState = { pending: true; status: "pending" | "rejected" } | null;

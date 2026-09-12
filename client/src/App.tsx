@@ -13,6 +13,7 @@ import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
 import ForgotPassword from "@/pages/auth/ForgotPassword";
 import Install from "@/pages/Install";
+import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPage";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -44,6 +45,7 @@ import AdminMigration from "@/pages/admin/AdminMigration";
 import AdminTodos from "@/pages/admin/AdminTodos";
 
 import { PushPrompt } from "@/components/PushPrompt";
+import { LegalAcknowledgmentGate } from "@/components/LegalAcknowledgmentGate";
 import { usePwaManifest } from "@/hooks/use-pwa-manifest";
 
 const partnerTabs: TabItem[] = [
@@ -186,9 +188,12 @@ function AdminApp() {
 function AuthedApp() {
   const { user } = useAuth();
   if (!user) return null;
-  if (user.role === "admin") return <AdminApp />;
-  if (user.role === "student") return <StudentApp />;
-  return <PartnerApp />;
+  return (
+    <>
+      <LegalAcknowledgmentGate />
+      {user.role === "admin" ? <AdminApp /> : user.role === "student" ? <StudentApp /> : <PartnerApp />}
+    </>
+  );
 }
 
 function RootRouter() {
@@ -235,6 +240,10 @@ function App() {
                     /reset-password route: password resets are admin-initiated only, see
                     AdminPartners — no self-service reset-link email is sent. */}
                 <Route path="/forgot-password" component={ForgotPassword} />
+                {/* Reachable regardless of auth/bootstrap state — linked from Login,
+                    Register, and Account for both signed-out and signed-in visitors. */}
+                <Route path="/legal/privacy" component={PrivacyPolicyPage} />
+                <Route path="/legal/terms" component={TermsOfUsePage} />
                 <Route>
                   <RootRouter />
                 </Route>

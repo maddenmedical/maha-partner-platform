@@ -455,6 +455,12 @@ export default function Account() {
           )}
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground/60 text-center" data-testid="text-account-legal-links">
+        <a href="#/legal/privacy" className="underline underline-offset-2">Privacy Policy</a>
+        {" · "}
+        <a href="#/legal/terms" className="underline underline-offset-2">Terms of Use</a>
+      </p>
     </div>
   );
 }

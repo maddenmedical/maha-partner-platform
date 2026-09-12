@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
+import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +36,7 @@ export default function ReferPatient() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [attested, setAttested] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -71,13 +73,14 @@ export default function ReferPatient() {
         attachmentUrl = data.url;
         setUploading(false);
       }
-      return apiRequest("POST", "/api/referrals", { ...values, attachmentUrl: attachmentUrl || undefined });
+      return apiRequest("POST", "/api/referrals", { ...values, attachmentUrl: attachmentUrl || undefined, patientConsentAttested: attested });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
       queryClient.invalidateQueries({ queryKey: ["/api/partner/home-summary"] });
       form.reset();
       setFile(null);
+      setAttested(false);
       setSubmitted(true);
       toast({ title: "Referral submitted", description: "The MAHA team has been notified." });
       setTimeout(() => setSubmitted(false), 3000);
@@ -155,7 +158,25 @@ export default function ReferPatient() {
               />
             </div>
 
-            <Button type="submit" disabled={mutation.isPending || uploading} data-testid="button-submit-referral">
+            <div className="flex items-start gap-2.5" data-testid="row-referral-attestation">
+              <Checkbox
+                id="patientConsentAttested"
+                checked={attested}
+                onCheckedChange={(v) => setAttested(v === true)}
+                className="mt-0.5"
+                data-testid="checkbox-referral-attestation"
+              />
+              <Label htmlFor="patientConsentAttested" className="font-normal text-sm leading-relaxed">
+                I confirm I'm entitled to share this patient's information with MAHA/Vidvana d.o.o. for
+                care coordination, and that I've met my own obligations toward the patient (see{" "}
+                <a href="#/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">
+                  Privacy Policy §5
+                </a>
+                ).
+              </Label>
+            </div>
+
+            <Button type="submit" disabled={mutation.isPending || uploading || !attested} data-testid="button-submit-referral">
               {(mutation.isPending || uploading) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {submitted ? <CheckCircle2 className="h-4 w-4 mr-2" /> : null}
               Send referral

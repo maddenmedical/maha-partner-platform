@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload } from "lucide-react";
 
@@ -38,6 +39,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [attested, setAttested] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -68,6 +70,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
       const res = await apiRequest("POST", "/api/referrals", {
         ...values,
         attachmentUrl: attachmentUrl || undefined,
+        patientConsentAttested: attested,
         ...(linkThreadId ? { linkThreadId } : {}),
       });
       return res.json();
@@ -77,6 +80,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
       queryClient.invalidateQueries({ queryKey: ["/api/partner/home-summary"] });
       form.reset();
       setFile(null);
+      setAttested(false);
       onOpenChange(false);
       toast({ title: "Referral submitted", description: "The MAHA team has been notified." });
       onSuccess(data);
@@ -146,7 +150,21 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
               data-testid="input-chat-referral-attachment"
             />
           </div>
-          <Button type="submit" disabled={mutation.isPending || uploading} data-testid="button-submit-chat-referral">
+          <div className="flex items-start gap-2.5" data-testid="row-chat-referral-attestation">
+            <Checkbox
+              id="chat-patientConsentAttested"
+              checked={attested}
+              onCheckedChange={(v) => setAttested(v === true)}
+              className="mt-0.5"
+              data-testid="checkbox-chat-referral-attestation"
+            />
+            <Label htmlFor="chat-patientConsentAttested" className="font-normal text-sm leading-relaxed">
+              I confirm I'm entitled to share this patient's information with MAHA/Vidvana d.o.o. for
+              care coordination, and that I've met my own obligations toward the patient.
+            </Label>
+          </div>
+
+          <Button type="submit" disabled={mutation.isPending || uploading || !attested} data-testid="button-submit-chat-referral">
             {(mutation.isPending || uploading) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Send referral
           </Button>

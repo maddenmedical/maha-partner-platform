@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertCircle, CheckCircle2, Loader2, Stethoscope, Upload } from "lucide-react";
@@ -33,6 +34,7 @@ export default function Register() {
   const [homepageUrl, setHomepageUrl] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -43,6 +45,10 @@ export default function Register() {
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
+      return;
+    }
+    if (!acceptedLegal) {
+      setError("You must accept the Privacy Policy and Terms of Use to register.");
       return;
     }
     setSubmitting(true);
@@ -76,6 +82,7 @@ export default function Register() {
         homepageUrl: homepageUrl || undefined,
         degreeFileUrl: uploadedFileUrl,
         additionalInfo: additionalInfo || undefined,
+        acceptedLegal,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -277,6 +284,27 @@ export default function Register() {
               </div>
             </div>
 
+            <div className="flex items-start gap-2.5" data-testid="row-accept-legal">
+              <Checkbox
+                id="acceptedLegal"
+                checked={acceptedLegal}
+                onCheckedChange={(v) => setAcceptedLegal(v === true)}
+                className="mt-0.5"
+                data-testid="checkbox-accept-legal"
+              />
+              <Label htmlFor="acceptedLegal" className="font-normal text-sm leading-relaxed">
+                I have read and agree to the{" "}
+                <a href="#/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2" data-testid="link-register-privacy">
+                  Privacy Policy
+                </a>{" "}
+                and{" "}
+                <a href="#/legal/terms" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2" data-testid="link-register-terms">
+                  Terms of Use
+                </a>
+                , including how referral data about patients is handled.
+              </Label>
+            </div>
+
             {error && (
               <div className="flex items-start gap-2 text-sm text-destructive" data-testid="text-register-error">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -284,7 +312,7 @@ export default function Register() {
               </div>
             )}
 
-            <Button type="submit" disabled={submitting} data-testid="button-submit-register">
+            <Button type="submit" disabled={submitting || !acceptedLegal} data-testid="button-submit-register">
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Submit registration
             </Button>

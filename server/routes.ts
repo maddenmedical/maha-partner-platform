@@ -25,6 +25,7 @@ import {
   insertCaseDiscussionSchema,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
+import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { getVapidPublicKey, sendToSubscriptions } from "./push";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
@@ -127,6 +128,7 @@ type PublicUser = {
   city: string | null;
   address: string | null;
   country: string | null;
+  legalAcceptedVersion: string | null;
 };
 
 // Shapes a full DB user row down to the fields safe to send to the frontend.
@@ -155,6 +157,7 @@ function toPublicUser(user: {
   city?: string | null;
   address?: string | null;
   country?: string | null;
+  legalAcceptedVersion?: string | null;
 }): PublicUser {
   return {
     id: user.id,
@@ -177,6 +180,7 @@ function toPublicUser(user: {
     city: user.city ?? null,
     address: user.address ?? null,
     country: user.country ?? null,
+    legalAcceptedVersion: user.legalAcceptedVersion ?? null,
   };
 }
 
@@ -419,6 +423,8 @@ export async function registerRoutes(
       address: data.address || null,
       country: data.country || null,
       additionalInfo: data.additionalInfo,
+      legalAcceptedVersion: CURRENT_LEGAL_VERSION,
+      legalAcceptedAt: Date.now(),
     } as any);
 
     // Notify partner@maha.clinic with the full registration and one-click
@@ -554,6 +560,20 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", requireAuth, async (req: AuthedRequest, res) => {
     res.json(req.user);
+  });
+
+  // One-time acknowledgment for existing users whose account predates the
+  // Privacy Policy/Terms pages, or whenever CURRENT_LEGAL_VERSION is bumped
+  // after a material change (see legalContent.ts §11). The frontend gates on
+  // user.legalAcceptedVersion !== CURRENT_LEGAL_VERSION and calls this once
+  // acknowledged, blocking app use until then via LegalAcknowledgmentGate.
+  app.post("/api/auth/accept-legal", requireAuth, async (req: AuthedRequest, res) => {
+    const updated = await storage.updateUserProfile(req.user!.id, {
+      legalAcceptedVersion: CURRENT_LEGAL_VERSION,
+      legalAcceptedAt: Date.now(),
+    });
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ user: toPublicUser(updated) });
   });
 
   app.post("/api/auth/change-password", requireAuth, async (req: AuthedRequest, res) => {
@@ -693,10 +713,13 @@ export async function registerRoutes(
   // dedicated referral chat here so the referral<->chat relationship is
   // always established at the moment the referral itself is created.
   app.post("/api/referrals", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
-    const { linkThreadId, ...rest } = req.body ?? {};
+    const { linkThreadId, patientConsentAttested, ...rest } = req.body ?? {};
+    if (patientConsentAttested !== true) {
+      return res.status(400).json({ message: "You must confirm you're entitled to share this patient's information before submitting a referral." });
+    }
     const parsed = insertReferralSchema.safeParse({ ...rest, partnerId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now() });
+    const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now(), patientConsentAttestedAt: Date.now() });
     const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
 
     let chatThreadId: number;

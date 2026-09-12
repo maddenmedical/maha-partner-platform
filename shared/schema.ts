@@ -50,6 +50,13 @@ export const users = sqliteTable("users", {
   migratedFromWp: integer("migrated_from_wp", { mode: "boolean" }).notNull().default(false),
   migratedPasswordPlain: text("migrated_password_plain"),
   credentialsIssuedAt: integer("credentials_issued_at"),
+  // GDPR consent tracking. legalAcceptedVersion is compared against
+  // CURRENT_LEGAL_VERSION (see legalContent.ts) to decide whether a signed-in
+  // user must acknowledge an updated Privacy Policy/Terms before continuing.
+  // New registrations record it immediately (see registerSchema below);
+  // existing users get it retroactively via the one-time acknowledgment modal.
+  legalAcceptedVersion: text("legal_accepted_version"),
+  legalAcceptedAt: integer("legal_accepted_at"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -81,6 +88,12 @@ export const registerSchema = z.object({
   degreeFileUrl: z.string().optional(),
   // Applicant may optionally describe their qualification/specialty.
   additionalInfo: z.string().optional(),
+  // Required consent to the Platform's own Privacy Policy and Terms of Use
+  // (see legalContent.ts) — distinct from the optional homepage/degree
+  // fields above, this checkbox must be checked to submit registration.
+  acceptedLegal: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Privacy Policy and Terms of Use to register." }),
+  }),
 });
 export type RegisterInput = z.infer<typeof registerSchema>;
 
@@ -393,6 +406,11 @@ export const referrals = sqliteTable("referrals", {
   status: text("status").notNull().default("New"), // New/Contacted/Scheduled/Closed
   emailNotified: integer("email_notified", { mode: "boolean" }).notNull().default(false),
   notifiedAt: integer("notified_at"),
+  // The referring partner's per-referral attestation that they are entitled
+  // to share this patient's data with MAHA/Vidvana d.o.o. for care
+  // coordination (see Privacy Policy §5 / Terms §3). Recorded at submission
+  // time, not just checked client-side, so there's an audit trail per referral.
+  patientConsentAttestedAt: integer("patient_consent_attested_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertReferralSchema = createInsertSchema(referrals).omit({
@@ -401,6 +419,7 @@ export const insertReferralSchema = createInsertSchema(referrals).omit({
   notifiedAt: true,
   createdAt: true,
   status: true,
+  patientConsentAttestedAt: true,
 });
 export type InsertReferral = z.infer<typeof insertReferralSchema>;
 export type Referral = typeof referrals.$inferSelect;
