@@ -22,6 +22,7 @@ import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/C
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { ReferralFormDialog } from "@/components/chat/ReferralFormDialog";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
+import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
 import type { ChatThread, Referral } from "@shared/schema";
 
 interface ThreadRow extends ChatThread {
@@ -350,6 +351,12 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [referralDialogOpen, setReferralDialogOpen] = useState(false);
 
+  // Same query/key the outer Chat list uses -- cache-shared, no extra request.
+  const { data: allThreads } = useQuery<ThreadRow[]>({
+    queryKey: ["/api/chat/threads"],
+    refetchInterval: 5000,
+  });
+
   const messagesKey = ["/api/chat/threads", thread.id, "messages"];
   const { data: messages, isLoading } = useQuery<ChatMessageWithMeta[]>({
     queryKey: messagesKey,
@@ -369,6 +376,36 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
   // that triggers the merge-confirmation flow in ReferralLinkPanel, so
   // filtering those out here would make merging unreachable from the UI.
   const unlinkedReferrals = myReferrals || [];
+
+  // @-mention targets: this partner's own other chats, plus their own
+  // referrals that don't have a dedicated thread yet. Picking a referral
+  // or the always-available "start new chat" action creates the thread on
+  // the fly via onCreateMentionTarget below.
+  const mentionCandidates: MentionCandidate[] = [
+    ...(allThreads || [])
+      .filter((t) => t.id !== thread.id)
+      .map((t): MentionCandidate => ({ type: "thread", id: t.id, label: threadMentionLabel(t), kind: t.kind as "general" | "referral" })),
+    ...(myReferrals || [])
+      .filter((r) => !r.chatThreadId)
+      .map((r): MentionCandidate => ({ type: "referral", referralId: r.id, label: referralMentionLabel(r) })),
+  ];
+
+  const createMentionThreadMutation = useMutation({
+    mutationFn: async ({ candidate, query }: { candidate: MentionCandidate; query: string }) => {
+      const body = candidate.type === "referral" ? { referralId: candidate.referralId } : { topic: query.trim() || "New chat" };
+      const res = await apiRequest("POST", "/api/chat/threads", body);
+      return res.json() as Promise<ThreadRow>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
+    },
+  });
+
+  async function resolvePartnerMention(candidate: MentionCandidate, query: string): Promise<{ id: number; label: string }> {
+    const created = await createMentionThreadMutation.mutateAsync({ candidate, query });
+    return { id: created.id, label: threadMentionLabel(created) };
+  }
 
   const sendMutation = useMutation({
     mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
@@ -469,6 +506,7 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
                 isMe={isMe}
                 onToggleFlag={(id) => flagMutation.mutate(id)}
                 onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
+                onNavigateToThread={onSelectSurvivor}
               />
             );
           })
@@ -482,6 +520,8 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
         onSend={(payload) => sendMutation.mutateAsync(payload)}
         sending={sendMutation.isPending}
         testIdPrefix="chat"
+        mentionThreads={mentionCandidates}
+        onResolveMention={resolvePartnerMention}
       />
 
       <ReferralFormDialog

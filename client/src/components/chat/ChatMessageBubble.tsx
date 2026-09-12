@@ -2,10 +2,43 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus, Download, ListTodo } from "lucide-react";
+import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare } from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
 import { useToast } from "@/hooks/use-toast";
+import { mentionTokenRegex } from "@/lib/chatMentions";
 import type { ChatMessage } from "@shared/schema";
+
+// Splits a message body around @{{id|label}} mention tokens (see
+// chatMentions.ts) and renders each as a clickable jump-to-thread chip
+// inline with the surrounding text.
+function renderMessageBody(body: string, onNavigateToThread?: (id: number) => void) {
+  const re = mentionTokenRegex();
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = re.exec(body))) {
+    if (match.index > last) nodes.push(body.slice(last, match.index));
+    const threadId = Number(match[1]);
+    const label = match[2];
+    nodes.push(
+      <button
+        key={`mention-${key++}`}
+        type="button"
+        onClick={() => onNavigateToThread?.(threadId)}
+        disabled={!onNavigateToThread}
+        className="inline-flex items-center gap-1 mx-0.5 rounded-full border border-current/20 bg-background/40 px-2 py-0.5 text-xs font-medium align-middle hover-elevate active-elevate-2 disabled:opacity-100"
+        data-testid={`link-mention-thread-${threadId}`}
+      >
+        <ArrowUpRightFromSquare className="h-3 w-3 shrink-0" />
+        <span className="truncate max-w-[160px]">{label}</span>
+      </button>
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < body.length) nodes.push(body.slice(last));
+  return nodes;
+}
 
 export interface Reaction {
   emoji: string;
@@ -28,9 +61,13 @@ interface ChatMessageBubbleProps {
   // off to another admin as a to-do. Omitted/false for partner & student views.
   isAdmin?: boolean;
   onCreateTodo?: (messageId: number) => void;
+  // Jumps the viewer to a different thread when they click an @-mention
+  // chip inside this message (see chatMentions.ts). Omit to render chips
+  // as plain inert labels.
+  onNavigateToThread?: (threadId: number) => void;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onNavigateToThread }: ChatMessageBubbleProps) {
   const { toast } = useToast();
   const attachmentSrc = m.attachmentUrl ? `${API_BASE}${m.attachmentUrl}` : null;
 
@@ -110,7 +147,9 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               <span className="truncate text-xs">{m.attachmentName || "Document"}</span>
             </button>
           )}
-          {m.body && <span className="whitespace-pre-wrap break-words">{m.body}</span>}
+          {m.body && (
+            <span className="whitespace-pre-wrap break-words">{renderMessageBody(m.body, onNavigateToThread)}</span>
+          )}
         </div>
         {isMe && <ReactionTrigger messageId={m.id} onReact={onReact} order="after" />}
         <button

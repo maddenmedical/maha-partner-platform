@@ -3,8 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, API_BASE } from "@/lib/queryClient";
 import { EmojiPicker } from "./EmojiPicker";
-import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon } from "lucide-react";
+import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, Stethoscope, MessageSquare, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { type MentionCandidate, findActiveMention, formatMentionToken, newChatMentionLabel } from "@/lib/chatMentions";
+
+function mentionCandidateLabel(candidate: MentionCandidate, query: string): string {
+  return candidate.type === "new" ? newChatMentionLabel(query) : candidate.label;
+}
 
 export interface PendingAttachment {
   url: string;
@@ -19,12 +25,24 @@ interface ChatComposerProps {
   onSend: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) => Promise<unknown> | unknown;
   sending?: boolean;
   testIdPrefix?: string;
+  // Other chats (and unlinked referrals) with the same partner that "@" can
+  // reference -- typing "@" and picking one drops in a jump-link the reader
+  // can click to switch straight to that conversation. Omit or pass [] to
+  // disable. A "start new chat" option is appended automatically whenever
+  // `onResolveMention` is provided, so callers don't need to include it.
+  mentionThreads?: MentionCandidate[];
+  // Creates (or looks up) the real chat thread behind a "referral" or "new"
+  // mention candidate, returning the id/label to insert as the token. Not
+  // called for "thread" candidates, which resolve locally with no network
+  // round-trip. Required for "referral"/"new" candidates to be selectable;
+  // omit to only offer direct thread jumps.
+  onResolveMention?: (candidate: MentionCandidate, query: string) => Promise<{ id: number; label: string }>;
 }
 
 // Voice notes are always recorded as real audio via MediaRecorder and sent as
 // a normal audio attachment the recipient can play back -- no speech-to-text,
 // no transcription. Server-side transcription (Whisper) is out of scope.
-export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat" }: ChatComposerProps) {
+export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", mentionThreads = [], onResolveMention }: ChatComposerProps) {
   const { toast } = useToast();
   const [body, setBody] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -33,6 +51,64 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const [mentionResolving, setMentionResolving] = useState(false);
+
+  const mentionMatches: MentionCandidate[] = mention
+    ? [
+        ...mentionThreads
+          .filter((c) => c.type !== "new")
+          .filter((c) => mentionCandidateLabel(c, mention.query).toLowerCase().includes(mention.query.toLowerCase()))
+          .slice(0, 5),
+        // Always-available fallback action, appended last -- lets a partner
+        // start a brand new chat right from the mention flow instead of
+        // backing out to a separate "New chat" button.
+        ...(onResolveMention ? [{ type: "new" } as MentionCandidate] : []),
+      ]
+    : [];
+
+  function applyBodyChange(nextBody: string, caret: number) {
+    setBody(nextBody);
+    const active = findActiveMention(nextBody, caret);
+    setMention(active);
+    setMentionActiveIndex(0);
+  }
+
+  async function selectMention(candidate: MentionCandidate) {
+    const activeMention = mention;
+    if (!activeMention || mentionResolving) return;
+    let target: { id: number; label: string };
+    if (candidate.type === "thread") {
+      target = { id: candidate.id, label: candidate.label };
+    } else {
+      if (!onResolveMention) return;
+      setMentionResolving(true);
+      try {
+        target = await onResolveMention(candidate, activeMention.query);
+      } catch (err) {
+        toast({
+          title: "Couldn't start that chat",
+          description: err instanceof Error ? err.message : "Please try again.",
+          variant: "destructive",
+        });
+        setMentionResolving(false);
+        return;
+      }
+      setMentionResolving(false);
+    }
+    const token = formatMentionToken(target.id, target.label) + " ";
+    const caret = activeMention.start + token.length;
+    const nextBody =
+      body.slice(0, activeMention.start) + token + body.slice(activeMention.start + 1 + activeMention.query.length);
+    setBody(nextBody);
+    setMention(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  }
 
   async function uploadFile(file: File): Promise<PendingAttachment> {
     const formData = new FormData();
@@ -118,6 +194,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
     });
     setBody("");
     setPendingAttachment(null);
+    setMention(null);
   }
 
   const busy = uploading || sending || recording;
@@ -147,7 +224,49 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           Recording voice note... tap the mic again to stop.
         </p>
       )}
-      <div className="flex items-end gap-1">
+      <div className="flex items-end gap-1 relative">
+        {mention && (
+          <div
+            className="absolute bottom-full left-24 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-card-border bg-popover shadow-md py-1 z-30"
+            data-testid={`${testIdPrefix}-mention-list`}
+          >
+            {mentionResolving ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Starting chat...
+              </p>
+            ) : mentionMatches.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">No other chats with this partner yet.</p>
+            ) : (
+              mentionMatches.map((c, i) => {
+                const testKey = c.type === "thread" ? `thread-${c.id}` : c.type === "referral" ? `referral-${c.referralId}` : "new";
+                return (
+                  <button
+                    key={testKey}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectMention(c);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover-elevate active-elevate-2",
+                      i === mentionActiveIndex && "bg-accent"
+                    )}
+                    data-testid={`${testIdPrefix}-mention-option-${testKey}`}
+                  >
+                    {c.type === "new" ? (
+                      <Plus className="h-3.5 w-3.5 text-primary shrink-0" />
+                    ) : c.type === "referral" || (c.type === "thread" && c.kind === "referral") ? (
+                      <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />
+                    ) : (
+                      <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    )}
+                    <span className="truncate">{mentionCandidateLabel(c, mention?.query ?? "")}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -179,12 +298,40 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </Button>
         <Textarea
+          ref={textareaRef}
           value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Type a message..."
+          disabled={mentionResolving}
+          onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          placeholder="Type a message... (@ to link another chat)"
           rows={1}
           className="resize-none min-h-9"
           onKeyDown={(e) => {
+            if (mentionResolving) {
+              e.preventDefault();
+              return;
+            }
+            if (mention && mentionMatches.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMentionActiveIndex((i) => (i + 1) % mentionMatches.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMentionActiveIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                selectMention(mentionMatches[mentionActiveIndex]);
+                return;
+              }
+            }
+            if (e.key === "Escape" && mention) {
+              e.preventDefault();
+              setMention(null);
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               handleSubmit(e as unknown as React.FormEvent);

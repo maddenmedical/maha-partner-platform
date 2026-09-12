@@ -1676,6 +1676,25 @@ export async function registerRoutes(
   });
 
   app.post("/api/chat/threads", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    // Optional `referralId` lets the @-mention "start new chat for this
+    // referral" flow create a dedicated thread in one call, instead of the
+    // two-step create-then-link-referral dance. Plain topic-only creation
+    // (no referralId) is unchanged for the regular "New chat" dialog.
+    const referralId = req.body.referralId != null ? Number(req.body.referralId) : null;
+    if (referralId) {
+      const referral = await storage.getReferral(referralId);
+      if (!referral || referral.partnerId !== req.user!.id) {
+        return res.status(404).json({ message: "Referral not found" });
+      }
+      const existing = await storage.getThreadByReferralId(referralId);
+      if (existing) return res.json(existing);
+      const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+      const thread = await storage.createThread(req.user!.id, req.user!.role, patientTopic, {
+        kind: "referral",
+        referralId,
+      });
+      return res.json(thread);
+    }
     const topic = typeof req.body.topic === "string" ? req.body.topic.trim() : "";
     if (!topic) return res.status(400).json({ message: "Please give the chat a topic." });
     const thread = await storage.createThread(req.user!.id, req.user!.role, topic);
@@ -1808,6 +1827,38 @@ export async function registerRoutes(
       })
     );
     res.json(withUser);
+  });
+
+  // Admin-side equivalent of the partner "New chat" flow, driven from the
+  // @-mention composer: either a bare topic-only chat (`topic`) or a
+  // referral that doesn't have its own dedicated thread yet (`referralId`),
+  // for a partner the admin is already viewing. Mirrors the referralId
+  // branch of POST /api/chat/threads above.
+  app.post("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const userId = Number(req.body.userId);
+    if (!userId) return res.status(400).json({ message: "userId is required" });
+    const targetUser = await storage.getUser(userId);
+    if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+    const referralId = req.body.referralId != null ? Number(req.body.referralId) : null;
+    if (referralId) {
+      const referral = await storage.getReferral(referralId);
+      if (!referral || referral.partnerId !== userId) {
+        return res.status(404).json({ message: "Referral not found" });
+      }
+      const existing = await storage.getThreadByReferralId(referralId);
+      if (existing) return res.json(existing);
+      const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+      const thread = await storage.createThread(userId, targetUser.role, patientTopic, {
+        kind: "referral",
+        referralId,
+      });
+      return res.json(thread);
+    }
+
+    const topic = typeof req.body.topic === "string" ? req.body.topic.trim() : "";
+    const thread = await storage.createThread(userId, targetUser.role, topic || "New chat");
+    res.json(thread);
   });
 
   app.get("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
