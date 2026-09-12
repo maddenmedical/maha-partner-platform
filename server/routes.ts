@@ -17,7 +17,7 @@ import {
   buildAdminTodoEmailHtml,
 } from "./email";
 import {
-  registerSchema, loginSchema, changePasswordSchema, updateProfileSchema, insertProductSchema, insertPriceTierSchema,
+  registerSchema, loginSchema, changePasswordSchema, updateProfileSchema, adminEditUserSchema, insertProductSchema, insertPriceTierSchema,
   createOrderSchema, insertReferralSchema, courseInputSchema, lessonInputSchema,
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
@@ -1476,6 +1476,27 @@ export async function registerRoutes(
     await storage.updateUserPassword(user.id, passwordHash);
     await storage.setPasswordResetToken(user.id, null, null);
     res.json({ id: user.id, name: user.name, email: user.email, newPassword });
+  });
+
+  // Admin-initiated edit of a user's core contact details -- works for ANY
+  // account, including other admins (not just partners/students). Scope is
+  // deliberately limited to name/email/phone; role, status, and password
+  // changes each go through their own dedicated endpoints above.
+  app.patch("/api/admin/users/:id/profile", requireAuth, requireRole("admin"), async (req, res) => {
+    const parsed = adminEditUserSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const patch = parsed.data;
+    const target = await storage.getUser(Number(req.params.id));
+    if (!target) return res.status(404).json({ message: "Not found" });
+    if (patch.email) {
+      const existing = await storage.getUserByEmail(patch.email);
+      if (existing && existing.id !== target.id) {
+        return res.status(400).json({ message: "That email is already in use by another account" });
+      }
+    }
+    const updated = await storage.updateUserProfile(target.id, patch);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(toPublicUser(updated));
   });
 
   // ---------- ADMIN: LEGACY WORDPRESS PARTNER MIGRATION ----------

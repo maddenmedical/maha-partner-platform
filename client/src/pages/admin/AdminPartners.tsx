@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight } from "lucide-react";
+import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight, Pencil } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 
 const STATUS_FILTERS = ["all", "pending", "approved", "rejected"] as const;
@@ -36,6 +37,8 @@ export default function AdminPartners() {
   const [confirmTarget, setConfirmTarget] = useState<User | null>(null);
   const [result, setResult] = useState<{ name: string; email: string; newPassword: string } | null>(null);
   const [roleConvertTarget, setRoleConvertTarget] = useState<User | null>(null);
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "" });
 
   const resetMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -69,6 +72,28 @@ export default function AdminPartners() {
       toast({ title: "Could not change role", description: err.message, variant: "destructive" });
     },
   });
+
+  const editMutation = useMutation({
+    mutationFn: async ({ id, patch }: { id: number; patch: { name?: string; email?: string; phone?: string } }) => {
+      const res = await apiRequest("PATCH", `/api/admin/users/${id}/profile`, patch);
+      return res.json();
+    },
+    onSuccess: (updated: User) => {
+      setEditTarget(null);
+      queryClient.setQueryData<User[]>(["/api/admin/all-partners"], (old) =>
+        old ? old.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)) : old
+      );
+      toast({ title: "Contact details updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update details", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function openEdit(u: User) {
+    setEditForm({ name: u.name, email: u.email, phone: u.phone || "" });
+    setEditTarget(u);
+  }
 
   const filtered = useMemo(() => {
     if (!partners) return [];
@@ -177,6 +202,15 @@ export default function AdminPartners() {
                     </p>
                   </div>
                   <div className="flex flex-col sm:items-end gap-2 shrink-0 w-full sm:w-auto">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full sm:w-auto"
+                      onClick={() => openEdit(u)}
+                      data-testid={`button-edit-user-${u.id}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit details
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
@@ -316,6 +350,38 @@ export default function AdminPartners() {
               No email was sent automatically — copy this and send it to the partner yourself (email, phone, etc.).
             </p>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent data-testid="dialog-edit-user">
+          <DialogHeader><DialogTitle>Edit contact details</DialogTitle></DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-name">Name</Label>
+              <Input id="e-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} data-testid="input-edit-name" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-email">Email</Label>
+              <Input id="e-email" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} data-testid="input-edit-email" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-phone">Phone</Label>
+              <Input id="e-phone" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} data-testid="input-edit-phone" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                if (!editTarget) return;
+                editMutation.mutate({ id: editTarget.id, patch: { name: editForm.name, email: editForm.email, phone: editForm.phone } });
+              }}
+              disabled={editMutation.isPending || !editForm.name || !editForm.email}
+              data-testid="button-save-edit-user"
+            >
+              {editMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

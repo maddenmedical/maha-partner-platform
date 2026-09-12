@@ -118,6 +118,17 @@ export const updateProfileSchema = z.object({
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
+// Admin-initiated edit of another user's core contact details -- deliberately
+// narrower than updateProfileSchema. Scope is intentionally limited to name,
+// email, and phone; role changes, status changes, and password resets each
+// have their own dedicated endpoints already.
+export const adminEditUserSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+});
+export type AdminEditUserInput = z.infer<typeof adminEditUserSchema>;
+
 // Note: password resets are admin-initiated only (see AdminPartners /
 // /api/admin/users/:id/reset-password) — no self-service email-link flow.
 

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Plus, Loader2, Shield, Database, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { Users, Plus, Loader2, Shield, Database, CheckCircle2, AlertCircle, RefreshCw, Pencil } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 type BackupStatus = {
@@ -25,6 +25,8 @@ export default function AdminTeam() {
   const { data: team, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/team"] });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "" });
 
   const { data: backupStatus, isLoading: backupLoading } = useQuery<BackupStatus>({
     queryKey: ["/api/admin/backups/status"],
@@ -61,6 +63,28 @@ export default function AdminTeam() {
     },
   });
 
+  const editMutation = useMutation({
+    mutationFn: async ({ id, patch }: { id: number; patch: { name?: string; email?: string; phone?: string } }) => {
+      const res = await apiRequest("PATCH", `/api/admin/users/${id}/profile`, patch);
+      return res.json();
+    },
+    onSuccess: (updated: User) => {
+      setEditTarget(null);
+      queryClient.setQueryData<User[]>(["/api/admin/team"], (old) =>
+        old ? old.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)) : old
+      );
+      toast({ title: "Contact details updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update details", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function openEdit(u: User) {
+    setEditForm({ name: u.name, email: u.email, phone: u.phone || "" });
+    setEditTarget(u);
+  }
+
   return (
     <div className="flex flex-col gap-4 max-w-3xl">
       <div className="flex items-center justify-between">
@@ -80,10 +104,19 @@ export default function AdminTeam() {
                 <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Shield className="h-4 w-4 text-primary" />
                 </div>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{t.name}</p>
                   <p className="text-xs text-muted-foreground">{t.email}{t.phone ? ` · ${t.phone}` : ""}</p>
                 </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => openEdit(t)}
+                  data-testid={`button-edit-admin-${t.id}`}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
+                </Button>
               </CardContent>
             </Card>
           ))}
@@ -177,6 +210,38 @@ export default function AdminTeam() {
           <DialogFooter>
             <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.name || !form.email || !form.password} data-testid="button-save-admin">
               {mutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent data-testid="dialog-edit-admin">
+          <DialogHeader><DialogTitle>Edit contact details</DialogTitle></DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-a-name">Name</Label>
+              <Input id="e-a-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} data-testid="input-edit-admin-name" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-a-email">Email</Label>
+              <Input id="e-a-email" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} data-testid="input-edit-admin-email" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="e-a-phone">Phone</Label>
+              <Input id="e-a-phone" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} data-testid="input-edit-admin-phone" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                if (!editTarget) return;
+                editMutation.mutate({ id: editTarget.id, patch: { name: editForm.name, email: editForm.email, phone: editForm.phone } });
+              }}
+              disabled={editMutation.isPending || !editForm.name || !editForm.email}
+              data-testid="button-save-edit-admin"
+            >
+              {editMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
             </Button>
           </DialogFooter>
         </DialogContent>
