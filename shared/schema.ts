@@ -618,6 +618,28 @@ export const chatMessageFlags = sqliteTable("chat_message_flags", {
 });
 export type ChatMessageFlag = typeof chatMessageFlags.$inferSelect;
 
+// ---------- ADMIN TO-DOS (message-linked handoff between admins) ----------
+// One admin marks a specific chat message and hands an action item to another
+// admin, with a short note describing what they'd like done. Separate from
+// chatMessageFlags (a personal "star for later") -- this is an explicit,
+// assigned task that also triggers an email to the assignee.
+export const adminTodos = sqliteTable("admin_todos", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  messageId: integer("message_id").notNull(),
+  threadId: integer("thread_id").notNull(),
+  createdByAdminId: integer("created_by_admin_id").notNull(),
+  assignedToAdminId: integer("assigned_to_admin_id").notNull(),
+  note: text("note").notNull(),
+  status: text("status").notNull().default("open"), // open | done
+  createdAt: integer("created_at").notNull(),
+  completedAt: integer("completed_at"),
+});
+export const insertAdminTodoSchema = createInsertSchema(adminTodos).omit({
+  id: true, status: true, createdAt: true, completedAt: true,
+});
+export type InsertAdminTodo = z.infer<typeof insertAdminTodoSchema>;
+export type AdminTodo = typeof adminTodos.$inferSelect;
+
 // ---------- CHAT MESSAGE REACTIONS (one emoji per user per message, WhatsApp-style) ----------
 export const chatMessageReactions = sqliteTable("chat_message_reactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),

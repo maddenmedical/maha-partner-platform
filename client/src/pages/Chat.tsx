@@ -216,7 +216,12 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
   const { data: myReferrals } = useQuery<(Referral & { chatThreadId: number | null })[]>({
     queryKey: ["/api/referrals/mine"],
   });
-  const unlinkedReferrals = (myReferrals || []).filter((r) => !r.chatThreadId);
+  // Offer every one of the user's own referrals in the "link to existing
+  // referral" dropdown -- including ones that already have their own chat
+  // thread. Linking to an already-linked referral is exactly the scenario
+  // that triggers the merge-confirmation flow in ReferralLinkPanel, so
+  // filtering those out here would make merging unreachable from the UI.
+  const unlinkedReferrals = myReferrals || [];
 
   const sendMutation = useMutation({
     mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>

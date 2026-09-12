@@ -3,7 +3,7 @@ import {
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
   classSessions, homeworkSubmissions, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
-  webauthnCredentials, productResources,
+  webauthnCredentials, productResources, adminTodos,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -16,6 +16,7 @@ import type {
   PushSubscriptionRow, InsertPushSubscription, Announcement, InsertAnnouncement,
   CaseDiscussion, InsertCaseDiscussion, LegacyOrder, InsertLegacyOrder,
   WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
+  AdminTodo, InsertAdminTodo,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -238,6 +239,12 @@ export interface IStorage {
   // chat message reactions (one emoji per user per message, WhatsApp-style)
   setMessageReaction(messageId: number, userId: number, userName: string, emoji: string): Promise<string | null>;
   getReactionsForThread(threadId: number): Promise<{ messageId: number; userId: number; userName: string; emoji: string }[]>;
+
+  // admin to-dos (message-linked handoff between admins)
+  createAdminTodo(t: InsertAdminTodo): Promise<AdminTodo>;
+  listAdminTodos(): Promise<AdminTodo[]>;
+  getAdminTodo(id: number): Promise<AdminTodo | undefined>;
+  setAdminTodoStatus(id: number, status: string, completedAt: number | null): Promise<AdminTodo | undefined>;
 
   // push subscriptions
   upsertPushSubscription(s: InsertPushSubscription): Promise<PushSubscriptionRow>;
@@ -764,6 +771,25 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(chatMessageFlags.userId, userId), eq(chatMessages.threadId, threadId)))
       .all();
     return rows.map((r) => r.messageId);
+  }
+  async createAdminTodo(t: any) {
+    return db.insert(adminTodos).values({
+      messageId: t.messageId,
+      threadId: t.threadId,
+      createdByAdminId: t.createdByAdminId,
+      assignedToAdminId: t.assignedToAdminId,
+      note: t.note,
+      createdAt: Date.now(),
+    }).returning().get();
+  }
+  async listAdminTodos() {
+    return db.select().from(adminTodos).all();
+  }
+  async getAdminTodo(id: number) {
+    return db.select().from(adminTodos).where(eq(adminTodos.id, id)).get();
+  }
+  async setAdminTodoStatus(id: number, status: string, completedAt: number | null) {
+    return db.update(adminTodos).set({ status, completedAt }).where(eq(adminTodos.id, id)).returning().get();
   }
   async searchMessages(query: string, threadIds?: number[]) {
     const q = `%${query.toLowerCase()}%`;

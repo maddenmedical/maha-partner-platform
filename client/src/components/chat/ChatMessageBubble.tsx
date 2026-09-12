@@ -1,8 +1,8 @@
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
-import { openAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus } from "lucide-react";
+import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
+import { Star, FileText, SmilePlus, Download, ListTodo } from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
 import { useToast } from "@/hooks/use-toast";
 import type { ChatMessage } from "@shared/schema";
@@ -24,9 +24,13 @@ interface ChatMessageBubbleProps {
   isMe: boolean;
   onToggleFlag: (id: number) => void;
   onReact: (id: number, emoji: string) => void;
+  // Admin-only extras: downloading voice notes as mp3, and handing a message
+  // off to another admin as a to-do. Omitted/false for partner & student views.
+  isAdmin?: boolean;
+  onCreateTodo?: (messageId: number) => void;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo }: ChatMessageBubbleProps) {
   const { toast } = useToast();
   const attachmentSrc = m.attachmentUrl ? `${API_BASE}${m.attachmentUrl}` : null;
 
@@ -34,6 +38,16 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact }: C
     if (!m.attachmentUrl) return;
     openAuthedFile(m.attachmentUrl).catch((e) =>
       toast({ title: "Could not open attachment", description: e.message, variant: "destructive" })
+    );
+  }
+
+  function handleDownloadMp3() {
+    if (!m.attachmentUrl) return;
+    const driveFileId = m.attachmentUrl.split("/").pop();
+    if (!driveFileId) return;
+    const filename = (m.attachmentName || "voice-note").replace(/\.[^.]+$/, "");
+    downloadAuthedFile(`/api/admin/files/${driveFileId}/download-mp3`, `${filename}.mp3`).catch((e) =>
+      toast({ title: "Could not download mp3", description: e.message, variant: "destructive" })
     );
   }
 
@@ -63,7 +77,24 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact }: C
             <video controls src={attachmentSrc} className="max-w-[240px] max-h-64 rounded-md" data-testid={`video-attachment-${m.id}`} />
           )}
           {attachmentSrc && m.attachmentType === "audio" && (
-            <audio controls src={attachmentSrc} className="max-w-[220px]" data-testid={`audio-attachment-${m.id}`} />
+            <div className="flex items-center gap-1.5">
+              <audio controls src={attachmentSrc} className="max-w-[220px]" data-testid={`audio-attachment-${m.id}`} />
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={handleDownloadMp3}
+                  title="Download as MP3"
+                  aria-label="Download as MP3"
+                  className={cn(
+                    "shrink-0 rounded-md p-1 hover-elevate active-elevate-2",
+                    isMe ? "text-primary-foreground/80" : "text-muted-foreground"
+                  )}
+                  data-testid={`button-download-mp3-${m.id}`}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           )}
           {attachmentSrc && m.attachmentType === "document" && (
             <button
@@ -94,6 +125,18 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact }: C
         >
           <Star className={cn("h-3.5 w-3.5", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
         </button>
+        {isAdmin && onCreateTodo && (
+          <button
+            type="button"
+            onClick={() => onCreateTodo(m.id)}
+            className="shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+            data-testid={`button-create-todo-${m.id}`}
+            aria-label="Create to-do from this message"
+            title="Create to-do for another admin"
+          >
+            <ListTodo className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {!!m.reactions?.length && (

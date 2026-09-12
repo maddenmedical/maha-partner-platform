@@ -6,14 +6,20 @@ import { EmptyState } from "@/components/EmptyState";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MessageSquare, Stethoscope, Search, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId } from "@/lib/chatNav";
+import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
-import type { Referral } from "@shared/schema";
+import type { Referral, User } from "@shared/schema";
 
 interface ThreadRow {
   id: number;
@@ -147,7 +153,12 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
   });
 
   const { data: allReferrals } = useQuery<AdminReferralRow[]>({ queryKey: ["/api/admin/referrals"] });
-  const unlinkedReferrals = (allReferrals || []).filter((r) => r.partnerId === thread.userId && !r.chatThreadId);
+  // Offer every referral belonging to this chat's owner -- including ones
+  // that already have their own chat thread. Linking to an already-linked
+  // referral is exactly the scenario that triggers the merge-confirmation
+  // flow in ReferralLinkPanel, so filtering those out here would make
+  // merging unreachable from the admin UI.
+  const unlinkedReferrals = (allReferrals || []).filter((r) => r.partnerId === thread.userId);
 
   const sendMutation = useMutation({
     mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
@@ -167,6 +178,31 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
     mutationFn: ({ id, emoji }: { id: number; emoji: string }) => apiRequest("PATCH", `/api/admin/chat/messages/${id}/react`, { emoji }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
   });
+
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const { data: admins } = useQuery<User[]>({ queryKey: ["/api/admin/team"] });
+  const [todoMessageId, setTodoMessageId] = useState<number | null>(null);
+  const [todoAssigneeId, setTodoAssigneeId] = useState<string>("");
+  const [todoNote, setTodoNote] = useState("");
+
+  const createTodoMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/admin/chat/messages/${todoMessageId}/todo`, {
+        assignedToAdminId: Number(todoAssigneeId),
+        note: todoNote.trim(),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/todos"] });
+      toast({ title: "To-do created", description: "The assigned admin has been notified by email." });
+      setTodoMessageId(null);
+      setTodoAssigneeId("");
+      setTodoNote("");
+    },
+    onError: (err: any) => toast({ title: "Could not create to-do", description: err.message, variant: "destructive" }),
+  });
+
+  const otherAdmins = (admins || []).filter((a) => a.id !== user?.id);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -233,6 +269,8 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
               isMe={m.senderRole === "admin"}
               onToggleFlag={(id) => flagMutation.mutate(id)}
               onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
+              isAdmin
+              onCreateTodo={(id) => setTodoMessageId(id)}
             />
           ))
         )}
@@ -246,6 +284,53 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
         sending={sendMutation.isPending}
         testIdPrefix="admin-chat"
       />
+
+      <Dialog open={todoMessageId !== null} onOpenChange={(open) => !open && setTodoMessageId(null)}>
+        <DialogContent data-testid="dialog-create-todo">
+          <DialogHeader>
+            <DialogTitle>Create a to-do for another admin</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="todo-assignee">Assign to</Label>
+              <Select value={todoAssigneeId} onValueChange={setTodoAssigneeId}>
+                <SelectTrigger id="todo-assignee" data-testid="select-todo-assignee">
+                  <SelectValue placeholder="Choose an admin" />
+                </SelectTrigger>
+                <SelectContent>
+                  {otherAdmins.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="todo-note">Note</Label>
+              <Textarea
+                id="todo-note"
+                value={todoNote}
+                onChange={(e) => setTodoNote(e.target.value)}
+                placeholder="What would you like them to do?"
+                rows={4}
+                data-testid="textarea-todo-note"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTodoMessageId(null)} data-testid="button-cancel-todo">
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!todoAssigneeId || !todoNote.trim() || createTodoMutation.isPending}
+              onClick={() => createTodoMutation.mutate()}
+              data-testid="button-submit-todo"
+            >
+              Create to-do
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

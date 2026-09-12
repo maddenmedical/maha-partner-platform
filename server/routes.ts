@@ -9,10 +9,12 @@ import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
 import { storage, sqliteDb } from "./storage";
 import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
+import { convertDriveAudioToMp3, cleanupTempFiles } from "./audioConvert";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
   sendEmail, buildRegistrationEmailHtml, buildApprovalEmailHtml, buildDeclineEmailHtml,
+  buildAdminTodoEmailHtml,
 } from "./email";
 import {
   registerSchema, loginSchema, changePasswordSchema, updateProfileSchema, insertProductSchema, insertPriceTierSchema,
@@ -48,9 +50,9 @@ const SITE_ORIGIN = process.env.APP_BASE_URL || "https://maha-partner-portal.ppl
 // prefix so every backend link (approve/decline, document view) resolves
 // correctly on the live site (and still works if APP_BASE_URL is overridden
 // for another env).
-const APP_BASE_URL = `${SITE_ORIGIN}/port/5000`;
+const APP_BASE_URL = `${SITE_ORIGIN}/port/5001`;
 // Frontend (non-API) links, e.g. the "Sign in now" button in the approval
-// email, must NOT include the /port/5000 API prefix — the SPA is served from
+// email, must NOT include the /port/5001 API prefix — the SPA is served from
 // the plain site origin.
 const FRONTEND_SIGNIN_URL = `${SITE_ORIGIN}/`;
 
@@ -326,6 +328,38 @@ export async function registerRoutes(
       stream.pipe(res);
     } catch {
       res.status(502).json({ message: "Failed to fetch file from storage" });
+    }
+  });
+
+  // Admin-only: repackages a chat voice-note attachment (recorded in the
+  // browser as webm/opus or m4a -- MediaRecorder can't record straight to
+  // mp3) as a standalone mp3 so admins can save/forward it outside the app.
+  // Never transcribes -- same audio, just a more portable container+codec.
+  app.get("/api/admin/files/:driveFileId/download-mp3", requireAuth, requireRole("admin"), async (req, res) => {
+    const rec = await storage.getUploadedFileByDriveId(String(req.params.driveFileId));
+    if (!rec) return res.status(404).json({ message: "Not found" });
+    if (!rec.mimeType.startsWith("audio/")) {
+      return res.status(400).json({ message: "This attachment is not an audio file" });
+    }
+    let tempPaths: string[] = [];
+    try {
+      const { inputPath, outputPath } = await convertDriveAudioToMp3(rec.driveFileId);
+      tempPaths = [inputPath, outputPath];
+      const baseName = (rec.filename || "voice-note").replace(/\.[^.]+$/, "").replace(/"/g, "") || "voice-note";
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Disposition", `attachment; filename="${baseName}.mp3"`);
+      const readStream = fs.createReadStream(outputPath);
+      readStream.on("close", () => cleanupTempFiles(...tempPaths));
+      readStream.on("error", () => {
+        if (!res.headersSent) res.status(500).json({ message: "Failed to read converted audio" });
+        else res.end();
+        cleanupTempFiles(...tempPaths);
+      });
+      readStream.pipe(res);
+    } catch (err) {
+      console.error("[download-mp3] conversion failed:", err);
+      cleanupTempFiles(...tempPaths);
+      if (!res.headersSent) res.status(502).json({ message: "Failed to convert audio to mp3" });
     }
   });
 
@@ -1879,6 +1913,77 @@ export async function registerRoutes(
       })
     );
     res.json(withOwner);
+  });
+
+  // ---------- ADMIN TO-DOS (message-linked handoff between admins) ----------
+  // One admin marks a specific chat message and hands it to another admin
+  // with a short note. Fires an email to the assignee in addition to
+  // showing up in the shared /api/admin/todos list.
+  app.post("/api/admin/chat/messages/:id/todo", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    const note = typeof req.body.note === "string" ? req.body.note.trim() : "";
+    const assignedToAdminId = Number(req.body.assignedToAdminId);
+    if (!note) return res.status(400).json({ message: "note is required" });
+    if (!assignedToAdminId) return res.status(400).json({ message: "assignedToAdminId is required" });
+    const assignee = await storage.getUser(assignedToAdminId);
+    if (!assignee || assignee.role !== "admin") return res.status(400).json({ message: "assignedToAdminId must be an admin" });
+
+    const todo = await storage.createAdminTodo({
+      messageId: message.id,
+      threadId: message.threadId,
+      createdByAdminId: req.user!.id,
+      assignedToAdminId,
+      note,
+    } as any);
+
+    const thread = await storage.getThread(message.threadId);
+    sendEmail(
+      [assignee.email],
+      `New to-do from ${req.user!.name}`,
+      buildAdminTodoEmailHtml({
+        assigneeName: assignee.name,
+        createdByName: req.user!.name,
+        note,
+        messageSnippet: message.body?.slice(0, 300) || (message.attachmentName ? `[attachment: ${message.attachmentName}]` : "[attachment]"),
+        threadTopic: thread?.topic || "chat",
+        openUrl: FRONTEND_SIGNIN_URL,
+      })
+    ).catch((err) => console.error("[admin-todo] email failed:", err));
+
+    res.json(todo);
+  });
+
+  app.get("/api/admin/todos", requireAuth, requireRole("admin"), async (_req, res) => {
+    const todos = await storage.listAdminTodos();
+    const enriched = await Promise.all(
+      todos.map(async (t) => {
+        const [createdBy, assignedTo, message, thread] = await Promise.all([
+          storage.getUser(t.createdByAdminId),
+          storage.getUser(t.assignedToAdminId),
+          storage.getMessage(t.messageId),
+          storage.getThread(t.threadId),
+        ]);
+        return {
+          ...t,
+          createdByName: createdBy?.name ?? "Unknown",
+          assignedToName: assignedTo?.name ?? "Unknown",
+          messageSnippet: message?.body?.slice(0, 200) ?? null,
+          threadTopic: thread?.topic ?? null,
+        };
+      })
+    );
+    enriched.sort((a, b) => b.createdAt - a.createdAt);
+    res.json(enriched);
+  });
+
+  app.patch("/api/admin/todos/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const todo = await storage.getAdminTodo(Number(req.params.id));
+    if (!todo) return res.status(404).json({ message: "Not found" });
+    const status = req.body.status === "done" ? "done" : req.body.status === "open" ? "open" : null;
+    if (!status) return res.status(400).json({ message: "status must be 'open' or 'done'" });
+    const updated = await storage.setAdminTodoStatus(todo.id, status, status === "done" ? Date.now() : null);
+    res.json(updated);
   });
 
   // ---------- HOME SUMMARY ----------

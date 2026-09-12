@@ -144,6 +144,33 @@ export function buildDeclineEmailHtml(r: DecisionEmailInput): string {
   </div>`;
 }
 
+export interface AdminTodoEmailInput {
+  assigneeName: string;
+  createdByName: string;
+  note: string;
+  messageSnippet: string;
+  threadTopic: string;
+  openUrl: string;
+}
+
+export function buildAdminTodoEmailHtml(r: AdminTodoEmailInput): string {
+  const btn = (href: string, label: string) =>
+    `<a href="${href}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#ffbf42;color:#111;font-weight:600;text-decoration:none;font-size:14px;">${label}</a>`;
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
+    <h2 style="color:#111;">New to-do from ${escapeHtml(r.createdByName)}</h2>
+    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.assigneeName)}, ${escapeHtml(r.createdByName)} flagged a chat message in "${escapeHtml(r.threadTopic)}" and would like you to do something about it:</p>
+    <table style="width:100%;border-collapse:collapse;margin:16px 0;border-top:1px solid #eee;border-bottom:1px solid #eee;padding:8px 0;">
+      ${row("Note", r.note)}
+      ${row("Message", r.messageSnippet)}
+    </table>
+    <div style="margin:24px 0;">
+      ${btn(r.openUrl, "Open in Partner Platform")}
+    </div>
+    <p style="font-size:12px;color:#999;">You can also find this any time under To-Dos in the Admin panel.</p>
+  </div>`;
+}
+
 // Note: there is no self-service "forgot password" email flow — password
 // resets are admin-initiated only (see server/routes.ts,
 // /api/admin/users/:id/reset-password), since Resend's sandbox mode can't
