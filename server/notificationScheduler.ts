@@ -7,9 +7,28 @@ let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 const CHECK_INTERVAL_MS = 2 * 60_000; // every 2 minutes
 
-const REFERRAL_RECIPIENTS = ["partner@maha.clinic", "coordinator@maha.si"];
-const ORDER_RECIPIENTS = ["partner@maha.clinic", "tina@maha.si"];
-const CHAT_RECIPIENTS = ["partner@maha.clinic"];
+const REFERRAL_BASE_RECIPIENTS = ["partner@maha.clinic", "coordinator@maha.si"];
+const ORDER_BASE_RECIPIENTS = ["partner@maha.clinic", "tina@maha.si"];
+const CHAT_BASE_RECIPIENTS = ["partner@maha.clinic"];
+
+// Escalate a thread that's gone 6+ hours without an admin reply. Checked
+// against the wall clock each poll rather than a fixed threshold constant
+// so the value is easy to find/change in one place.
+const ESCALATION_THRESHOLD_MS = 6 * 60 * 60_000;
+
+// Dr. Perko and Elisabeth Madden (the admin accounts) must always get these
+// emails per the standing notification rules -- merged into every recipient
+// list below, in addition to the shared/team addresses already there.
+// Fetched fresh each poll (not cached) so a newly added admin account starts
+// receiving notifications immediately with no code change or restart.
+async function getAdminEmails(storage: IStorage): Promise<string[]> {
+  const admins = await storage.listAdmins();
+  return admins.map((a) => a.email).filter((e): e is string => !!e);
+}
+
+function mergeRecipients(base: string[], admins: string[]): string[] {
+  return Array.from(new Set([...base, ...admins]));
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
@@ -28,6 +47,11 @@ export function startNotificationScheduler(storage: IStorage) {
 
   const run = async () => {
     try {
+      const adminEmails = await getAdminEmails(storage);
+      const REFERRAL_RECIPIENTS = mergeRecipients(REFERRAL_BASE_RECIPIENTS, adminEmails);
+      const ORDER_RECIPIENTS = mergeRecipients(ORDER_BASE_RECIPIENTS, adminEmails);
+      const CHAT_RECIPIENTS = mergeRecipients(CHAT_BASE_RECIPIENTS, adminEmails);
+
       const referrals = await storage.listUnnotifiedReferrals();
       for (const referral of referrals) {
         const partner = await storage.getUser(referral.partnerId);
@@ -94,6 +118,32 @@ export function startNotificationScheduler(storage: IStorage) {
         if (chatResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {
           await storage.markChatThreadsNotified([thread.id], Date.now());
         }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      // 6-hour escalation: any thread whose most recent message came from a
+      // partner/student and has sat unanswered by an admin for 6+ hours gets
+      // one alert email -- tracked via escalationSentForMessageId so it fires
+      // exactly once per unanswered message, then fires again if a later
+      // message goes unanswered too (see schema.ts comment for details).
+      const now = Date.now();
+      const allThreads = await storage.listThreads();
+      for (const thread of allThreads) {
+        const last = await storage.getLastMessageForThread(thread.id);
+        if (!last || last.senderRole === "admin") continue;
+        if (now - last.createdAt < ESCALATION_THRESHOLD_MS) continue;
+        if (thread.escalationSentForMessageId === last.id) continue;
+        const starter = await storage.getUser(thread.userId);
+        const hoursWaiting = Math.floor((now - last.createdAt) / 3_600_000);
+        const html = `
+          <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
+            <h2>Chat waiting for a reply</h2>
+            <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b>'s message in <b>${escapeHtml(thread.topic)}</b> has been waiting ${hoursWaiting}+ hours without an admin reply.</p>
+            <p style="font-size:13px;color:#666;">"${escapeHtml((last.body || "[attachment]").slice(0, 200))}"</p>
+            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Platform.</p>
+          </div>`;
+        await sendEmail(mergeRecipients([], adminEmails), `Waiting 6+ hours for a reply: ${thread.topic}`, html);
+        await storage.updateThread(thread.id, { escalationSentForMessageId: last.id });
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
     } catch (err) {

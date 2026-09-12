@@ -69,6 +69,29 @@ async function sendDecisionEmail(user: { name: string; role: string; email: stri
   await sendEmail([user.email], subject, html);
 }
 
+// Item 11: push a notification to every admin when a partner/student writes
+// into a chat that ALREADY had prior messages (a brand-new first message
+// is a "new chat" and is covered separately by the email in
+// notificationScheduler, so we don't double-notify for that case).
+async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, msg: { senderName: string; body: string | null }) {
+  const messageCount = await storage.countMessagesForThread(thread.id);
+  if (messageCount <= 1) return; // first message in the thread -- handled as "new chat" via email
+  const admins = await storage.listAdmins();
+  const adminIds = admins.map((a) => a.id);
+  if (!adminIds.length) return;
+  const subs = await storage.getPushSubscriptionsForUserIds(adminIds);
+  if (!subs.length) return;
+  const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
+  const result = await sendToSubscriptions(subs, {
+    title: `${msg.senderName}: ${thread.topic}`,
+    body: bodyPreview,
+    url: "/admin/chat",
+  });
+  if (result.removedEndpoints.length) {
+    await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
+  }
+}
+
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -1766,6 +1789,7 @@ export async function registerRoutes(
     });
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
+    notifyAdminsOfNewMessage(thread, msg).catch((err) => console.error("[push] new-message notify failed:", err));
     res.json(msg);
   });
 

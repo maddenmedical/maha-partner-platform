@@ -601,12 +601,18 @@ export const chatThreads = sqliteTable("chat_threads", {
   // last-read timestamp here.
   ownerLastReadAt: integer("owner_last_read_at"),
   adminLastReadAt: integer("admin_last_read_at"),
+  // Item 11 (6-hour escalation): the id of the most recent partner/student
+  // message this thread has already sent an "unanswered for 6+ hours" alert
+  // for. Compared against the current last message's id on each poll so the
+  // alert fires exactly once per unanswered message, and fires again for a
+  // later message if the thread goes unanswered again after an admin reply.
+  escalationSentForMessageId: integer("escalation_sent_for_message_id"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({
   id: true, createdAt: true, emailNotified: true, notifiedAt: true,
   kind: true, referralId: true, pendingReferralRequestedAt: true, pendingReferralRequestedByRole: true,
-  ownerLastReadAt: true, adminLastReadAt: true,
+  ownerLastReadAt: true, adminLastReadAt: true, escalationSentForMessageId: true,
 });
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;
