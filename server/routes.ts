@@ -2477,20 +2477,41 @@ export async function registerRoutes(
         }
         const incomingPath = `${DB_FILE_PATH}.incoming`;
         fs.writeFileSync(incomingPath, file.buffer);
+
+        // Checkpoint and close the live connection FIRST. If we swap the
+        // main db file while a stale -wal/-shm pair for the OLD database
+        // still sits next to it, the next boot's SQLite connection replays
+        // those old WAL frames onto the newly-restored file by page number
+        // and silently wipes the restore back toward the old (often empty)
+        // state -- the file on disk looks right, but every row disappears.
+        try {
+          sqliteDb.pragma("wal_checkpoint(TRUNCATE)");
+        } catch {
+          /* ignore */
+        }
+        try {
+          sqliteDb.close();
+        } catch {
+          /* ignore */
+        }
+
         if (fs.existsSync(DB_FILE_PATH)) {
           const backupPath = `${DB_FILE_PATH}.pre-restore-${Date.now()}.bak`;
           fs.copyFileSync(DB_FILE_PATH, backupPath);
         }
         fs.renameSync(incomingPath, DB_FILE_PATH);
-        res.json({ ok: true, message: "Database restored. Restarting to load it." });
-        setTimeout(() => {
+        // Defensively remove any leftover WAL/SHM sidecars for the OLD
+        // database so the next boot opens the restored file clean.
+        for (const suffix of ["-wal", "-shm"]) {
           try {
-            sqliteDb.close();
+            fs.unlinkSync(`${DB_FILE_PATH}${suffix}`);
           } catch {
-            /* ignore */
+            /* ignore, may not exist */
           }
-          process.exit(0);
-        }, 500);
+        }
+
+        res.json({ ok: true, message: "Database restored. Restarting to load it." });
+        setTimeout(() => process.exit(0), 500);
       } catch (err: any) {
         console.error("[backup-transfer] restore failed:", err);
         res.status(500).json({ message: err?.message || "Failed to restore database" });
