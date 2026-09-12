@@ -2498,5 +2498,39 @@ export async function registerRoutes(
     },
   );
 
+  // Temporary diagnostic for the pplx.app -> Render data migration: reports
+  // exactly what path/file the LIVE in-process connection is reading, so a
+  // restore that reports success but doesn't show up can be root-caused.
+  // Token/admin gated like the transfer routes above; safe to remove once
+  // migration is confirmed done.
+  app.get("/api/admin/backups/diag", requireAdminOrBackupToken, async (_req, res) => {
+    try {
+      const userCount = (sqliteDb.prepare("SELECT COUNT(*) as c FROM users").get() as any)?.c ?? null;
+      let stat: any = null;
+      try {
+        const s = fs.statSync(DB_FILE_PATH);
+        stat = { sizeBytes: s.size, mtime: s.mtime };
+      } catch (e: any) {
+        stat = { error: e?.message || String(e) };
+      }
+      const dir = path.dirname(DB_FILE_PATH);
+      let dirListing: string[] = [];
+      try {
+        dirListing = fs.readdirSync(dir);
+      } catch (e: any) {
+        dirListing = [`error: ${e?.message || e}`];
+      }
+      res.json({
+        resolvedDbFilePath: DB_FILE_PATH,
+        envSqliteDbPath: process.env.SQLITE_DB_PATH ?? null,
+        liveUserCountFromMemory: userCount,
+        fileStat: stat,
+        dirListing,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || String(err) });
+    }
+  });
+
   return httpServer;
 }
