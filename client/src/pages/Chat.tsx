@@ -515,6 +515,7 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
       </div>
 
       <ChatComposer
+        key={thread.id}
         uploadUrl="/api/chat/upload"
         threadId={thread.id}
         onSend={(payload) => sendMutation.mutateAsync(payload)}
