@@ -49,9 +49,12 @@ const SITE_ORIGIN = process.env.APP_BASE_URL || "https://maha-partner-portal.ppl
 // Published pplx.app sites route backend API calls through /port/<PORT>/... —
 // plain /api/... paths hit the static asset server and 404. Append that
 // prefix so every backend link (approve/decline, document view) resolves
-// correctly on the live site (and still works if APP_BASE_URL is overridden
-// for another env).
-const APP_BASE_URL = `${SITE_ORIGIN}/port/5001`;
+// correctly on the live site. Other hosts (e.g. Render) serve the API
+// directly with no proxy prefix, so this is overridable via
+// APP_API_PATH_PREFIX (set it to an empty string on non-pplx.app hosts).
+// Defaults to the pplx.app prefix unchanged when unset.
+const API_PATH_PREFIX = process.env.APP_API_PATH_PREFIX ?? "/port/5001";
+const APP_BASE_URL = `${SITE_ORIGIN}${API_PATH_PREFIX}`;
 // Frontend (non-API) links, e.g. the "Sign in now" button in the approval
 // email, must NOT include the /port/5001 API prefix — the SPA is served from
 // the plain site origin.
