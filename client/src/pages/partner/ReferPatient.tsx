@@ -17,7 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Loader2, Upload, CheckCircle2, FileText, MessageSquare } from "lucide-react";
+import { ClipboardList, Loader2, Upload, CheckCircle2, FileText, MessageSquare, Info } from "lucide-react";
 import { openAuthedFile } from "@/lib/fileAccess";
 import { setPendingThreadId } from "@/lib/chatNav";
 import { useLocation } from "wouter";
@@ -139,6 +139,22 @@ export default function ReferPatient() {
               <Label htmlFor="notes">Notes (optional)</Label>
               <Textarea id="notes" rows={2} {...form.register("notes")} data-testid="textarea-notes" />
             </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 flex gap-2.5" data-testid="note-cbct-info">
+              <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <p>
+                  <span className="font-medium text-foreground">A CBCT (Cone Beam CT) scan</span> gives Dr. Perko a much
+                  clearer 3D view than a standard panoramic X-ray. If it would help this case, have it done at an
+                  imaging/radiology center in your own country — there's no need to send the patient to us for it.
+                </p>
+                <p className="mt-1.5">
+                  <span className="font-medium text-foreground">Sending the file:</span> under 50MB, attach it directly
+                  below. Larger files (e.g. from a USB or a Google Drive/Dropbox link) don't hold up this referral —
+                  once you submit it, we'll open a dedicated chat with you where you can paste the link whenever it's ready.
+                </p>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="attachment">Attachment (optional)</Label>
               <label
