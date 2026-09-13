@@ -23,7 +23,7 @@ export function startCaseDiscussionScheduler(storage: IStorage) {
         if (attendees.length > 0) {
           const subs = await storage.getPushSubscriptionsForUserIds(attendees.map((a) => a.userId));
           const result = await sendToSubscriptions(subs, {
-            title: "Case discussion starting now",
+            title: "Event starting now",
             body: `${discussion.topic} is starting — tap to join on Zoom.`,
             url: discussion.zoomLink,
           });

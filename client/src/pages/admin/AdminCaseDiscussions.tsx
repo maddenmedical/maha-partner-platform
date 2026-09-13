@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE } from "@/lib/queryClient";
 import type { CaseDiscussion } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,19 +11,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarClock, Plus, Trash2, Loader2, Pencil, Users, ExternalLink } from "lucide-react";
+import { CalendarClock, Plus, Trash2, Loader2, Pencil, Users, ExternalLink, CalendarPlus } from "lucide-react";
 import { format } from "date-fns";
 
 type CaseDiscussionRow = CaseDiscussion & { rsvpCount: number };
 type Attendee = { userId: number; name: string; email: string; clinicName: string | null };
 
 const EMPTY_FORM = {
-  topic: "Partner Case Discussion",
+  topic: "",
   presenterName: "",
   datetime: "",
   zoomLink: "https://zoom.us/j/0000000000",
   notes: "",
 };
+
+// Same pattern as the partner-facing download in PartnerHome.tsx: fetch the
+// .ics as a blob (so the browser's auth cookie is sent) rather than linking
+// directly to the URL, then trigger a synthetic download.
+async function downloadIcal(id: number, topic: string) {
+  const res = await fetch(`${API_BASE}/api/case-discussions/${id}/ical`, { credentials: "include" });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${topic.replace(/[^a-z0-9]+/gi, "-") || "event"}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 // Convert an epoch-ms value to the "YYYY-MM-DDTHH:mm" string a
 // <input type="datetime-local"> expects (in the admin's local timezone).
@@ -82,7 +99,7 @@ export default function AdminCaseDiscussions() {
     onSuccess: () => {
       invalidate();
       setDialogOpen(false);
-      toast({ title: editingId != null ? "Case discussion updated" : "Case discussion created" });
+      toast({ title: editingId != null ? "Event updated" : "Event created" });
     },
     onError: () => toast({ title: "Could not save", description: "Please check the fields and try again.", variant: "destructive" }),
   });
@@ -91,7 +108,7 @@ export default function AdminCaseDiscussions() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/case-discussions/${id}`),
     onSuccess: () => {
       invalidate();
-      toast({ title: "Case discussion deleted" });
+      toast({ title: "Event deleted" });
     },
   });
 
@@ -101,18 +118,18 @@ export default function AdminCaseDiscussions() {
   return (
     <div className="max-w-5xl flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Schedule the recurring partner case discussions. Partners can RSVP, download a calendar invite, and
-        receive a Zoom push reminder when a session starts.
+        Schedule upcoming events — webinars, meetings, and case discussions. Partners can RSVP, download a calendar
+        invite, and receive a Zoom push reminder when a session starts.
       </p>
 
       <Button size="sm" className="self-start" onClick={openCreate} data-testid="button-add-case-discussion">
-        <Plus className="h-3.5 w-3.5 mr-1.5" /> Add case discussion
+        <Plus className="h-3.5 w-3.5 mr-1.5" /> Add event
       </Button>
 
       {isLoading ? (
         <Skeleton className="h-64 rounded-lg skeleton-shimmer" />
       ) : sorted.length === 0 ? (
-        <EmptyState icon={CalendarClock} title="No case discussions" description="Create your first partner case discussion." />
+        <EmptyState icon={CalendarClock} title="No events yet" description="Create your first event." />
       ) : (
         <Card>
           <CardContent className="p-0 overflow-x-auto">
@@ -144,6 +161,9 @@ export default function AdminCaseDiscussions() {
                         <Button size="icon" variant="ghost" onClick={() => setAttendeesFor(d)} aria-label="View attendees" data-testid={`button-view-attendees-${d.id}`}>
                           <Users className="h-3.5 w-3.5" />
                         </Button>
+                        <Button size="icon" variant="ghost" onClick={() => downloadIcal(d.id, d.topic)} aria-label="Download calendar invite" data-testid={`button-download-ical-${d.id}`}>
+                          <CalendarPlus className="h-3.5 w-3.5" />
+                        </Button>
                         <Button size="icon" variant="ghost" onClick={() => openEdit(d)} aria-label="Edit" data-testid={`button-edit-case-discussion-${d.id}`}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -164,11 +184,11 @@ export default function AdminCaseDiscussions() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent data-testid="dialog-case-discussion-form">
           <DialogHeader>
-            <DialogTitle>{editingId != null ? "Edit case discussion" : "Add case discussion"}</DialogTitle>
+            <DialogTitle>{editingId != null ? "Edit event" : "Add event"}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cd-topic">Topic / case title</Label>
+              <Label htmlFor="cd-topic">Title</Label>
               <Input id="cd-topic" value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} data-testid="input-case-discussion-topic" />
             </div>
             <div className="flex flex-col gap-1.5">

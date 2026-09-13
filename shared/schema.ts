@@ -57,12 +57,18 @@ export const users = sqliteTable("users", {
   // existing users get it retroactively via the one-time acknowledgment modal.
   legalAcceptedVersion: text("legal_accepted_version"),
   legalAcceptedAt: integer("legal_accepted_at"),
+  // Admin's personally chosen order for their own sidebar nav (drag-and-drop
+  // reorder). Stored as a JSON-stringified array of `href` strings; null
+  // means "use the default order". Server-managed only — never part of
+  // registration or profile-edit payloads.
+  adminNavOrder: text("admin_nav_order"),
   createdAt: integer("created_at").notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+  adminNavOrder: true,
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;

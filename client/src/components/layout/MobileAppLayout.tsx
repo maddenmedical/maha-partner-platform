@@ -6,7 +6,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
-import { LogOut, Settings } from "lucide-react";
+import { LogOut, Settings, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 
@@ -28,11 +28,28 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/chat/threads"], refetchInterval: 15000 });
   const hasUnreadChat = !!chatThreads?.some((t) => t.unread);
 
+  // Sub-pages reachable from Home (e.g. /institute, /account) aren't in the
+  // bottom tab bar, so the only way back is a real "previous page" affordance
+  // in the top-left corner — not a "go to home" shortcut.
+  const isSubPage = !tabs.some((t) => location === t.href || (t.href !== "/" && location.startsWith(t.href)));
+
   return (
     <div className="h-dvh flex flex-col bg-background overflow-hidden">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-2 min-w-0">
-          <MahaLogo size={26} className="text-primary shrink-0" />
+          {isSubPage ? (
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              aria-label="Go back"
+              data-testid="button-back"
+              className="h-9 w-9 -ml-1 flex items-center justify-center rounded-md hover-elevate active-elevate-2 text-foreground shrink-0"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+          ) : (
+            <MahaLogo size={26} className="text-primary shrink-0" />
+          )}
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-tight truncate">{title}</p>
             <p className="text-xs text-muted-foreground leading-tight truncate" data-testid="text-current-user">

@@ -281,6 +281,7 @@ export interface IStorage {
   listCaseDiscussionAttendees(discussionId: number): Promise<{ userId: number; name: string; email: string; clinicName: string | null }[]>;
   findCaseDiscussionsNeedingNotification(windowStartMs: number, nowMs: number): Promise<CaseDiscussion[]>;
   markCaseDiscussionNotified(id: number, whenMs: number): Promise<void>;
+  updateAdminNavOrder(userId: number, order: string[]): Promise<User | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -919,10 +920,18 @@ export class DatabaseStorage implements IStorage {
       .all();
     return rows.map((d) => {
       const rsvps = db.select().from(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.discussionId, d.id)).all();
+      // Names only (no email) so fellow partners can see who else is
+      // attending without exposing contact details — that stays admin-only
+      // via listCaseDiscussionAttendees.
+      const attendeeNames = rsvps.map((r) => {
+        const u = db.select().from(users).where(eq(users.id, r.userId)).get();
+        return u?.name ?? "Unknown";
+      });
       return {
         ...d,
         rsvpCount: rsvps.length,
         iAmAttending: rsvps.some((r) => r.userId === forUserId),
+        attendeeNames,
       };
     });
   }
@@ -991,6 +1000,11 @@ export class DatabaseStorage implements IStorage {
   }
   async markCaseDiscussionNotified(id: number, whenMs: number) {
     db.update(caseDiscussions).set({ notifiedAt: whenMs }).where(eq(caseDiscussions.id, id)).run();
+  }
+
+  // ---------- admin nav order (drag-and-drop sidebar reorder) ----------
+  async updateAdminNavOrder(userId: number, order: string[]) {
+    return db.update(users).set({ adminNavOrder: JSON.stringify(order) }).where(eq(users.id, userId)).returning().get();
   }
 }
 

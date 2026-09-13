@@ -132,6 +132,7 @@ type PublicUser = {
   address: string | null;
   country: string | null;
   legalAcceptedVersion: string | null;
+  adminNavOrder: string | null;
 };
 
 // Shapes a full DB user row down to the fields safe to send to the frontend.
@@ -161,6 +162,7 @@ function toPublicUser(user: {
   address?: string | null;
   country?: string | null;
   legalAcceptedVersion?: string | null;
+  adminNavOrder?: string | null;
 }): PublicUser {
   return {
     id: user.id,
@@ -184,6 +186,7 @@ function toPublicUser(user: {
     address: user.address ?? null,
     country: user.country ?? null,
     legalAcceptedVersion: user.legalAcceptedVersion ?? null,
+    adminNavOrder: user.adminNavOrder ?? null,
   };
 }
 
@@ -575,6 +578,19 @@ export async function registerRoutes(
       legalAcceptedVersion: CURRENT_LEGAL_VERSION,
       legalAcceptedAt: Date.now(),
     });
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ user: toPublicUser(updated) });
+  });
+
+  // Persists the admin's own drag-and-drop sidebar reorder (Item: admin nav
+  // customization). Admin-only and always scoped to the caller's own row --
+  // this is a personal display preference, never a setting for other admins.
+  app.patch("/api/admin/nav-order", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const order = req.body?.order;
+    if (!Array.isArray(order) || !order.every((h) => typeof h === "string")) {
+      return res.status(400).json({ message: "order must be an array of strings" });
+    }
+    const updated = await storage.updateAdminNavOrder(req.user!.id, order);
     if (!updated) return res.status(404).json({ message: "User not found" });
     res.json({ user: toPublicUser(updated) });
   });

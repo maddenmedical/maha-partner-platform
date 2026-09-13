@@ -53,7 +53,7 @@ function NextClassCard() {
 
 const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 
-type UpcomingCaseDiscussion = CaseDiscussion & { rsvpCount: number; iAmAttending: boolean };
+type UpcomingCaseDiscussion = CaseDiscussion & { rsvpCount: number; iAmAttending: boolean; attendeeNames: string[] };
 
 interface HomeSummary {
   openReferrals: number;
@@ -122,7 +122,7 @@ function CaseDiscussionsSection() {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Next case discussion</h2>
+        <h2 className="text-base font-semibold">Next event</h2>
         <Skeleton className="h-40 rounded-lg skeleton-shimmer" />
       </div>
     );
@@ -135,13 +135,16 @@ function CaseDiscussionsSection() {
 
   return (
     <div className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Next case discussion</h2>
+      <h2 className="text-base font-semibold">Next event</h2>
       <div className="flex flex-col gap-3">
         {upcoming.map((d) => {
           const attending = d.iAmAttending;
           const busy = rsvpMutation.isPending || cancelMutation.isPending;
+          const names = d.attendeeNames ?? [];
+          const shownNames = names.slice(0, 3);
+          const extraCount = names.length - shownNames.length;
           return (
-            <Card key={d.id} data-testid={`card-case-discussion-${d.id}`}>
+            <Card key={d.id} data-testid={`card-case-discussion-${d.id}`} className="border-primary/30 ring-1 ring-primary/10">
               <CardContent className="p-4 flex flex-col gap-3">
                 <div className="flex items-start gap-3">
                   <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
@@ -159,7 +162,11 @@ function CaseDiscussionsSection() {
                     )}
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5" data-testid={`text-attendee-count-${d.id}`}>
                       <Users className="h-3.5 w-3.5" />
-                      {d.rsvpCount} {d.rsvpCount === 1 ? "partner" : "partners"} attending
+                      {d.rsvpCount === 0
+                        ? "No partners attending yet"
+                        : shownNames.length > 0
+                        ? `${shownNames.join(", ")}${extraCount > 0 ? ` +${extraCount} more` : ""} attending`
+                        : `${d.rsvpCount} ${d.rsvpCount === 1 ? "partner" : "partners"} attending`}
                     </div>
                   </div>
                 </div>
@@ -240,6 +247,8 @@ export default function PartnerHome() {
 
       {isStudent && <NextClassCard />}
 
+      <CaseDiscussionsSection />
+
       <div className="grid grid-cols-2 gap-3">
         {isLoading ? (
           <>
@@ -317,8 +326,6 @@ export default function PartnerHome() {
           </Link>
         )}
       </div>
-
-      <CaseDiscussionsSection />
 
       {!isLoading && data && data.recentMessages.length > 0 && (
         <div className="flex flex-col gap-2">

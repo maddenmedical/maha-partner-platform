@@ -81,7 +81,7 @@ const ADMIN_TITLES: Record<string, string> = {
   "/admin/team": "Team",
   "/admin/partners": "All Partners",
   "/admin/announcements": "Announcements",
-  "/admin/case-discussions": "Case Discussions",
+  "/admin/case-discussions": "Events",
   "/admin/migration": "Partner Migration",
   "/admin/todos": "To-Dos",
 };

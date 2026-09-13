@@ -1,10 +1,18 @@
-import { ReactNode } from "react";
+import { ReactNode, useMemo, useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
+import { apiRequest } from "@/lib/queryClient";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import type { Referral, Order } from "@shared/schema";
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +22,6 @@ import {
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   SidebarHeader,
@@ -23,7 +30,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical,
 } from "lucide-react";
 
 const navItems = [
@@ -38,12 +45,65 @@ const navItems = [
   { href: "/admin/team", label: "Team", icon: Users, testId: "link-admin-team" },
   { href: "/admin/partners", label: "Partners & Students", icon: Contact, testId: "link-admin-partners" },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone, testId: "link-admin-announcements" },
-  { href: "/admin/case-discussions", label: "Case Discussions", icon: CalendarClock, testId: "link-admin-case-discussions" },
+  { href: "/admin/case-discussions", label: "Events", icon: CalendarClock, testId: "link-admin-case-discussions" },
   { href: "/admin/migration", label: "Partner Migration", icon: UploadCloud, testId: "link-admin-migration" },
 ];
+const DEFAULT_ORDER = navItems.map((i) => i.href);
+
+// One draggable row. The grip handle is the only drag surface (via
+// dnd-kit's listeners/attributes) so the rest of the row still behaves like
+// a normal link — click-to-navigate keeps working during and after reorders.
+function SortableNavItem({
+  item, isActive, count,
+}: {
+  item: (typeof navItems)[number];
+  isActive: boolean;
+  count: number;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.href });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      data-slot="sidebar-menu-item"
+      data-sidebar="menu-item"
+      className="group/menu-item relative flex items-center gap-0"
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab active:cursor-grabbing touch-none px-1 text-sidebar-foreground/30 hover:text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden"
+        aria-label={`Reorder ${item.label}`}
+        data-testid={`handle-reorder-${item.testId}`}
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      <SidebarMenuButton asChild isActive={isActive} tooltip={item.label} data-testid={item.testId} className="min-w-0">
+        <Link href={item.href}>
+          <item.icon />
+          <span>{item.label}</span>
+        </Link>
+      </SidebarMenuButton>
+      {count > 0 && (
+        <SidebarMenuBadge className="bg-primary text-primary-foreground" data-testid={`badge-unread-${item.testId}`}>
+          {count}
+        </SidebarMenuBadge>
+      )}
+    </li>
+  );
+}
 
 function AdminSidebar() {
   const [location] = useLocation();
+  const { user, updateUser } = useAuth();
+  const queryClient = useQueryClient();
 
   // Unread markers (Item 10): a small badge pill per nav item showing what
   // still needs attention. Referrals/orders reuse their existing status
@@ -58,6 +118,49 @@ function AdminSidebar() {
     "/admin/orders": orders?.filter((o) => o.status === "Requested").length ?? 0,
     "/admin/chat": threads?.filter((t) => t.unread).length ?? 0,
   };
+
+  // Saved order is a JSON array of hrefs on the admin's own account, so it
+  // follows them across devices/sessions. Filter out any stale hrefs (a nav
+  // item that no longer exists) and append any new items the admin hasn't
+  // placed yet, so future additions to `navItems` always show up.
+  const savedOrder = useMemo<string[]>(() => {
+    if (!user?.adminNavOrder) return DEFAULT_ORDER;
+    try {
+      const parsed = JSON.parse(user.adminNavOrder);
+      if (!Array.isArray(parsed)) return DEFAULT_ORDER;
+      const known = new Set(DEFAULT_ORDER);
+      const cleaned = parsed.filter((h) => known.has(h));
+      const missing = DEFAULT_ORDER.filter((h) => !cleaned.includes(h));
+      return [...cleaned, ...missing];
+    } catch {
+      return DEFAULT_ORDER;
+    }
+  }, [user?.adminNavOrder]);
+
+  const [order, setOrder] = useState<string[]>(savedOrder);
+  useEffect(() => setOrder(savedOrder), [savedOrder]);
+
+  const saveOrderMutation = useMutation({
+    mutationFn: (newOrder: string[]) => apiRequest("PATCH", "/api/admin/nav-order", { order: newOrder }),
+  });
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  const orderedItems = order.map((href) => navItems.find((i) => i.href === href)).filter((i): i is (typeof navItems)[number] => !!i);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = order.indexOf(String(active.id));
+    const newIndex = order.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(order, oldIndex, newIndex);
+    setOrder(newOrder);
+    updateUser({ adminNavOrder: JSON.stringify(newOrder) });
+    saveOrderMutation.mutate(newOrder, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] }),
+    });
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -74,26 +177,20 @@ function AdminSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Management</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => {
-                const count = badgeCounts[item.href] ?? 0;
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton asChild isActive={location.startsWith(item.href)} tooltip={item.label} data-testid={item.testId}>
-                      <Link href={item.href}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                    {count > 0 && (
-                      <SidebarMenuBadge className="bg-primary text-primary-foreground" data-testid={`badge-unread-${item.testId}`}>
-                        {count}
-                      </SidebarMenuBadge>
-                    )}
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={order} strategy={verticalListSortingStrategy}>
+                <SidebarMenu>
+                  {orderedItems.map((item) => (
+                    <SortableNavItem
+                      key={item.href}
+                      item={item}
+                      isActive={location.startsWith(item.href)}
+                      count={badgeCounts[item.href] ?? 0}
+                    />
+                  ))}
+                </SidebarMenu>
+              </SortableContext>
+            </DndContext>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
