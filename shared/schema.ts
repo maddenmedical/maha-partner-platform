@@ -684,12 +684,21 @@ export const chatThreads = sqliteTable("chat_threads", {
   // alert fires exactly once per unanswered message, and fires again for a
   // later message if the thread goes unanswered again after an admin reply.
   escalationSentForMessageId: integer("escalation_sent_for_message_id"),
+  // Admin-only reversible "hide from inbox" toggle. Set to the archive time,
+  // null when active/unarchived. Messages, flags, reactions, and to-dos are
+  // untouched -- unlike thread delete below, this never removes data.
+  archivedAt: integer("archived_at"),
+  // Set when the owning partner/student asks (from an archived thread) for
+  // an admin to reopen it. Cleared whenever the thread is archived or
+  // unarchived again, so it never lingers past the request it describes.
+  reactivationRequestedAt: integer("reactivation_requested_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({
   id: true, createdAt: true, emailNotified: true, notifiedAt: true,
   kind: true, referralId: true, pendingReferralRequestedAt: true, pendingReferralRequestedByRole: true,
   ownerLastReadAt: true, adminLastReadAt: true, escalationSentForMessageId: true,
+  archivedAt: true, reactivationRequestedAt: true,
 });
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;
@@ -711,8 +720,12 @@ export const chatMessages = sqliteTable("chat_messages", {
   // Body/attachment are blanked out at the API layer whenever this is set.
   deletedAt: integer("deleted_at"),
   deletedByName: text("deleted_by_name"),
+  // Set when an admin edits the body of their own message (see PATCH route).
+  // Shown as a small "(edited)" indicator to every viewer; previous body is
+  // not retained.
+  editedAt: integer("edited_at"),
 });
-export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, deletedAt: true, deletedByName: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, deletedAt: true, deletedByName: true, editedAt: true });
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 

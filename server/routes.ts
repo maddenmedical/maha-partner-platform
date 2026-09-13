@@ -1918,6 +1918,33 @@ export async function registerRoutes(
     res.status(result.status).json(result.body);
   });
 
+  // Owner-only: from an archived thread, ask an admin to reopen it. Notifies
+  // admins by push (mirrors notifyAdminsOfNewMessage). Re-archiving or
+  // unarchiving the thread clears this flag, so it never lingers past the
+  // request it describes.
+  app.post("/api/chat/threads/:id/request-reactivation", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
+    if (!thread.archivedAt) return res.status(400).json({ message: "Chat isn't archived" });
+    const updated = await storage.updateThread(thread.id, { reactivationRequestedAt: Date.now() });
+    const admins = await storage.listAdmins();
+    const adminIds = admins.map((a) => a.id);
+    if (adminIds.length) {
+      const subs = await storage.getPushSubscriptionsForUserIds(adminIds);
+      if (subs.length) {
+        const result = await sendToSubscriptions(subs, {
+          title: `${req.user!.name} requested to reopen a chat`,
+          body: thread.topic,
+          url: "/admin/chat",
+        });
+        if (result.removedEndpoints.length) {
+          await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
+        }
+      }
+    }
+    res.json(updated);
+  });
+
   app.post("/api/chat/threads/:id/link-referral", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
     const thread = await storage.getThread(Number(req.params.id));
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
@@ -2041,6 +2068,30 @@ export async function registerRoutes(
     res.json(thread);
   });
 
+  // Admin-only, reversible: hide a chat from the main inbox without deleting
+  // anything. Unarchiving (archived: false) also clears any pending
+  // reactivation request, since the thread is now open again anyway.
+  app.patch("/api/admin/chat/threads/:id/archive", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    const archived = !!req.body.archived;
+    const updated = await storage.updateThread(thread.id, {
+      archivedAt: archived ? Date.now() : null,
+      reactivationRequestedAt: null,
+    });
+    res.json(updated);
+  });
+
+  // Admin-only, destructive: permanently removes the thread, its messages,
+  // and any linked flags/reactions/to-dos. Unlike archive, this cannot be
+  // undone -- the frontend confirms with the admin before calling this.
+  app.delete("/api/admin/chat/threads/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const thread = await storage.getThread(Number(req.params.id));
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    await storage.deleteThread(thread.id);
+    res.json({ ok: true });
+  });
+
   app.get("/api/admin/chat/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
     const threadId = Number(req.params.id);
     const thread = await storage.getThread(threadId);
@@ -2114,6 +2165,20 @@ export async function registerRoutes(
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
+  });
+
+  // Admin can edit the text of their OWN messages only (not a partner's/
+  // student's, and not another admin's). Marks editedAt so every viewer sees
+  // a small "(edited)" indicator; the previous body is not retained.
+  app.patch("/api/admin/chat/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only edit your own messages" });
+    if (message.deletedAt) return res.status(400).json({ message: "Can't edit a deleted message" });
+    const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+    if (!body) return res.status(400).json({ message: "Message can't be empty." });
+    const updated = await storage.editMessage(message.id, body);
+    res.json(updated);
   });
 
   app.patch("/api/admin/chat/messages/:id/flag", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {

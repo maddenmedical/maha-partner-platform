@@ -227,7 +227,7 @@ export interface IStorage {
   listThreads(): Promise<ChatThread[]>;
   getThread(id: number): Promise<ChatThread | undefined>;
   getThreadByReferralId(referralId: number): Promise<ChatThread | undefined>;
-  updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null; escalationSentForMessageId: number | null }>): Promise<ChatThread | undefined>;
+  updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null; escalationSentForMessageId: number | null; archivedAt: number | null; reactivationRequestedAt: number | null }>): Promise<ChatThread | undefined>;
   deleteThread(id: number): Promise<void>;
   reassignMessages(sourceThreadId: number, targetThreadId: number): Promise<void>;
   countMessagesForThread(threadId: number): Promise<number>;
@@ -236,6 +236,7 @@ export interface IStorage {
   getLastMessageForThread(threadId: number): Promise<ChatMessage | undefined>;
   getMessage(id: number): Promise<ChatMessage | undefined>;
   deleteMessage(id: number, deletedByName: string): Promise<ChatMessage>;
+  editMessage(id: number, body: string): Promise<ChatMessage>;
   markChatThreadsNotified(ids: number[], ts: number): Promise<void>;
   listUnnotifiedChatThreads(): Promise<ChatThread[]>;
 
@@ -723,7 +724,7 @@ export class DatabaseStorage implements IStorage {
   async getThreadByReferralId(referralId: number) {
     return db.select().from(chatThreads).where(eq(chatThreads.referralId, referralId)).get();
   }
-  async updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null; escalationSentForMessageId: number | null }>) {
+  async updateThread(id: number, patch: Partial<{ kind: string; referralId: number | null; topic: string; pendingReferralRequestedAt: number | null; pendingReferralRequestedByRole: string | null; ownerLastReadAt: number | null; adminLastReadAt: number | null; escalationSentForMessageId: number | null; archivedAt: number | null; reactivationRequestedAt: number | null }>) {
     return db.update(chatThreads).set(patch).where(eq(chatThreads.id, id)).returning().get();
   }
   async deleteThread(id: number) {
@@ -732,6 +733,7 @@ export class DatabaseStorage implements IStorage {
       db.delete(chatMessageFlags).where(inArray(chatMessageFlags.messageId, msgIds)).run();
       db.delete(chatMessageReactions).where(inArray(chatMessageReactions.messageId, msgIds)).run();
     }
+    db.delete(adminTodos).where(eq(adminTodos.threadId, id)).run();
     db.delete(chatMessages).where(eq(chatMessages.threadId, id)).run();
     db.delete(chatThreads).where(eq(chatThreads.id, id)).run();
   }
@@ -764,6 +766,13 @@ export class DatabaseStorage implements IStorage {
   }
   async getMessage(id: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.id, id)).get();
+  }
+  async editMessage(id: number, body: string) {
+    return db.update(chatMessages)
+      .set({ body, editedAt: Date.now() })
+      .where(eq(chatMessages.id, id))
+      .returning()
+      .get();
   }
   async deleteMessage(id: number, deletedByName: string) {
     return db.update(chatMessages)
@@ -831,6 +840,7 @@ export class DatabaseStorage implements IStorage {
         createdAt: chatMessages.createdAt,
         deletedAt: chatMessages.deletedAt,
         deletedByName: chatMessages.deletedByName,
+        editedAt: chatMessages.editedAt,
         threadTopic: chatThreads.topic,
         threadKind: chatThreads.kind,
       })
@@ -861,6 +871,7 @@ export class DatabaseStorage implements IStorage {
         createdAt: chatMessages.createdAt,
         deletedAt: chatMessages.deletedAt,
         deletedByName: chatMessages.deletedByName,
+        editedAt: chatMessages.editedAt,
         senderPhotoUrl: users.photoUrl,
       })
       .from(chatMessages)

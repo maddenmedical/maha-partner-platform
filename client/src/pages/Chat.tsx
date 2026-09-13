@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus, ArrowLeft } from "lucide-react";
+import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus, ArrowLeft, Archive, Undo2, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId } from "@/lib/chatNav";
 import { ChatComposer } from "@/components/chat/ChatComposer";
@@ -308,6 +308,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
                   <span className="flex items-center gap-1.5 min-w-0">
                     {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
                     {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    {!!t.archivedAt && <Archive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
                     <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.topic}</span>
                   </span>
                   <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
@@ -428,6 +429,11 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
     onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
   });
 
+  const requestReactivationMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/chat/threads/${thread.id}/request-reactivation`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }),
+  });
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages?.length]);
@@ -444,6 +450,31 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
         {thread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
         <span className="text-sm font-medium truncate">{thread.topic}</span>
       </div>
+
+      {!!thread.archivedAt && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2" data-testid="banner-thread-archived">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Archive className="h-3.5 w-3.5 shrink-0" /> This chat has been archived.
+          </span>
+          {thread.reactivationRequestedAt ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-primary shrink-0" data-testid="text-reactivation-pending">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Reactivation requested
+            </span>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 shrink-0"
+              disabled={requestReactivationMutation.isPending}
+              onClick={() => requestReactivationMutation.mutate()}
+              data-testid="button-request-reactivation"
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Request reactivation
+            </Button>
+          )}
+        </div>
+      )}
 
       <ReferralLinkPanel
         thread={thread}

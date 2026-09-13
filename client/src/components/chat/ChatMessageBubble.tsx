@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2 } from "lucide-react";
+import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X } from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { mentionTokenRegex } from "@/lib/chatMentions";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -65,16 +67,42 @@ interface ChatMessageBubbleProps {
   isAdmin?: boolean;
   onCreateTodo?: (messageId: number) => void;
   onDelete?: (messageId: number) => void;
+  // Admin editing their OWN message only -- the caller (AdminChatInbox) is
+  // responsible for only wiring this up when isMe && isAdmin, since the
+  // backend also rejects edits to anyone else's message.
+  onEdit?: (messageId: number, body: string) => Promise<unknown> | void;
   // Jumps the viewer to a different thread when they click an @-mention
   // chip inside this message (see chatMentions.ts). Omit to render chips
   // as plain inert labels.
   onNavigateToThread?: (threadId: number) => void;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onNavigateToThread }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread }: ChatMessageBubbleProps) {
   const { toast } = useToast();
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(m.body || "");
+  const [saving, setSaving] = useState(false);
   const attachmentSrc = m.attachmentUrl ? `${API_BASE}${m.attachmentUrl}` : null;
   const isDeleted = !!m.deletedAt;
+
+  function startEdit() {
+    setEditValue(m.body || "");
+    setIsEditing(true);
+  }
+
+  async function saveEdit() {
+    const trimmed = editValue.trim();
+    if (!trimmed || !onEdit) return;
+    setSaving(true);
+    try {
+      await onEdit(m.id, trimmed);
+      setIsEditing(false);
+    } catch (e: any) {
+      toast({ title: "Could not save edit", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function handleOpenAttachment() {
     if (!m.attachmentUrl) return;
@@ -169,8 +197,53 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               <span className="truncate text-xs">{m.attachmentName || "Document"}</span>
             </button>
           )}
-          {m.body && (
-            <span className="whitespace-pre-wrap break-words">{renderMessageBody(m.body, onNavigateToThread)}</span>
+          {isEditing ? (
+            <div className="flex flex-col gap-1.5 min-w-[200px]">
+              <Textarea
+                autoFocus
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    saveEdit();
+                  } else if (e.key === "Escape") {
+                    setIsEditing(false);
+                  }
+                }}
+                rows={2}
+                className={cn("text-sm resize-none", isMe ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/60" : "bg-background")}
+                data-testid={`textarea-edit-message-${m.id}`}
+              />
+              <div className="flex items-center gap-1.5 self-end">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className={cn("rounded-md p-1 hover-elevate active-elevate-2", isMe ? "text-primary-foreground/80" : "text-muted-foreground")}
+                  aria-label="Cancel edit"
+                  data-testid={`button-cancel-edit-${m.id}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEdit}
+                  disabled={saving || !editValue.trim()}
+                  className={cn("rounded-md p-1 hover-elevate active-elevate-2 disabled:opacity-50", isMe ? "text-primary-foreground/80" : "text-muted-foreground")}
+                  aria-label="Save edit"
+                  data-testid={`button-save-edit-${m.id}`}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            m.body && (
+              <span className="whitespace-pre-wrap break-words">
+                {renderMessageBody(m.body, onNavigateToThread)}
+                {!!m.editedAt && <span className={cn("text-xs italic ml-1", isMe ? "text-primary-foreground/70" : "text-muted-foreground")}>(edited)</span>}
+              </span>
+            )
           )}
         </div>
         {isMe && <ReactionTrigger messageId={m.id} onReact={onReact} order="after" />}
@@ -186,6 +259,18 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         >
           <Star className={cn("h-3.5 w-3.5", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
         </button>
+        {isAdmin && isMe && onEdit && !isEditing && (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+            data-testid={`button-edit-message-${m.id}`}
+            aria-label="Edit message"
+            title="Edit message"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
         {isAdmin && onCreateTodo && (
           <button
             type="button"
