@@ -2569,5 +2569,47 @@ export async function registerRoutes(
     }
   });
 
+  // Temporary cross-deployment case-discussion sync helper: lets a single
+  // event added on one deployment (pplx.app or Render) get mirrored onto
+  // the other, since each keeps its own SQLite file. Token/admin gated,
+  // like the transfer routes above. Insert is idempotent by (topic,
+  // scheduledAt) so re-running never duplicates. Safe to remove once both
+  // deployments' event lists are confirmed in sync.
+  app.get("/api/admin/backups/case-discussions-diag", requireAdminOrBackupToken, async (_req, res) => {
+    try {
+      const rows = sqliteDb
+        .prepare("SELECT id, topic, presenter_name, scheduled_at, zoom_link, notes FROM case_discussions ORDER BY scheduled_at ASC")
+        .all();
+      res.json({ rows });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || String(err) });
+    }
+  });
+
+  app.post("/api/admin/backups/case-discussions-sync", requireAdminOrBackupToken, async (req, res) => {
+    try {
+      const { topic, presenterName, scheduledAt, zoomLink, notes } = req.body || {};
+      if (!topic || !scheduledAt || !zoomLink) {
+        return res.status(400).json({ message: "topic, scheduledAt and zoomLink are required" });
+      }
+      const existing = sqliteDb
+        .prepare("SELECT id FROM case_discussions WHERE topic = ? AND scheduled_at = ?")
+        .get(topic, scheduledAt);
+      if (existing) {
+        return res.json({ status: "already_present", existing });
+      }
+      const created = await storage.createCaseDiscussion({
+        topic,
+        presenterName: presenterName ?? null,
+        scheduledAt,
+        zoomLink,
+        notes: notes ?? null,
+      } as any);
+      res.json({ status: "created", created });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || String(err) });
+    }
+  });
+
   return httpServer;
 }
