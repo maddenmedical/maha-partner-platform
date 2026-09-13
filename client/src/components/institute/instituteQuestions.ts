@@ -11,7 +11,6 @@ export type Question =
   | { id: string; type: "scale"; label: string; helper?: string; min: number; max: number; minLabel: string; maxLabel: string };
 
 export const MEDICAL_QUESTIONS: Question[] = [
-  { id: "fullName", type: "text", label: "Full name" },
   {
     id: "degrees",
     type: "text",
@@ -81,7 +80,6 @@ export const DENTAL_QUESTIONS: Question[] = [
       "Combi-Package of all 4 modules",
     ],
   },
-  { id: "fullName", type: "text", label: "Full name" },
   { id: "degrees", type: "text", label: "Degrees", helper: "e.g. DDS, DMD, BDS, BDent, Dr. med. dent" },
   { id: "country", type: "text", label: "Country of practice" },
   {
