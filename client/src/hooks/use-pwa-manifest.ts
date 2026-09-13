@@ -8,11 +8,21 @@ import { useEffect } from "react";
 // role lets each role install with its own icon — MAHA yellow for
 // partners/students, the existing beige mark for admins — without touching
 // routes, scope, or anything else about how the app works.
+//
+// Phase 2 of the trick: a direct install link (?app=admin / ?app=partner,
+// e.g. sent to a partner before they've ever logged in) takes priority over
+// the signed-in role. This keeps the icon stable and correct even for a
+// signed-out visitor — phase 1 is the blocking inline script in
+// client/index.html that does the same swap before this hook (or any JS
+// bundle) even runs, so the browser never has a chance to read the wrong
+// manifest for its install prompt.
 export function usePwaManifest(isAdmin: boolean) {
   useEffect(() => {
-    const manifestHref = isAdmin ? "/manifest-admin.json" : "/manifest.json";
-    const touchIconHref = isAdmin ? "/icon-192-admin.png" : "/icon-192.png";
-    const appTitle = isAdmin ? "MAHA Admin" : "MAHA";
+    const appParam = new URLSearchParams(window.location.search).get("app");
+    const admin = appParam === "admin" ? true : appParam === "partner" ? false : isAdmin;
+    const manifestHref = admin ? "/manifest-admin.json" : "/manifest.json";
+    const touchIconHref = admin ? "/icon-192-admin.png" : "/icon-192.png";
+    const appTitle = admin ? "MAHA Admin" : "MAHA";
 
     const manifestLink = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
     if (manifestLink && manifestLink.getAttribute("href") !== manifestHref) {
