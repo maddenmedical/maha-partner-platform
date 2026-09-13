@@ -814,10 +814,20 @@ export async function registerRoutes(
   });
 
   // ---------- ADMIN: REFERRALS ----------
-  app.get("/api/admin/referrals", requireAuth, requireRole("admin"), async (_req, res) => {
+  // `?archived=true` returns only archived referrals, `?archived=all` returns
+  // both. Default (omitted / anything else) returns only active referrals so
+  // the main inbox and sidebar unread badge naturally exclude archived rows.
+  app.get("/api/admin/referrals", requireAuth, requireRole("admin"), async (req, res) => {
     const rows = await storage.listAllReferrals();
+    const scope = typeof req.query.archived === "string" ? req.query.archived : "false";
+    const filtered = rows.filter((r) => {
+      const isArchived = r.archivedAt != null;
+      if (scope === "all") return true;
+      if (scope === "true") return isArchived;
+      return !isArchived;
+    });
     const withPartner = await Promise.all(
-      rows.map(async (r) => {
+      filtered.map(async (r) => {
         const partner = await storage.getUser(r.partnerId);
         const thread = await storage.getThreadByReferralId(r.id);
         return { ...r, partnerName: partner?.name, partnerEmail: partner?.email, partnerPhone: partner?.phone, chatThreadId: thread?.id ?? null };
@@ -831,6 +841,28 @@ export async function registerRoutes(
     const updated = await storage.updateReferralStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
     res.json(updated);
+  });
+
+  // Admin-only, reversible: hide a referral from the default admin list and
+  // the "New" sidebar badge without touching the row or its linked patient
+  // chat. Partner-side "My referrals" is intentionally unaffected -- the
+  // submitting partner still sees their referral regardless of archive state.
+  app.patch("/api/admin/referrals/:id/archive", requireAuth, requireRole("admin"), async (req, res) => {
+    const archived = !!req.body.archived;
+    const updated = await storage.setReferralArchived(Number(req.params.id), archived);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  // Admin-only, destructive: permanently removes the referral row. Any
+  // linked patient chat thread is kept but unlinked (referralId cleared,
+  // kind reset to "general"), preserving the conversation history. The
+  // frontend confirms with the admin before calling this.
+  app.delete("/api/admin/referrals/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const referral = await storage.getReferral(Number(req.params.id));
+    if (!referral) return res.status(404).json({ message: "Not found" });
+    await storage.deleteReferral(referral.id);
+    res.json({ ok: true });
   });
 
   // ---------- SHOP: PRODUCTS ----------
