@@ -125,6 +125,19 @@ export const changePasswordSchema = z.object({
 });
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
+// Self-service "forgot password" flow -- request an emailed reset link, then
+// submit the token + new password from that link.
+export const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
 // Self-service profile editing -- every field optional so a user can update
 // just the ones they touched. Mirrors registerSchema's validation rules for
 // any field that is present.

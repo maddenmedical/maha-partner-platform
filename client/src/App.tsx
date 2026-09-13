@@ -12,6 +12,7 @@ import { Loader2 } from "lucide-react";
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
 import ForgotPassword from "@/pages/auth/ForgotPassword";
+import ResetPassword from "@/pages/auth/ResetPassword";
 import Install from "@/pages/Install";
 import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPage";
 
@@ -239,10 +240,11 @@ function App() {
                 <Route path="/install/:platform" component={Install} />
                 <Route path="/install" component={Install} />
                 {/* Reachable regardless of auth/bootstrap state — this link is on the
-                    login page and must work even for a signed-out visitor. There is no
-                    /reset-password route: password resets are admin-initiated only, see
-                    AdminPartners — no self-service reset-link email is sent. */}
+                    login page and must work even for a signed-out visitor. */}
                 <Route path="/forgot-password" component={ForgotPassword} />
+                {/* Reachable regardless of auth/bootstrap state — linked from the emailed
+                    password reset link, opened by a signed-out visitor. */}
+                <Route path="/reset-password" component={ResetPassword} />
                 {/* Reachable regardless of auth/bootstrap state — linked from Login,
                     Register, and Account for both signed-out and signed-in visitors. */}
                 <Route path="/legal/privacy" component={PrivacyPolicyPage} />

@@ -117,6 +117,25 @@ export function buildRegistrationEmailHtml(r: RegistrationEmailInput): string {
   </div>`;
 }
 
+export interface PasswordResetEmailInput {
+  fullName: string;
+  resetUrl: string;
+}
+
+export function buildPasswordResetEmailHtml(r: PasswordResetEmailInput): string {
+  const btn = (href: string, label: string) =>
+    `<a href="${href}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#ffbf42;color:#111;font-weight:600;text-decoration:none;font-size:14px;">${label}</a>`;
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
+    <h2 style="color:#111;">Reset your password</h2>
+    <p style="color:#444;font-size:14px;">Hi ${escapeHtml(r.fullName)}, we received a request to reset your MAHA Partner Platform password. Click below to choose a new one. This link expires in 1 hour and can only be used once.</p>
+    <div style="margin:24px 0;">
+      ${btn(r.resetUrl, "Reset password")}
+    </div>
+    <p style="font-size:12px;color:#999;">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+  </div>`;
+}
+
 export interface DecisionEmailInput {
   fullName: string;
   role: string;
