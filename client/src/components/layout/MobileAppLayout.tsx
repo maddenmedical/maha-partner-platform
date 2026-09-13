@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
@@ -28,16 +28,30 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/chat/threads"], refetchInterval: 15000 });
   const hasUnreadChat = !!chatThreads?.some((t) => t.unread);
 
-  // Sub-pages reachable from Home (e.g. /institute, /account) aren't in the
-  // bottom tab bar, so the only way back is a real "previous page" affordance
-  // in the top-left corner — not a "go to home" shortcut.
-  const isSubPage = !tabs.some((t) => location === t.href || (t.href !== "/" && location.startsWith(t.href)));
+  // Track an in-app navigation stack (not just sub-pages) so the back arrow
+  // shows whenever there's a real "previous page" to return to — including
+  // between tab pages (e.g. Refer -> Shop) — and hides only when the current
+  // page is the first one visited this session (nothing to go back to).
+  const [stack, setStack] = useState<string[]>([location]);
+  useEffect(() => {
+    setStack((prev) => {
+      const current = prev[prev.length - 1];
+      if (location === current) return prev;
+      const previous = prev[prev.length - 2];
+      if (previous !== undefined && previous === location) {
+        // Back navigation (browser back or our own button) — pop the stack.
+        return prev.slice(0, -1);
+      }
+      return [...prev, location];
+    });
+  }, [location]);
+  const canGoBack = stack.length > 1;
 
   return (
     <div className="h-dvh flex flex-col bg-background overflow-hidden">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-2 min-w-0">
-          {isSubPage ? (
+          {canGoBack ? (
             <button
               type="button"
               onClick={() => window.history.back()}
