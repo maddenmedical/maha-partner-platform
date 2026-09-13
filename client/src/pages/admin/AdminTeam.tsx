@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { UserAvatar } from "@/components/UserAvatar";
+import { resizeImageToDataUrl } from "@/lib/imageResize";
 import { Users, Plus, Loader2, Database, CheckCircle2, AlertCircle, RefreshCw, Pencil } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -27,7 +28,10 @@ export default function AdminTeam() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
   const [editTarget, setEditTarget] = useState<User | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "" });
+  const [editForm, setEditForm] = useState<{ name: string; email: string; phone: string; photoUrl: string | null }>({ name: "", email: "", phone: "", photoUrl: null });
+  const [photoError, setPhotoError] = useState("");
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const { data: backupStatus, isLoading: backupLoading } = useQuery<BackupStatus>({
     queryKey: ["/api/admin/backups/status"],
@@ -65,7 +69,7 @@ export default function AdminTeam() {
   });
 
   const editMutation = useMutation({
-    mutationFn: async ({ id, patch }: { id: number; patch: { name?: string; email?: string; phone?: string } }) => {
+    mutationFn: async ({ id, patch }: { id: number; patch: { name?: string; email?: string; phone?: string; photoUrl?: string | null } }) => {
       const res = await apiRequest("PATCH", `/api/admin/users/${id}/profile`, patch);
       return res.json();
     },
@@ -82,8 +86,28 @@ export default function AdminTeam() {
   });
 
   function openEdit(u: User) {
-    setEditForm({ name: u.name, email: u.email, phone: u.phone || "" });
+    setPhotoError("");
+    setEditForm({ name: u.name, email: u.email, phone: u.phone || "", photoUrl: u.photoUrl || null });
     setEditTarget(u);
+  }
+
+  // Staged locally (like name/email/phone) rather than uploaded immediately --
+  // it only takes effect when the admin presses Save, same as the rest of
+  // this dialog's fields.
+  async function handleEditPhotoSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setPhotoError("");
+    setUploadingPhoto(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file);
+      setEditForm((f) => ({ ...f, photoUrl: dataUrl }));
+    } catch (err: any) {
+      setPhotoError(err.message || "Could not process that photo");
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   return (
@@ -218,6 +242,44 @@ export default function AdminTeam() {
         <DialogContent data-testid="dialog-edit-admin">
           <DialogHeader><DialogTitle>Edit contact details</DialogTitle></DialogHeader>
           <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <UserAvatar photoUrl={editForm.photoUrl} name={editForm.name || editTarget?.name || ""} size="lg" />
+              <div className="flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={uploadingPhoto}
+                    onClick={() => photoInputRef.current?.click()}
+                    data-testid="button-edit-admin-photo"
+                  >
+                    {uploadingPhoto && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                    {editForm.photoUrl ? "Change photo" : "Upload photo"}
+                  </Button>
+                  {editForm.photoUrl && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditForm((f) => ({ ...f, photoUrl: null }))}
+                      data-testid="button-remove-admin-photo"
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                {photoError && <p className="text-xs text-destructive">{photoError}</p>}
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleEditPhotoSelect}
+                  data-testid="input-edit-admin-photo-file"
+                />
+              </div>
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="e-a-name">Name</Label>
               <Input id="e-a-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} data-testid="input-edit-admin-name" />
@@ -235,7 +297,7 @@ export default function AdminTeam() {
             <Button
               onClick={() => {
                 if (!editTarget) return;
-                editMutation.mutate({ id: editTarget.id, patch: { name: editForm.name, email: editForm.email, phone: editForm.phone } });
+                editMutation.mutate({ id: editTarget.id, patch: { name: editForm.name, email: editForm.email, phone: editForm.phone, photoUrl: editForm.photoUrl } });
               }}
               disabled={editMutation.isPending || !editForm.name || !editForm.email}
               data-testid="button-save-edit-admin"

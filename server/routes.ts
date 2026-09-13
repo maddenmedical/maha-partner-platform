@@ -1548,8 +1548,8 @@ export async function registerRoutes(
 
   // Admin-initiated edit of a user's core contact details -- works for ANY
   // account, including other admins (not just partners/students). Scope is
-  // deliberately limited to name/email/phone; role, status, and password
-  // changes each go through their own dedicated endpoints above.
+  // deliberately limited to name/email/phone/photo; role, status, and
+  // password changes each go through their own dedicated endpoints above.
   app.patch("/api/admin/users/:id/profile", requireAuth, requireRole("admin"), async (req, res) => {
     const parsed = adminEditUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });

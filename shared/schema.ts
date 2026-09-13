@@ -157,13 +157,22 @@ export const updateProfileSchema = z.object({
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
 // Admin-initiated edit of another user's core contact details -- deliberately
-// narrower than updateProfileSchema. Scope is intentionally limited to name,
-// email, and phone; role changes, status changes, and password resets each
-// have their own dedicated endpoints already.
+// narrower than updateProfileSchema. Scope is name, email, phone, and photo;
+// role changes, status changes, and password resets each have their own
+// dedicated endpoints already.
 export const adminEditUserSchema = z.object({
   name: z.string().min(1).optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
+  // Same client-resized (~256px) JPEG data URL contract as
+  // updateProfileSchema's photoUrl -- lets an admin set or clear a photo on
+  // someone else's behalf (e.g. a partner who can't do it themselves).
+  photoUrl: z
+    .string()
+    .max(500_000, "Image is too large")
+    .refine((v) => v.startsWith("data:image/"), "Invalid image data")
+    .nullable()
+    .optional(),
 });
 export type AdminEditUserInput = z.infer<typeof adminEditUserSchema>;
 
