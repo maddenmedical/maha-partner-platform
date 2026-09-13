@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
+import { UserAvatar } from "@/components/UserAvatar";
 import { useToast } from "@/hooks/use-toast";
 import { openAuthedFile } from "@/lib/fileAccess";
 import {
@@ -180,7 +181,9 @@ export default function AdminPartners() {
             <Card key={u.id} data-testid={`card-partner-${u.id}`}>
               <CardContent className="p-4 flex flex-col gap-3">
                 <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex items-start gap-3">
+                    <UserAvatar photoUrl={u.photoUrl} name={u.name} />
+                    <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium" data-testid={`text-name-${u.id}`}>{u.name}</p>
                       <StatusBadge status={u.status} />
@@ -200,6 +203,7 @@ export default function AdminPartners() {
                     <p className="text-xs text-muted-foreground/70 mt-0.5">
                       Registered {format(new Date(u.createdAt), "MMM d, yyyy")}
                     </p>
+                  </div>
                   </div>
                   <div className="flex flex-col sm:items-end gap-2 shrink-0 w-full sm:w-auto">
                     <Button

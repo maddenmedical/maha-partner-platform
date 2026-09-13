@@ -21,6 +21,7 @@ export type AuthUser = {
   profession: string | null;
   homepageUrl: string | null;
   degreeFileUrl: string | null;
+  photoUrl: string | null;
   city: string | null;
   address: string | null;
   country: string | null;

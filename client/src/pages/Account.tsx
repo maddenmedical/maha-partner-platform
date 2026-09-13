@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
+import { UserAvatar } from "@/components/UserAvatar";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
-import { ScanFace, Trash2, Loader2, Smartphone, KeyRound, AlertCircle, UserCog, Upload, FileText } from "lucide-react";
+import { resizeImageToDataUrl } from "@/lib/imageResize";
+import { ScanFace, Trash2, Loader2, Smartphone, KeyRound, AlertCircle, UserCog, Upload, FileText, Camera } from "lucide-react";
 import { format } from "date-fns";
 import {
   browserSupportsWebAuthn, registerPasskey, deletePasskey, type WebauthnCredentialSummary,
@@ -56,6 +58,10 @@ export default function Account() {
   const [profileError, setProfileError] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState("");
+
   // Seed the editable form from the logged-in user once per session (not on
   // every render) so in-progress edits survive unrelated auth-context updates.
   useEffect(() => {
@@ -81,6 +87,44 @@ export default function Account() {
 
   function updateField<K extends keyof ProfileFormState>(key: K, value: string) {
     setProfileForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Uploads immediately on selection (rather than waiting for the profile
+  // form's Save button) so it behaves like a normal avatar picker and takes
+  // effect right away in chat and admin lists.
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setPhotoError("");
+    setUploadingPhoto(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file);
+      const res = await apiRequest("PATCH", "/api/auth/profile", { photoUrl: dataUrl });
+      const data = await res.json();
+      updateUser(data.user);
+      queryClient.invalidateQueries();
+      toast({ title: "Photo updated" });
+    } catch (err: any) {
+      setPhotoError(err.message || "Could not upload that photo");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  async function handleRemovePhoto() {
+    setPhotoError("");
+    setUploadingPhoto(true);
+    try {
+      const res = await apiRequest("PATCH", "/api/auth/profile", { photoUrl: null });
+      const data = await res.json();
+      updateUser(data.user);
+      queryClient.invalidateQueries();
+    } catch (err: any) {
+      setPhotoError(err.message || "Could not remove photo");
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   async function handleSaveProfile(e: React.FormEvent) {
@@ -196,6 +240,51 @@ export default function Account() {
               <p className="text-sm text-muted-foreground mt-0.5">
                 Update your name, contact details, and account info.
               </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <UserAvatar photoUrl={user?.photoUrl} name={user?.name || ""} size="lg" />
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={uploadingPhoto}
+                  onClick={() => photoInputRef.current?.click()}
+                  data-testid="button-upload-photo"
+                >
+                  {uploadingPhoto ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  {user?.photoUrl ? "Change photo" : "Upload photo"}
+                </Button>
+                {user?.photoUrl && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={uploadingPhoto}
+                    onClick={handleRemovePhoto}
+                    data-testid="button-remove-photo"
+                  >
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">Shown next to your messages in chat{user?.role === "admin" ? " and in the partner list" : ""}.</p>
+              {photoError && <p className="text-xs text-destructive" data-testid="text-photo-error">{photoError}</p>}
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handlePhotoChange}
+                data-testid="input-photo-file"
+              />
             </div>
           </div>
 

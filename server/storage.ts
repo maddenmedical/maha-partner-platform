@@ -232,7 +232,7 @@ export interface IStorage {
   reassignMessages(sourceThreadId: number, targetThreadId: number): Promise<void>;
   countMessagesForThread(threadId: number): Promise<number>;
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
-  listMessagesForThread(threadId: number): Promise<ChatMessage[]>;
+  listMessagesForThread(threadId: number): Promise<(ChatMessage & { senderPhotoUrl: string | null })[]>;
   getLastMessageForThread(threadId: number): Promise<ChatMessage | undefined>;
   getMessage(id: number): Promise<ChatMessage | undefined>;
   deleteMessage(id: number, deletedByName: string): Promise<ChatMessage>;
@@ -842,8 +842,33 @@ export class DatabaseStorage implements IStorage {
       .all();
     return rows;
   }
+  // Left-joins the sender's *current* photoUrl (rather than denormalizing a
+  // photo onto each message row) so avatars in chat always reflect the
+  // sender's latest uploaded photo, including for messages sent before they
+  // had one set.
   async listMessagesForThread(threadId: number) {
-    return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(chatMessages.createdAt).all();
+    const rows = db
+      .select({
+        id: chatMessages.id,
+        threadId: chatMessages.threadId,
+        senderId: chatMessages.senderId,
+        senderRole: chatMessages.senderRole,
+        senderName: chatMessages.senderName,
+        body: chatMessages.body,
+        attachmentUrl: chatMessages.attachmentUrl,
+        attachmentType: chatMessages.attachmentType,
+        attachmentName: chatMessages.attachmentName,
+        createdAt: chatMessages.createdAt,
+        deletedAt: chatMessages.deletedAt,
+        deletedByName: chatMessages.deletedByName,
+        senderPhotoUrl: users.photoUrl,
+      })
+      .from(chatMessages)
+      .leftJoin(users, eq(chatMessages.senderId, users.id))
+      .where(eq(chatMessages.threadId, threadId))
+      .orderBy(chatMessages.createdAt)
+      .all();
+    return rows;
   }
   async getLastMessageForThread(threadId: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(desc(chatMessages.createdAt)).limit(1).get();

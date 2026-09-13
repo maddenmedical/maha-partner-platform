@@ -128,6 +128,7 @@ type PublicUser = {
   profession: string | null;
   homepageUrl: string | null;
   degreeFileUrl: string | null;
+  photoUrl: string | null;
   city: string | null;
   address: string | null;
   country: string | null;
@@ -158,6 +159,7 @@ function toPublicUser(user: {
   profession?: string | null;
   homepageUrl?: string | null;
   degreeFileUrl?: string | null;
+  photoUrl?: string | null;
   city?: string | null;
   address?: string | null;
   country?: string | null;
@@ -182,6 +184,7 @@ function toPublicUser(user: {
     profession: user.profession ?? null,
     homepageUrl: user.homepageUrl ?? null,
     degreeFileUrl: user.degreeFileUrl ?? null,
+    photoUrl: user.photoUrl ?? null,
     city: user.city ?? null,
     address: user.address ?? null,
     country: user.country ?? null,

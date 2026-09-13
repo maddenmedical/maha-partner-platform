@@ -6,6 +6,7 @@ import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, 
 import { EmojiPicker } from "./EmojiPicker";
 import { useToast } from "@/hooks/use-toast";
 import { mentionTokenRegex } from "@/lib/chatMentions";
+import { UserAvatar } from "@/components/UserAvatar";
 import type { ChatMessage } from "@shared/schema";
 
 // Splits a message body around @{{id|label}} mention tokens (see
@@ -50,6 +51,7 @@ export interface Reaction {
 export interface ChatMessageWithMeta extends ChatMessage {
   flaggedByMe?: boolean;
   reactions?: Reaction[];
+  senderPhotoUrl?: string | null;
 }
 
 interface ChatMessageBubbleProps {
@@ -113,6 +115,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
       data-testid={`message-${m.id}`}
     >
       <div className="flex items-start gap-1">
+        {!isMe && <UserAvatar photoUrl={m.senderPhotoUrl} name={m.senderName} size="sm" className="mt-1" />}
         {!isMe && <ReactionTrigger messageId={m.id} onReact={onReact} order="before" />}
         <div
           className={cn(

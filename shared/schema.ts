@@ -25,6 +25,16 @@ export const users = sqliteTable("users", {
   profession: text("profession"),
   homepageUrl: text("homepage_url"),
   degreeFileUrl: text("degree_file_url"),
+  // Small pre-resized (~256px) JPEG stored inline as a base64 data URL —
+  // deliberately NOT routed through the Drive-backed upload/streaming path
+  // used for documents (see /api/files/:driveFileId), because that path
+  // fetches from Drive live on every GET with no caching. An avatar is
+  // rendered on every chat message and every admin list row, so a live
+  // Drive round-trip per render would be far too slow. Storing the data
+  // URL directly means it rides along for free in the same JSON response
+  // as the user/message it belongs to, and still gets backed up to Drive
+  // as part of the regular SQLite file backup.
+  photoUrl: text("photo_url"),
   installBannerDismissedAt: integer("install_banner_dismissed_at"),
   // Mirrors the fields collected on the WordPress partner.maha.clinic
   // registration form (partner-registration page), so the Portal's own
@@ -134,6 +144,15 @@ export const updateProfileSchema = z.object({
   profession: z.string().optional(),
   homepageUrl: z.string().optional(),
   degreeFileUrl: z.string().optional(),
+  // A base64 data URL of a client-resized (~256px) JPEG, or null to clear
+  // the photo. Size-capped well above what a resized avatar should ever
+  // produce, just to keep an oversized upload from bloating the DB.
+  photoUrl: z
+    .string()
+    .max(500_000, "Image is too large")
+    .refine((v) => v.startsWith("data:image/"), "Invalid image data")
+    .nullable()
+    .optional(),
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 

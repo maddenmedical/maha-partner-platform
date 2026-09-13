@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Plus, Loader2, Shield, Database, CheckCircle2, AlertCircle, RefreshCw, Pencil } from "lucide-react";
+import { UserAvatar } from "@/components/UserAvatar";
+import { Users, Plus, Loader2, Database, CheckCircle2, AlertCircle, RefreshCw, Pencil } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 type BackupStatus = {
@@ -101,9 +102,7 @@ export default function AdminTeam() {
           {team?.map((t) => (
             <Card key={t.id} data-testid={`card-admin-${t.id}`}>
               <CardContent className="p-4 flex items-center gap-3">
-                <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <Shield className="h-4 w-4 text-primary" />
-                </div>
+                <UserAvatar photoUrl={t.photoUrl} name={t.name} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{t.name}</p>
                   <p className="text-xs text-muted-foreground">{t.email}{t.phone ? ` · ${t.phone}` : ""}</p>
