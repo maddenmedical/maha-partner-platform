@@ -28,6 +28,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
+import { UserAvatar } from "@/components/UserAvatar";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
@@ -40,6 +41,7 @@ interface ThreadRow {
   topic?: string;
   userName?: string;
   userEmail?: string;
+  userPhotoUrl?: string | null;
   lastMessage?: string;
   lastMessageAt?: number;
   messageCount: number;
@@ -156,17 +158,20 @@ export default function AdminChatInbox() {
               data-testid={`button-thread-${t.id}`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 min-w-0">
-                  {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
-                  {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                  <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
+                <span className="flex items-center gap-2 min-w-0">
+                  <UserAvatar photoUrl={t.userPhotoUrl} name={t.userName || "?"} size="sm" className="shrink-0" />
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
+                    {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
+                  </span>
                 </span>
                 <Badge variant="outline" className="text-xs capitalize no-default-hover-elevate no-default-active-elevate shrink-0">{t.userRole}</Badge>
               </div>
-              {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5">{t.topic}</span>}
-              <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
+              {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5 ml-8">{t.topic}</span>}
+              <p className={cn("text-xs truncate mt-0.5 ml-8", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
               {t.archivedAt && t.reactivationRequestedAt && (
-                <span className="mt-1 flex items-center gap-1 text-xs font-medium text-primary" data-testid={`badge-reactivation-requested-${t.id}`}>
+                <span className="mt-1 ml-8 flex items-center gap-1 text-xs font-medium text-primary" data-testid={`badge-reactivation-requested-${t.id}`}>
                   <Undo2 className="h-3 w-3" /> Reopen requested
                 </span>
               )}
@@ -189,9 +194,12 @@ export default function AdminChatInbox() {
         <div className="sm:hidden fixed inset-0 z-20 bg-background flex flex-col">
           <div className="flex items-center gap-2 p-3 border-b border-border">
             <Button variant="ghost" size="sm" onClick={() => setSelectedThread(null)} data-testid="button-close-thread-mobile">Back</Button>
-            <span className="flex items-center gap-1.5 text-sm font-medium truncate">
-              {selectedThread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-              {selectedThread.userName}
+            <span className="flex items-center gap-2 text-sm font-medium truncate">
+              <UserAvatar photoUrl={selectedThread.userPhotoUrl} name={selectedThread.userName || "?"} size="sm" />
+              <span className="flex items-center gap-1.5 min-w-0">
+                {selectedThread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
+                <span className="truncate">{selectedThread.userName}</span>
+              </span>
             </span>
           </div>
           <ThreadDetail thread={selectedThread} allThreads={threads} onSelectSurvivor={(id) => setPendingSelectId(id)} onCloseThread={() => setSelectedThread(null)} />

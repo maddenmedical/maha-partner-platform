@@ -2026,6 +2026,7 @@ export async function registerRoutes(
           ...t,
           userName: user?.name,
           userEmail: user?.email,
+          userPhotoUrl: user?.photoUrl,
           lastMessage: last?.body,
           lastMessageAt: last?.createdAt,
           messageCount: messages.length,
