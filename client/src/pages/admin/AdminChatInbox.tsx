@@ -62,13 +62,37 @@ interface AdminReferralRow extends Referral {
 
 export default function AdminChatInbox() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
   const [showArchived, setShowArchived] = useState(false);
+  const [deleteThreadId, setDeleteThreadId] = useState<number | null>(null);
 
   const { data: threads, isLoading } = useQuery<ThreadRow[]>({
     queryKey: ["/api/admin/chat/threads"],
     refetchInterval: 5000,
+  });
+
+  const archiveThreadMutation = useMutation({
+    mutationFn: ({ id, archived }: { id: number; archived: boolean }) =>
+      apiRequest("PATCH", `/api/admin/chat/threads/${id}/archive`, { archived }),
+    onSuccess: (_data, { id, archived }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/chat/threads"] });
+      toast({ title: archived ? "Chat archived" : "Chat unarchived" });
+      if (archived && selectedThread?.id === id) setSelectedThread(null);
+    },
+    onError: (err: any) => toast({ title: "Could not update chat", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteThreadMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/chat/threads/${id}`),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/chat/threads"] });
+      setDeleteThreadId(null);
+      toast({ title: "Chat deleted" });
+      if (selectedThread?.id === id) setSelectedThread(null);
+    },
+    onError: (err: any) => toast({ title: "Could not delete chat", description: err.message, variant: "destructive" }),
   });
 
   const activeThreads = (threads || []).filter((t) => !t.archivedAt);
@@ -147,11 +171,19 @@ export default function AdminChatInbox() {
             .slice()
             .sort((a, b) => (b.lastMessageAt || b.createdAt) - (a.lastMessageAt || a.createdAt))
             .map((t) => (
-            <button
+            <div
               key={t.id}
+              role="button"
+              tabIndex={0}
               onClick={() => setSelectedThread(t)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setSelectedThread(t);
+                }
+              }}
               className={cn(
-                "text-left rounded-lg border p-3 hover-elevate active-elevate-2",
+                "text-left rounded-lg border p-3 hover-elevate active-elevate-2 cursor-pointer",
                 selectedThread?.id === t.id ? "border-primary bg-primary/5" : "border-card-border bg-card",
                 t.kind === "referral" && selectedThread?.id !== t.id && "border-l-2 border-l-primary"
               )}
@@ -166,7 +198,53 @@ export default function AdminChatInbox() {
                     <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
                   </span>
                 </span>
-                <Badge variant="outline" className="text-xs capitalize no-default-hover-elevate no-default-active-elevate shrink-0">{t.userRole}</Badge>
+                <span className="flex items-center gap-1 shrink-0">
+                  <Badge variant="outline" className="text-xs capitalize no-default-hover-elevate no-default-active-elevate shrink-0">{t.userRole}</Badge>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 -mr-1 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                        data-testid={`button-thread-list-menu-${t.id}`}
+                        aria-label="Chat options"
+                      >
+                        <MoreVertical className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          archiveThreadMutation.mutate({ id: t.id, archived: !t.archivedAt });
+                        }}
+                        data-testid={`menu-item-list-toggle-archive-${t.id}`}
+                      >
+                        {t.archivedAt ? (
+                          <>
+                            <ArchiveRestore className="h-4 w-4 mr-2" /> Unarchive chat
+                          </>
+                        ) : (
+                          <>
+                            <Archive className="h-4 w-4 mr-2" /> Archive chat
+                          </>
+                        )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteThreadId(t.id);
+                        }}
+                        className="text-destructive focus:text-destructive"
+                        data-testid={`menu-item-list-delete-thread-${t.id}`}
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" /> Delete chat
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </span>
               </div>
               {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5 ml-8">{t.topic}</span>}
               <p className={cn("text-xs truncate mt-0.5 ml-8", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
@@ -175,7 +253,7 @@ export default function AdminChatInbox() {
                   <Undo2 className="h-3 w-3" /> Reopen requested
                 </span>
               )}
-            </button>
+            </div>
           ))
         )}
       </div>
@@ -206,6 +284,28 @@ export default function AdminChatInbox() {
         </div>
       )}
       </div>
+
+      <AlertDialog open={deleteThreadId !== null} onOpenChange={(open) => !open && setDeleteThreadId(null)}>
+        <AlertDialogContent data-testid="dialog-delete-thread-list">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes every message in this chat, along with any linked to-dos. Unlike archiving, this cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-thread-list">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteThreadMutation.isPending}
+              onClick={() => deleteThreadId !== null && deleteThreadMutation.mutate(deleteThreadId)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-confirm-delete-thread-list"
+            >
+              Delete chat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
