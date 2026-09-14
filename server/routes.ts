@@ -25,6 +25,7 @@ import {
   insertCaseDiscussionSchema, createCommunityTopicSchema, postCommunityMessageSchema,
   communityVisibilitySchema, updateNotificationPreferenceSchema, COMMUNITY_ENABLED_KEY,
   STANDING_POINTS, STANDING_TIERS,
+  WELCOME_INTRO_TOPIC_ID_KEY, WELCOME_INTRO_REMIND_EVERY_N_VISITS, WELCOME_INTRO_MAX_REMINDERS,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
@@ -2804,6 +2805,146 @@ export async function registerRoutes(
         const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
         res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
       } catch {
+        res.status(502).json({ message: "File storage upload failed" });
+      }
+    },
+  );
+
+  // ---------- WELCOME/INTRO FLOW ----------
+  // "Fully skippable, remind every 5th Community entry, 3 reminders total,
+  // then leave a persistent manual entry point. Posted AS the new member
+  // themselves. Video via file upload (not in-browser recording)."
+  // Scoped to partner/student -- admins are established staff, not "new
+  // members" being welcomed into the Community.
+
+  // Called once per Community page visit. Bumps the visit counter and tells
+  // the client whether to pop the reminder modal this time. Never touches
+  // anything once welcomeIntroPostedAt is set -- a member who already
+  // posted never gets counted or reminded again.
+  app.post(
+    "/api/community/welcome-intro/visit",
+    requireAuth,
+    requireRole("partner", "student"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const fullUser = await storage.getUser(req.user!.id);
+      if (!fullUser) return res.status(404).json({ message: "Not found" });
+      if (fullUser.welcomeIntroPostedAt) {
+        return res.json({
+          communityVisitCount: fullUser.communityVisitCount,
+          welcomeIntroReminderCount: fullUser.welcomeIntroReminderCount,
+          welcomeIntroPostedAt: fullUser.welcomeIntroPostedAt,
+          shouldShowReminder: false,
+        });
+      }
+      const nextVisitCount = fullUser.communityVisitCount + 1;
+      const canStillRemind = fullUser.welcomeIntroReminderCount < WELCOME_INTRO_MAX_REMINDERS;
+      const shouldShowReminder = canStillRemind && nextVisitCount % WELCOME_INTRO_REMIND_EVERY_N_VISITS === 0;
+      const nextReminderCount = shouldShowReminder ? fullUser.welcomeIntroReminderCount + 1 : fullUser.welcomeIntroReminderCount;
+      await storage.updateUserProfile(fullUser.id, {
+        communityVisitCount: nextVisitCount,
+        welcomeIntroReminderCount: nextReminderCount,
+      });
+      res.json({
+        communityVisitCount: nextVisitCount,
+        welcomeIntroReminderCount: nextReminderCount,
+        welcomeIntroPostedAt: null,
+        shouldShowReminder,
+      });
+    },
+  );
+
+  // Posts the member's welcome-intro video, authored AS the member, into a
+  // lazily-created shared "Introductions" topic. One-time -- once posted,
+  // welcomeIntroPostedAt is set and this route refuses a second submission.
+  app.post(
+    "/api/community/welcome-intro",
+    requireAuth,
+    requireRole("partner", "student"),
+    requireCommunityEnabled,
+    upload.single("file"),
+    async (req: AuthedRequest, res) => {
+      const fullUser = await storage.getUser(req.user!.id);
+      if (!fullUser) return res.status(404).json({ message: "Not found" });
+      if (fullUser.communityBlockedAt) {
+        return res.status(403).json({ message: "You've been restricted from posting in the Community." });
+      }
+      if (fullUser.welcomeIntroPostedAt) {
+        return res.status(409).json({ message: "You've already posted your welcome intro." });
+      }
+      if (!req.file) return res.status(400).json({ message: "No video uploaded" });
+      if (!req.file.mimetype.startsWith("video/")) {
+        return res.status(400).json({ message: "Please upload a video file" });
+      }
+      try {
+        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        await storage.createUploadedFile({
+          driveFileId,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          category: "community",
+          ownerId: req.user!.id,
+          uploadedAt: Date.now(),
+        });
+        const attachmentUrl = `/api/files/${driveFileId}`;
+        const now = Date.now();
+
+        // Lazily create the shared Introductions topic once, ever. Stored
+        // by id in appSettings so it survives a rename and is never
+        // recreated even if the setting lookup races.
+        let topic;
+        const storedTopicId = await storage.getAppSetting(WELCOME_INTRO_TOPIC_ID_KEY);
+        if (storedTopicId) topic = await storage.getCommunityTopic(Number(storedTopicId));
+        const isNewTopic = !topic;
+        if (!topic) {
+          topic = await storage.createCommunityTopic({
+            title: "👋 Introductions",
+            createdByUserId: req.user!.id,
+            createdByName: req.user!.name,
+            createdByRole: req.user!.role,
+            createdAt: now,
+            lastMessageAt: now,
+          });
+          await storage.setAppSetting(WELCOME_INTRO_TOPIC_ID_KEY, String(topic.id));
+        }
+
+        const message = await storage.createCommunityMessage({
+          topicId: topic.id,
+          senderId: req.user!.id,
+          senderRole: req.user!.role,
+          senderName: req.user!.name,
+          body: req.body.body?.trim() || "👋 Say hello!",
+          attachmentUrl,
+          attachmentType: "video",
+          attachmentName: req.file.originalname,
+          createdAt: now,
+        });
+
+        await storage.updateUserProfile(fullUser.id, { welcomeIntroPostedAt: now });
+        awardStanding(req.user!.id, "community_welcome_posted", "community", { sourceType: "community_message", sourceId: message.id }).catch(console.error);
+
+        const audience = await communityAudienceUserIds(req.user!.id);
+        notifyUsers(audience, "community", isNewTopic
+          ? {
+              genericTitle: "New Community topic",
+              genericBody: `${req.user!.name} started a new Community topic.`,
+              previewTitle: "New Community topic",
+              previewBody: `${req.user!.name} just posted a welcome video in "${topic.title}"`,
+              url: "/community",
+            }
+          : {
+              genericTitle: "New Community reply",
+              genericBody: `${req.user!.name} posted in "${topic.title}"`,
+              previewTitle: `New reply in "${topic.title}"`,
+              previewBody: `${req.user!.name} just posted their welcome video`,
+              url: "/community",
+            },
+        ).catch(console.error);
+
+        res.status(201).json({ topic, message });
+      } catch (e) {
+        console.error(e);
         res.status(502).json({ message: "File storage upload failed" });
       }
     },

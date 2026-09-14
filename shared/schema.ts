@@ -110,6 +110,18 @@ export const users = sqliteTable("users", {
   // normalized match) or set retroactively by an admin. Null means the
   // user is unpooled and uses their own standingPoints (legacy behavior).
   clinicId: integer("clinic_id"),
+  // ---- Welcome/intro flow (Community Chat onboarding) ----
+  // Counts every time this member opens the Community tab. Drives the
+  // "remind every 5th entry" cadence below -- purely a visit counter, not
+  // tied to messages posted.
+  communityVisitCount: integer("community_visit_count").notNull().default(0),
+  // How many times the auto-reminder modal has actually been shown (capped
+  // at 3 -- see WELCOME_INTRO_MAX_REMINDERS). After the cap, no more
+  // pop-ups; only the persistent manual entry point remains.
+  welcomeIntroReminderCount: integer("welcome_intro_reminder_count").notNull().default(0),
+  // Set once this member posts their welcome intro video. Null forever if
+  // they keep skipping -- the flow is fully skippable, never a hard gate.
+  welcomeIntroPostedAt: integer("welcome_intro_posted_at"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -950,6 +962,16 @@ export const appSettings = sqliteTable("app_settings", {
 });
 export type AppSetting = typeof appSettings.$inferSelect;
 export const COMMUNITY_ENABLED_KEY = "community_enabled";
+// Holds the id of the auto-created "Introductions" topic that welcome-intro
+// videos are posted into (see WELCOME_INTRO_MAX_REMINDERS below). Stored as
+// a setting rather than hardcoded so it survives the topic being renamed and
+// is only ever created once, lazily, on the first welcome-intro post.
+export const WELCOME_INTRO_TOPIC_ID_KEY = "welcome_intro_topic_id";
+// "Remind every 5th Community entry, 3 reminders total, then leave a
+// persistent manual entry point." Fully skippable -- these two constants are
+// the only thing that gate the pop-up; the manual entry point never expires.
+export const WELCOME_INTRO_REMIND_EVERY_N_VISITS = 5;
+export const WELCOME_INTRO_MAX_REMINDERS = 3;
 
 // ---------- COMMUNITY CHAT (Partner Community, admin-toggleable) ----------
 // Topic-based, forum-like discussion open to partners, students, and admins.

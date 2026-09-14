@@ -16,7 +16,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Users2, Plus, Info, MessagesSquare, Globe2, Handshake, TrendingUp, Loader2, Search, Pin } from "lucide-react";
+import { Users2, Plus, Info, MessagesSquare, Globe2, Handshake, TrendingUp, Loader2, Search, Pin, Video, PartyPopper } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
@@ -24,6 +24,7 @@ import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TierBadge } from "@/components/TierBadge";
 import { ChatCommunitySwitcher } from "@/components/ChatCommunitySwitcher";
+import { WelcomeIntroModal } from "@/components/community/WelcomeIntroModal";
 import type { CommunityTopic, CommunityMessage } from "@shared/schema";
 
 // Adapts a community message onto the shared ChatMessageBubble's expected
@@ -54,13 +55,37 @@ const PURPOSE_BULLETS = [
 ];
 
 export default function Community() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedTopic, setSelectedTopic] = useState<TopicRow | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
 
+  // ---- Welcome/intro flow: fully skippable, reminded every 5th visit (up
+  // to 3 times), plus a persistent manual entry point until posted. Only
+  // for partners/students -- admins aren't "new members" being welcomed. ----
+  const isNewMemberRole = user?.role === "partner" || user?.role === "student";
+  const [introDone, setIntroDone] = useState(false);
+  const [introBannerOpen, setIntroBannerOpen] = useState(false);
+  const [introModalOpen, setIntroModalOpen] = useState(false);
+  const introVisitFired = useRef(false);
+
+  const introVisitMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/community/welcome-intro/visit").then((r) => r.json()),
+    onSuccess: (data: { welcomeIntroPostedAt: number | null; shouldShowReminder: boolean }) => {
+      setIntroDone(!!data.welcomeIntroPostedAt);
+      if (data.shouldShowReminder) setIntroBannerOpen(true);
+    },
+  });
+
   const { data: enabledData, isLoading: enabledLoading } = useQuery<{ enabled: boolean }>({ queryKey: ["/api/community/enabled"] });
+
+  useEffect(() => {
+    if (!isNewMemberRole || !enabledData?.enabled || introVisitFired.current) return;
+    introVisitFired.current = true;
+    introVisitMutation.mutate();
+  }, [isNewMemberRole, enabledData?.enabled]);
 
   const { data: topics, isLoading } = useQuery<TopicRow[]>({
     queryKey: ["/api/community/topics"],
@@ -172,9 +197,21 @@ export default function Community() {
             </div>
           </div>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <div className="flex items-center gap-2 shrink-0">
+          {isNewMemberRole && !introDone && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setIntroModalOpen(true)}
+              data-testid="button-welcome-intro-entry"
+            >
+              <Video className="h-4 w-4" /> Introduce yourself
+            </Button>
+          )}
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-1.5 shrink-0" data-testid="button-new-topic">
+            <Button size="sm" className="gap-1.5" data-testid="button-new-topic">
               <Plus className="h-4 w-4" /> New topic
             </Button>
           </DialogTrigger>
@@ -217,7 +254,35 @@ export default function Community() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {introBannerOpen && isNewMemberRole && !introDone && (
+        <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-3 flex items-center justify-between gap-3 flex-wrap" data-testid="banner-welcome-intro">
+          <div className="flex items-center gap-2 min-w-0">
+            <PartyPopper className="h-4 w-4 text-primary shrink-0" />
+            <p className="text-sm min-w-0">
+              <span className="font-medium">Say hello to the community!</span>{" "}
+              <span className="text-muted-foreground">Post a short intro video so other partners get to know you.</span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button size="sm" variant="ghost" onClick={() => setIntroBannerOpen(false)} data-testid="button-welcome-intro-dismiss">
+              Maybe later
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setIntroBannerOpen(false);
+                setIntroModalOpen(true);
+              }}
+              data-testid="button-welcome-intro-accept"
+            >
+              Introduce yourself
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 min-h-0 gap-4">
         <div className="w-full sm:w-72 shrink-0 flex flex-col gap-2 overflow-y-auto overscroll-contain">
@@ -278,6 +343,18 @@ export default function Community() {
           </div>
         )}
       </div>
+
+      {isNewMemberRole && (
+        <WelcomeIntroModal
+          open={introModalOpen}
+          onOpenChange={setIntroModalOpen}
+          onPosted={() => {
+            setIntroDone(true);
+            setIntroBannerOpen(false);
+            queryClient.invalidateQueries({ queryKey: ["/api/community/topics"] });
+          }}
+        />
+      )}
     </div>
   );
 }
