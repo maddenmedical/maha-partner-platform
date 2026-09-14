@@ -22,6 +22,7 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TierBadge } from "@/components/TierBadge";
+import { ChatCommunitySwitcher } from "@/components/ChatCommunitySwitcher";
 import type { CommunityTopic, CommunityMessage } from "@shared/schema";
 
 // Adapts a community message onto the shared ChatMessageBubble's expected
@@ -66,6 +67,16 @@ export default function Community() {
     enabled: !!enabledData?.enabled,
   });
 
+  // Same query/key MobileAppLayout already polls for the tab-bar dot --
+  // shared cache, no extra request -- so the switcher can show a dot for
+  // Inbox even while sitting on this page.
+  const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({
+    queryKey: ["/api/chat/threads"],
+    refetchInterval: 5000,
+  });
+  const hasUnreadInbox = !!chatThreads?.some((t) => t.unread);
+  const hasUnreadCommunity = !!topics?.some((t) => t.unread);
+
   const createTopicMutation = useMutation({
     mutationFn: (payload: { title: string; body?: string }) => apiRequest("POST", "/api/community/topics", payload),
     onSuccess: async (res) => {
@@ -106,6 +117,9 @@ export default function Community() {
   if (!enabledLoading && enabledData && !enabledData.enabled) {
     return (
       <div className="p-4 max-w-5xl mx-auto">
+        <div className="mb-4">
+          <ChatCommunitySwitcher active="community" hasUnreadInbox={hasUnreadInbox} hasUnreadCommunity={false} />
+        </div>
         <EmptyState icon={Users2} title="Community isn't open yet" description="Check back soon — MAHA is preparing this space for partners." />
       </div>
     );
@@ -147,6 +161,9 @@ export default function Community() {
               </Popover>
             </h1>
             <p className="text-sm text-muted-foreground mt-1">Your global network of MAHA partners.</p>
+            <div className="mt-2">
+              <ChatCommunitySwitcher active="community" hasUnreadInbox={hasUnreadInbox} hasUnreadCommunity={hasUnreadCommunity} />
+            </div>
           </div>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>

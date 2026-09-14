@@ -23,6 +23,7 @@ import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { ReferralFormDialog } from "@/components/chat/ReferralFormDialog";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
+import { ChatCommunitySwitcher } from "@/components/ChatCommunitySwitcher";
 import type { ChatThread, Referral } from "@shared/schema";
 
 interface ThreadRow extends ChatThread {
@@ -51,6 +52,16 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   const { data: myReferrals } = useQuery<(Referral & { chatThreadId: number | null })[]>({
     queryKey: ["/api/referrals/mine"],
   });
+
+  // Same query/key MobileAppLayout already polls for the tab-bar dot --
+  // shared cache, no extra request -- so the Inbox/Community switcher can
+  // show a dot for Community even while sitting on this page.
+  const { data: communityUnread } = useQuery<{ count: number }>({
+    queryKey: ["/api/community/unread-count"],
+    refetchInterval: 15000,
+  });
+  const hasUnreadCommunity = !!communityUnread?.count;
+  const hasUnreadInbox = !!threads?.some((t) => t.unread);
 
   const createThread = useMutation({
     mutationFn: (topic: string) => apiRequest("POST", "/api/chat/threads", { topic }),
@@ -130,6 +141,9 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
           <p className="text-sm text-muted-foreground mt-1">
             Start a new chat for each topic, and jump back into past conversations any time.
           </p>
+          <div className="mt-2">
+            <ChatCommunitySwitcher active="inbox" hasUnreadInbox={hasUnreadInbox} hasUnreadCommunity={hasUnreadCommunity} />
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
         <CrossChatSearch searchUrl="/api/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="chat-search" />

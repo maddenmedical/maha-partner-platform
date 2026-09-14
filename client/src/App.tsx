@@ -18,7 +18,7 @@ import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPa
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare, CalendarClock, Users2 } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare, CalendarClock } from "lucide-react";
 
 import PartnerHome from "@/pages/partner/PartnerHome";
 import ReferPatient from "@/pages/partner/ReferPatient";
@@ -53,13 +53,15 @@ import { PushPrompt } from "@/components/PushPrompt";
 import { LegalAcknowledgmentGate } from "@/components/LegalAcknowledgmentGate";
 import { usePwaManifest } from "@/hooks/use-pwa-manifest";
 
+// Chat (private inbox) and Community (public discussion) live under one
+// bottom-nav icon now -- see ChatCommunitySwitcher, rendered inside each
+// page, for how partners/students move between the two.
 const partnerTabs: TabItem[] = [
   { href: "/", label: "Home", icon: Home, testId: "tab-home" },
   { href: "/refer", label: "Refer", icon: ClipboardList, testId: "tab-refer" },
   { href: "/shop", label: "Shop", icon: ShoppingCart, testId: "tab-shop" },
   { href: "/videos", label: "Learn", icon: GraduationCap, testId: "tab-education" },
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
-  { href: "/community", label: "Community", icon: Users2, testId: "tab-community" },
 ];
 
 // A student has everything a partner has (referrals, shop, the paid video
@@ -73,7 +75,6 @@ const studentTabs: TabItem[] = [
   { href: "/classes", label: "Classes", icon: CalendarClock, testId: "tab-classes" },
   { href: "/homework", label: "Homework", icon: FileUp, testId: "tab-homework" },
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
-  { href: "/community", label: "Community", icon: Users2, testId: "tab-community" },
 ];
 
 const ADMIN_TITLES: Record<string, string> = {
@@ -107,7 +108,11 @@ function PartnerApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
-        <Route path="/community" component={Community} />
+        <Route path="/chat/community" component={Community} />
+        {/* Community used to be its own bottom-nav tab at this URL -- kept as a
+            redirect so existing push-notification deep links and any saved
+            bookmarks still land in the right place under the merged Chat tab. */}
+        <Route path="/community"><Redirect to="/chat/community" /></Route>
         <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
@@ -135,7 +140,8 @@ function StudentApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
-        <Route path="/community" component={Community} />
+        <Route path="/chat/community" component={Community} />
+        <Route path="/community"><Redirect to="/chat/community" /></Route>
         <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
