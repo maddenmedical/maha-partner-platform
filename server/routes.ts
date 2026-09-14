@@ -34,6 +34,7 @@ import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
 import { runLegacyPartnerImport } from "./migrateLegacyPartners";
+import { runLegacyReferralImport } from "./migrateLegacyReferrals";
 import {
   buildRegistrationOptions, verifyRegistration, buildAuthenticationOptions, verifyAuthentication,
   labelFromUserAgent,
@@ -1769,6 +1770,21 @@ export async function registerRoutes(
       res.json({ ok: true, summary });
     } catch (err) {
       console.error("Legacy partner import failed:", err);
+      res.status(500).json({ message: err instanceof Error ? err.message : "Import failed" });
+    }
+  });
+
+  // One-time (safely re-runnable) import of the patient referrals already
+  // sitting in the old portal's "Patient Referral Form" before this app
+  // existed. Opens the usual dedicated referral chat and awards the usual
+  // flat referral credit per row -- see migrateLegacyReferrals.ts. Never
+  // sends any email/notification for these historical rows.
+  app.post("/api/admin/migrate-legacy-referrals", requireAuth, requireRole("admin"), async (_req, res) => {
+    try {
+      const summary = await runLegacyReferralImport();
+      res.json({ ok: true, summary });
+    } catch (err) {
+      console.error("Legacy referral import failed:", err);
       res.status(500).json({ message: err instanceof Error ? err.message : "Import failed" });
     }
   });
