@@ -517,6 +517,12 @@ export const referrals = sqliteTable("referrals", {
   // `status` — a referral can be seen but still awaiting triage). Drives
   // the sidebar unread badge so it clears once opened.
   adminSeenAt: integer("admin_seen_at"),
+  // Admin-only, reversible hide. When non-null the referral is excluded
+  // from the default admin list and "New" sidebar count, but the row
+  // (and its linked patient chat) is untouched. Partner-side visibility
+  // is intentionally unaffected -- the submitting partner still sees
+  // their referral in "My referrals" regardless of archive state.
+  archivedAt: integer("archived_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertReferralSchema = createInsertSchema(referrals).omit({
@@ -524,6 +530,7 @@ export const insertReferralSchema = createInsertSchema(referrals).omit({
   emailNotified: true,
   notifiedAt: true,
   adminSeenAt: true,
+  archivedAt: true,
   createdAt: true,
   status: true,
   patientConsentAttestedAt: true,

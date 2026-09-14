@@ -150,6 +150,8 @@ export interface IStorage {
   listAllReferrals(): Promise<Referral[]>;
   getReferral(id: number): Promise<Referral | undefined>;
   updateReferralStatus(id: number, status: string): Promise<Referral | undefined>;
+  setReferralArchived(id: number, archived: boolean): Promise<Referral | undefined>;
+  deleteReferral(id: number): Promise<void>;
   markReferralsNotified(ids: number[], ts: number): Promise<void>;
   listUnnotifiedReferrals(): Promise<Referral[]>;
 
@@ -563,6 +565,23 @@ export class DatabaseStorage implements IStorage {
   }
   async updateReferralStatus(id: number, status: string) {
     return db.update(referrals).set({ status }).where(eq(referrals.id, id)).returning().get();
+  }
+  async setReferralArchived(id: number, archived: boolean) {
+    return db.update(referrals)
+      .set({ archivedAt: archived ? Date.now() : null })
+      .where(eq(referrals.id, id))
+      .returning().get();
+  }
+  // Permanently remove a referral row. Any patient chat thread linked to
+  // it is intentionally kept -- we clear its referralId so it survives as
+  // a general chat, preserving the conversation history. Files, flags,
+  // reactions, and to-dos on that chat are untouched.
+  async deleteReferral(id: number) {
+    db.update(chatThreads)
+      .set({ referralId: null, kind: "general" })
+      .where(eq(chatThreads.referralId, id))
+      .run();
+    db.delete(referrals).where(eq(referrals.id, id)).run();
   }
   async markReferralsNotified(ids: number[], ts: number) {
     for (const id of ids) {
