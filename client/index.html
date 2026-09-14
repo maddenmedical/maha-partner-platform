@@ -6,7 +6,7 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#1f1c2e" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png?v=2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="MAHA" />
     <!-- Twin-manifest trick, phase 1: if the page was opened under the /admin
@@ -28,7 +28,7 @@
         var manifestLink = document.querySelector('link[rel="manifest"]');
         if (manifestLink) manifestLink.setAttribute("href", "/manifest-admin.json");
         var touchIconLink = document.querySelector('link[rel="apple-touch-icon"]');
-        if (touchIconLink) touchIconLink.setAttribute("href", "/icon-192-admin.png");
+        if (touchIconLink) touchIconLink.setAttribute("href", "/icon-192-admin.png?v=2");
         var titleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
         if (titleMeta) titleMeta.setAttribute("content", "MAHA Admin");
       })();

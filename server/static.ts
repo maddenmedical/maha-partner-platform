@@ -25,10 +25,37 @@ export function serveStatic(app: Express) {
     next();
   });
 
+  // PWA manifests, service worker, and icon files must NEVER be cached by
+  // the browser (or any CDN in front of it). These are exactly the files
+  // that decide what icon/name shows on a partner's or admin's home screen,
+  // and without an explicit no-store instruction, browsers are legally free
+  // to keep serving an old cached copy for hours or days after we deploy a
+  // fix — which is indistinguishable from "the fix didn't work" from the
+  // user's side. This forces every request for these files to always hit
+  // the server fresh, so a deployed icon/manifest fix reaches every device
+  // the next time it opens the app, with zero action needed from the user.
+  const NEVER_CACHE = new Set([
+    "/manifest.json",
+    "/manifest-admin.json",
+    "/sw.js",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-192-admin.png",
+    "/icon-512-admin.png",
+    "/favicon.png",
+  ]);
+  app.use((req, res, next) => {
+    if (NEVER_CACHE.has(req.path)) {
+      res.setHeader("Cache-Control", "no-store, must-revalidate");
+    }
+    next();
+  });
+
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
-  app.use("/{*path}", (_req, res) => {
+  app.use("/{*path}", (req, res) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

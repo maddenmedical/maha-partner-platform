@@ -23,13 +23,26 @@ import { useEffect } from "react";
 // blocking inline script in client/index.html that does the same swap
 // before this hook (or any JS bundle) even runs, so the browser never has a
 // chance to read the wrong manifest for its install prompt.
+//
+// IMPORTANT — icon cache-busting: as of 2026, Chrome's WebAPK update check
+// treats an icon as unchanged whenever its URL is unchanged, even if the
+// PNG bytes behind that URL are different (it no longer downloads icons to
+// compare pixels). That means overwriting icon-192.png / icon-512.png /
+// icon-192-admin.png / icon-512-admin.png in place will NEVER reach an
+// already-installed home screen icon, no matter how long you wait or how
+// aggressively you disable HTTP caching. Whenever these icon files change,
+// you MUST also bump the "?v=N" query suffix everywhere the filename is
+// referenced (this file, client/index.html x2, manifest.json,
+// manifest-admin.json) so Chrome's automatic manifest check — which runs
+// roughly every 24h the app is opened — actually detects a change and
+// mints an updated WebAPK, typically within a day, with no user action.
 export function usePwaManifest(isAdmin: boolean) {
   useEffect(() => {
     const isAdminPath = /^\/admin(\/|$)/.test(window.location.pathname);
     const appParam = new URLSearchParams(window.location.search).get("app");
     const admin = isAdminPath ? true : appParam === "admin" ? true : appParam === "partner" ? false : isAdmin;
     const manifestHref = admin ? "/manifest-admin.json" : "/manifest.json";
-    const touchIconHref = admin ? "/icon-192-admin.png" : "/icon-192.png";
+    const touchIconHref = admin ? "/icon-192-admin.png?v=2" : "/icon-192.png?v=2";
     const appTitle = admin ? "MAHA Admin" : "MAHA";
 
     const manifestLink = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
