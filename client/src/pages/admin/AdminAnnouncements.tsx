@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Announcement } from "@shared/schema";
+import type { Announcement, Product } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { Megaphone, Loader2, Send, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 
 type Audience = "all" | "partners" | "students";
+type LinkMode = "none" | "product" | "page" | "custom";
 
 const AUDIENCE_LABELS: Record<string, string> = {
   all: "Everyone",
@@ -24,20 +25,58 @@ const AUDIENCE_LABELS: Record<string, string> = {
   students: "Students",
 };
 
+// In-app destinations an announcement can deep-link to. Hash-routed, so the
+// final URL is built as `${origin}${pathname}#${hash}` at send time -- see
+// buildLinkUrl below. Kept to routes that exist for at least one role;
+// opening a student-only page as a partner (or vice versa) just falls through
+// to that role's own Home, same as any other unknown route.
+const APP_PAGES: { value: string; label: string }[] = [
+  { value: "/", label: "Home" },
+  { value: "/refer", label: "Refer a Patient" },
+  { value: "/shop", label: "Shop" },
+  { value: "/shop?tab=orders", label: "Shop — My Orders" },
+  { value: "/videos", label: "Videos" },
+  { value: "/institute", label: "Institute" },
+  { value: "/classes", label: "My Classes (students)" },
+  { value: "/homework", label: "Homework (students)" },
+  { value: "/chat", label: "Chat" },
+  { value: "/account", label: "Account" },
+];
+
 export default function AdminAnnouncements() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [url, setUrl] = useState("");
+  const [linkMode, setLinkMode] = useState<LinkMode>("none");
+  const [linkProductId, setLinkProductId] = useState<string>("");
+  const [linkPage, setLinkPage] = useState<string>(APP_PAGES[0].value);
+  const [customUrl, setCustomUrl] = useState("");
   const [audience, setAudience] = useState<Audience>("all");
 
   const { data: history, isLoading } = useQuery<Announcement[]>({ queryKey: ["/api/admin/announcements"] });
+  const { data: products } = useQuery<Product[]>({ queryKey: ["/api/products"], enabled: linkMode === "product" });
+
+  // Builds the absolute URL stored on the announcement. In-app destinations
+  // (product / page) are turned into a same-origin hash-route link using the
+  // browser's own origin, so this works correctly wherever the admin is
+  // signed in from (Render production) without hardcoding a domain.
+  const resolvedUrl = useMemo(() => {
+    if (linkMode === "product") {
+      if (!linkProductId) return "";
+      return `${window.location.origin}${window.location.pathname}#/shop?product=${linkProductId}`;
+    }
+    if (linkMode === "page") {
+      return `${window.location.origin}${window.location.pathname}#${linkPage}`;
+    }
+    if (linkMode === "custom") return customUrl.trim();
+    return "";
+  }, [linkMode, linkProductId, linkPage, customUrl]);
 
   const sendMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/admin/announcements", {
-        title, body, url: url.trim() || undefined, audience,
+        title, body, url: resolvedUrl || undefined, audience,
       });
       return res.json();
     },
@@ -51,7 +90,10 @@ export default function AdminAnnouncements() {
       });
       setTitle("");
       setBody("");
-      setUrl("");
+      setLinkMode("none");
+      setLinkProductId("");
+      setLinkPage(APP_PAGES[0].value);
+      setCustomUrl("");
       setAudience("all");
     },
     onError: (err: any) => {
@@ -59,7 +101,8 @@ export default function AdminAnnouncements() {
     },
   });
 
-  const canSend = title.trim().length > 0 && body.trim().length > 0 && !sendMutation.isPending;
+  const linkIncomplete = (linkMode === "product" && !linkProductId) || (linkMode === "custom" && customUrl.trim().length === 0);
+  const canSend = title.trim().length > 0 && body.trim().length > 0 && !linkIncomplete && !sendMutation.isPending;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -93,15 +136,52 @@ export default function AdminAnnouncements() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="ann-url">Link URL (optional)</Label>
-              <Input
-                id="ann-url"
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://partner.maha.clinic/…"
-                data-testid="input-announcement-url"
-              />
+              <Label htmlFor="ann-link-mode">Link (optional)</Label>
+              <Select value={linkMode} onValueChange={(v) => setLinkMode(v as LinkMode)}>
+                <SelectTrigger id="ann-link-mode" data-testid="select-announcement-link-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none" data-testid="option-link-none">No link</SelectItem>
+                  <SelectItem value="product" data-testid="option-link-product">Specific product</SelectItem>
+                  <SelectItem value="page" data-testid="option-link-page">App page</SelectItem>
+                  <SelectItem value="custom" data-testid="option-link-custom">External URL</SelectItem>
+                </SelectContent>
+              </Select>
+              {linkMode === "product" && (
+                <Select value={linkProductId} onValueChange={setLinkProductId}>
+                  <SelectTrigger data-testid="select-announcement-link-product">
+                    <SelectValue placeholder="Choose a product…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(products || []).map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)} data-testid={`option-link-product-${p.id}`}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {linkMode === "page" && (
+                <Select value={linkPage} onValueChange={setLinkPage}>
+                  <SelectTrigger data-testid="select-announcement-link-page">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {APP_PAGES.map((p) => (
+                      <SelectItem key={p.value} value={p.value} data-testid={`option-link-page-${p.value}`}>{p.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {linkMode === "custom" && (
+                <Input
+                  id="ann-url"
+                  type="url"
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="https://partner.maha.clinic/…"
+                  data-testid="input-announcement-url"
+                />
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="ann-audience">Audience</Label>

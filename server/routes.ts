@@ -22,11 +22,13 @@ import {
   insertModuleSchema, insertCohortSchema, insertCohortEnrollmentSchema, insertClassSessionSchema,
   insertHomeworkSubmissionSchema, insertChatMessageSchema, insertUserSchema,
   estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
-  insertCaseDiscussionSchema,
+  insertCaseDiscussionSchema, createCommunityTopicSchema, postCommunityMessageSchema,
+  communityVisibilitySchema, updateNotificationPreferenceSchema, COMMUNITY_ENABLED_KEY,
+  STANDING_POINTS, STANDING_TIERS,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
-import { getVapidPublicKey, sendToSubscriptions } from "./push";
+import { getVapidPublicKey, notifyUsers } from "./push";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
@@ -36,6 +38,37 @@ import {
   labelFromUserAgent,
 } from "./webauthn";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simplewebauthn/server";
+
+// ---------- MAHA Standing (internal engagement scoring) ----------
+// Thin wrapper around storage.awardStandingPoints: also enqueues a pending
+// reward the moment a user crosses into a new tier. Never surfaced to the
+// user beyond their own tier name elsewhere -- this only logs internally.
+async function awardStanding(userId: number, activityKey: keyof typeof STANDING_POINTS, category: string, opts?: { sourceType?: string; sourceId?: number; points?: number }) {
+  try {
+    const points = opts?.points ?? STANDING_POINTS[activityKey];
+    const { newTierKey } = await storage.awardStandingPoints({
+      userId,
+      category,
+      points,
+      sourceType: opts?.sourceType,
+      sourceId: opts?.sourceId,
+    });
+    if (newTierKey) {
+      const tier = STANDING_TIERS.find((t) => t.key === newTierKey);
+      if (tier?.reward) {
+        await storage.createStandingReward({
+          userId,
+          tierKey: tier.key,
+          rewardDescription: tier.reward,
+          createdAt: Date.now(),
+        });
+      }
+    }
+  } catch (e) {
+    // Standing is a side-effect, never a reason to fail the primary action.
+    console.error("awardStanding failed", e);
+  }
+}
 
 // Single shared redeem code that unlocks the paid "Maha Symposium lectures"
 // course (our course id 16) for free — e.g. for people who attended the live
@@ -86,17 +119,29 @@ async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, m
   const admins = await storage.listAdmins();
   const adminIds = admins.map((a) => a.id);
   if (!adminIds.length) return;
-  const subs = await storage.getPushSubscriptionsForUserIds(adminIds);
-  if (!subs.length) return;
   const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
-  const result = await sendToSubscriptions(subs, {
-    title: `${msg.senderName}: ${thread.topic}`,
-    body: bodyPreview,
+  await notifyUsers(adminIds, "chat", {
+    previewTitle: `${msg.senderName}: ${thread.topic}`,
+    previewBody: bodyPreview,
+    genericTitle: "New chat message",
+    genericBody: `${thread.topic}`,
     url: "/admin/chat",
   });
-  if (result.removedEndpoints.length) {
-    await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
-  }
+}
+
+// Item: partner/student-facing push when an admin replies in their 1:1
+// chat -- previously missing entirely (partners only found out about admin
+// replies by opening the app). Respects the recipient's own "chat" category
+// preference via notifyUsers.
+async function notifyOwnerOfAdminReply(thread: { id: number; userId: number; topic: string }, msg: { senderName: string; body: string | null }) {
+  const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
+  await notifyUsers([thread.userId], "chat", {
+    previewTitle: `${msg.senderName} replied in ${thread.topic}`,
+    previewBody: bodyPreview,
+    genericTitle: "New reply in your chat",
+    genericBody: thread.topic,
+    url: "/chat",
+  });
 }
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
@@ -137,6 +182,17 @@ type PublicUser = {
   country: string | null;
   legalAcceptedVersion: string | null;
   adminNavOrder: string | null;
+  communityShowPhone: boolean;
+  communityShowEmail: boolean;
+  notifyCommunityEnabled: boolean;
+  notifyCommunityStyle: string;
+  notifyChatEnabled: boolean;
+  notifyChatStyle: string;
+  notifyOrdersEnabled: boolean;
+  notifyOrdersStyle: string;
+  notifyOffersEnabled: boolean;
+  notifyOffersStyle: string;
+  unreadBadgeCount: number;
 };
 
 // Shapes a full DB user row down to the fields safe to send to the frontend.
@@ -168,6 +224,17 @@ function toPublicUser(user: {
   country?: string | null;
   legalAcceptedVersion?: string | null;
   adminNavOrder?: string | null;
+  communityShowPhone?: boolean | null;
+  communityShowEmail?: boolean | null;
+  notifyCommunityEnabled?: boolean | null;
+  notifyCommunityStyle?: string | null;
+  notifyChatEnabled?: boolean | null;
+  notifyChatStyle?: string | null;
+  notifyOrdersEnabled?: boolean | null;
+  notifyOrdersStyle?: string | null;
+  notifyOffersEnabled?: boolean | null;
+  notifyOffersStyle?: string | null;
+  unreadBadgeCount?: number | null;
 }): PublicUser {
   return {
     id: user.id,
@@ -193,6 +260,17 @@ function toPublicUser(user: {
     country: user.country ?? null,
     legalAcceptedVersion: user.legalAcceptedVersion ?? null,
     adminNavOrder: user.adminNavOrder ?? null,
+    communityShowPhone: user.communityShowPhone ?? false,
+    communityShowEmail: user.communityShowEmail ?? false,
+    notifyCommunityEnabled: user.notifyCommunityEnabled ?? true,
+    notifyCommunityStyle: user.notifyCommunityStyle ?? "preview",
+    notifyChatEnabled: user.notifyChatEnabled ?? true,
+    notifyChatStyle: user.notifyChatStyle ?? "preview",
+    notifyOrdersEnabled: user.notifyOrdersEnabled ?? true,
+    notifyOrdersStyle: user.notifyOrdersStyle ?? "preview",
+    notifyOffersEnabled: user.notifyOffersEnabled ?? true,
+    notifyOffersStyle: user.notifyOffersStyle ?? "preview",
+    unreadBadgeCount: user.unreadBadgeCount ?? 0,
   };
 }
 
@@ -339,6 +417,12 @@ export async function registerRoutes(
       case "product":
         // Product informational files/videos are visible to any signed-in
         // partner or student, plus admins.
+        allowed = true;
+        break;
+      case "community":
+        // Community attachments are visible to any signed-in partner,
+        // student, or admin -- the Community tab itself has no per-topic
+        // access restriction beyond being enabled, so this mirrors "product".
         allowed = true;
         break;
       case "chat": {
@@ -773,6 +857,10 @@ export async function registerRoutes(
     const parsed = insertReferralSchema.safeParse({ ...rest, partnerId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now(), patientConsentAttestedAt: Date.now() });
+    // Logged as generic "app_activity" with no sourceId back to this
+    // referral -- flat, one-time credit for using the feature, not tied to
+    // referral outcome. See shared/schema.ts STANDING note for why.
+    awardStanding(req.user!.id, "referral_submitted", "app_activity").catch(console.error);
     const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
 
     let chatThreadId: number;
@@ -978,8 +1066,24 @@ export async function registerRoutes(
 
   app.patch("/api/admin/orders/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
     const { status } = req.body;
+    const previous = await storage.getOrder(Number(req.params.id));
     const updated = await storage.updateOrderStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
+    if (status === "Confirmed" && previous?.status !== "Confirmed") {
+      const items = await storage.listItemsForOrder(updated.id);
+      const totalCents = items.reduce((sum, i) => sum + i.unitPriceAtOrder * i.quantity, 0);
+      const points = Math.floor(totalCents / 500); // 1 pt per €5 (500 cents)
+      if (points > 0) {
+        awardStanding(updated.partnerId, "order_confirmed_per_5_eur", "shop", { sourceType: "order", sourceId: updated.id, points }).catch(console.error);
+      }
+    }
+    notifyUsers([updated.partnerId], "orders", {
+      previewTitle: "Order update",
+      previewBody: `Your order #${updated.id} is now "${updated.status}".`,
+      genericTitle: "Order update",
+      genericBody: "One of your orders has a status update.",
+      url: "/shop",
+    }).catch((err) => console.error("[push] order-status notify failed:", err));
     res.json(updated);
   });
 
@@ -1479,6 +1583,7 @@ export async function registerRoutes(
     const parsed = insertHomeworkSubmissionSchema.safeParse({ ...req.body, studentId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const hw = await storage.createHomework({ ...parsed.data, createdAt: Date.now() });
+    awardStanding(req.user!.id, "homework_submitted", "education", { sourceType: "homework", sourceId: hw.id }).catch(console.error);
     res.json(hw);
   });
 
@@ -1513,6 +1618,7 @@ export async function registerRoutes(
     if (!["approved", "rejected", "pending"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
+    const previousUser = await storage.getUser(Number(req.params.id));
     const updated = await storage.updateUserStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
     // Mirror the one-click email link's notification behavior here too, so
@@ -1520,6 +1626,9 @@ export async function registerRoutes(
     if (status === "approved" || status === "rejected") {
       await storage.setUserApprovalToken(updated.id, null);
       await sendDecisionEmail(updated, status);
+    }
+    if (status === "approved" && previousUser?.status !== "approved" && updated.role === "student") {
+      awardStanding(updated.id, "student_approved", "education", { sourceType: "student_approval", sourceId: updated.id }).catch(console.error);
     }
     res.json(updated);
   });
@@ -1870,6 +1979,7 @@ export async function registerRoutes(
       body,
       createdAt: Date.now(),
     });
+    awardStanding(req.user!.id, "institute_application_submitted", "education", { sourceType: "institute_application", sourceId: thread.id }).catch(console.error);
     res.json({ threadId: thread.id, messageId: message.id });
   });
 
@@ -1891,6 +2001,10 @@ export async function registerRoutes(
     if (!bodyText.trim() && !req.body.attachmentUrl) {
       return res.status(400).json({ message: "Message can't be empty." });
     }
+    const replyToMessageId =
+      typeof req.body.replyToMessageId === "number" && Number.isFinite(req.body.replyToMessageId)
+        ? req.body.replyToMessageId
+        : null;
     const parsed = insertChatMessageSchema.safeParse({
       threadId: thread.id,
       senderId: req.user!.id,
@@ -1900,6 +2014,7 @@ export async function registerRoutes(
       attachmentUrl: req.body.attachmentUrl ?? null,
       attachmentType: req.body.attachmentType ?? null,
       attachmentName: req.body.attachmentName ?? null,
+      replyToMessageId,
     });
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
@@ -1930,17 +2045,13 @@ export async function registerRoutes(
     const admins = await storage.listAdmins();
     const adminIds = admins.map((a) => a.id);
     if (adminIds.length) {
-      const subs = await storage.getPushSubscriptionsForUserIds(adminIds);
-      if (subs.length) {
-        const result = await sendToSubscriptions(subs, {
-          title: `${req.user!.name} requested to reopen a chat`,
-          body: thread.topic,
-          url: "/admin/chat",
-        });
-        if (result.removedEndpoints.length) {
-          await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
-        }
-      }
+      await notifyUsers(adminIds, "chat", {
+        previewTitle: `${req.user!.name} requested to reopen a chat`,
+        previewBody: thread.topic,
+        genericTitle: "Chat reopen request",
+        genericBody: "A partner asked to reopen an archived chat.",
+        url: "/admin/chat",
+      });
     }
     res.json(updated);
   });
@@ -2113,6 +2224,10 @@ export async function registerRoutes(
     if (!bodyText.trim() && !req.body.attachmentUrl) {
       return res.status(400).json({ message: "Message can't be empty." });
     }
+    const replyToMessageId =
+      typeof req.body.replyToMessageId === "number" && Number.isFinite(req.body.replyToMessageId)
+        ? req.body.replyToMessageId
+        : null;
     const parsed = insertChatMessageSchema.safeParse({
       threadId,
       senderId: req.user!.id,
@@ -2122,9 +2237,13 @@ export async function registerRoutes(
       attachmentUrl: req.body.attachmentUrl ?? null,
       attachmentType: req.body.attachmentType ?? null,
       attachmentName: req.body.attachmentName ?? null,
+      replyToMessageId,
     });
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const msg = await storage.createMessage({ ...parsed.data, createdAt: Date.now() });
+    // Previously missing: the partner/student never got pushed when an admin
+    // replied in their 1:1 chat. Respects their own "chat" preference.
+    notifyOwnerOfAdminReply(thread, msg).catch((err) => console.error("[push] admin-reply notify failed:", err));
     res.json(msg);
   });
 
@@ -2374,6 +2493,348 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+
+  // ---------- COMMUNITY CHAT (topic-threaded partner/student/admin forum) ----------
+  // Feature-flagged via appSettings[COMMUNITY_ENABLED_KEY] so it can be
+  // switched off instantly without losing data if it isn't ready to launch.
+  async function isCommunityEnabled(): Promise<boolean> {
+    const v = await storage.getAppSetting(COMMUNITY_ENABLED_KEY);
+    return v === "true";
+  }
+
+  async function requireCommunityEnabled(_req: AuthedRequest, res: Response, next: NextFunction) {
+    if (!(await isCommunityEnabled())) {
+      return res.status(404).json({ message: "Community Chat is not available" });
+    }
+    next();
+  }
+
+  // Everyone who can see the Community tab (partner/student/admin) who is
+  // not currently blocked from it -- used to resolve the audience for
+  // "new topic" / "new reply" pushes.
+  async function communityAudienceUserIds(excludeUserId?: number): Promise<number[]> {
+    const rows = await storage.listUsersByRoleStatus(undefined, "approved");
+    return rows
+      .filter((u) => ["partner", "student", "admin"].includes(u.role))
+      .filter((u) => !u.communityBlockedAt)
+      .filter((u) => u.id !== excludeUserId)
+      .map((u) => u.id);
+  }
+
+  app.get("/api/community/enabled", requireAuth, async (_req, res) => {
+    res.json({ enabled: await isCommunityEnabled() });
+  });
+
+  app.patch("/api/admin/community/enabled", requireAuth, requireRole("admin"), async (req, res) => {
+    const enabled = !!req.body.enabled;
+    await storage.setAppSetting(COMMUNITY_ENABLED_KEY, enabled ? "true" : "false");
+    res.json({ enabled });
+  });
+
+  app.get(
+    "/api/community/topics",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const includeArchived = req.user!.role === "admin" && req.query.includeArchived === "true";
+      const topics = await storage.listCommunityTopics(includeArchived);
+      const withPreview = await Promise.all(
+        topics.map(async (t) => {
+          const messages = await storage.listCommunityMessagesForTopic(t.id);
+          const last = messages[messages.length - 1];
+          const unreadIds = await storage.getUnreadCommunityMessageIds(t.id, req.user!.id);
+          const unreadFromOthers = unreadIds.filter((id) => {
+            const msg = messages.find((m) => m.id === id);
+            return !!msg && msg.senderId !== req.user!.id;
+          });
+          const lastVisible = last ? redactDeletedMessage(last) : undefined;
+          return {
+            ...t,
+            messageCount: messages.length,
+            lastMessagePreview: lastVisible ? lastVisible.body.slice(0, 140) : "",
+            lastMessageSenderName: last?.senderName ?? null,
+            unread: unreadFromOthers.length > 0,
+          };
+        }),
+      );
+      res.json(withPreview);
+    },
+  );
+
+  app.get(
+    "/api/community/unread-count",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const count = await storage.countUnreadCommunityTopicsForUser(req.user!.id);
+      res.json({ count });
+    },
+  );
+
+  app.post(
+    "/api/community/topics",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const fullUser = await storage.getUser(req.user!.id);
+      if (fullUser?.communityBlockedAt) {
+        return res.status(403).json({ message: "You've been restricted from posting in the Community." });
+      }
+      const parsed = createCommunityTopicSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const now = Date.now();
+      const topic = await storage.createCommunityTopic({
+        title: parsed.data.title,
+        createdByUserId: req.user!.id,
+        createdByName: req.user!.name,
+        createdByRole: req.user!.role,
+        createdAt: now,
+        lastMessageAt: now,
+      });
+      let firstMessage = null;
+      if (parsed.data.body.trim() || parsed.data.attachmentUrl) {
+        firstMessage = await storage.createCommunityMessage({
+          topicId: topic.id,
+          senderId: req.user!.id,
+          senderRole: req.user!.role,
+          senderName: req.user!.name,
+          body: parsed.data.body,
+          attachmentUrl: parsed.data.attachmentUrl,
+          attachmentType: parsed.data.attachmentType,
+          attachmentName: parsed.data.attachmentName,
+          createdAt: now,
+        });
+      }
+      awardStanding(req.user!.id, "community_topic_created", "community", { sourceType: "community_topic", sourceId: topic.id }).catch(console.error);
+      const audience = await communityAudienceUserIds(req.user!.id);
+      notifyUsers(audience, "community", {
+        genericTitle: "New Community topic",
+        genericBody: `${req.user!.name} started a new Community topic.`,
+        previewTitle: "New Community topic",
+        previewBody: `${req.user!.name} just opened a new Community thread called "${topic.title}"`,
+        url: "/community",
+      }).catch(console.error);
+      res.status(201).json({ topic, firstMessage });
+    },
+  );
+
+  app.get(
+    "/api/community/topics/:id/messages",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const topic = await storage.getCommunityTopic(Number(req.params.id));
+      if (!topic) return res.status(404).json({ message: "Not found" });
+      const messages = await storage.listCommunityMessagesForTopic(topic.id);
+      // Bulk-mark everything currently visible as read for this viewer --
+      // WhatsApp-style "opened the thread" receipt, not per-message scroll tracking.
+      await storage.markCommunityMessagesRead(messages.map((m) => m.id), req.user!.id, req.user!.name);
+      res.json({ topic, messages: messages.map(redactDeletedMessage) });
+    },
+  );
+
+  app.post(
+    "/api/community/topics/:id/messages",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const topic = await storage.getCommunityTopic(Number(req.params.id));
+      if (!topic) return res.status(404).json({ message: "Not found" });
+      const fullUser = await storage.getUser(req.user!.id);
+      if (fullUser?.communityBlockedAt) {
+        return res.status(403).json({ message: "You've been restricted from posting in the Community." });
+      }
+      const parsed = postCommunityMessageSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+      if (!parsed.data.body.trim() && !parsed.data.attachmentUrl) {
+        return res.status(400).json({ message: "Message can't be empty" });
+      }
+      const now = Date.now();
+      const msg = await storage.createCommunityMessage({
+        topicId: topic.id,
+        senderId: req.user!.id,
+        senderRole: req.user!.role,
+        senderName: req.user!.name,
+        body: parsed.data.body,
+        attachmentUrl: parsed.data.attachmentUrl,
+        attachmentType: parsed.data.attachmentType,
+        attachmentName: parsed.data.attachmentName,
+        replyToMessageId: parsed.data.replyToMessageId,
+        createdAt: now,
+      });
+      // Capped so message spam can't be used to farm points -- see
+      // STANDING_POINTS note (5/day).
+      storage.countStandingEntriesToday(req.user!.id, "community_message").then((countToday) => {
+        if (countToday < 5) {
+          return awardStanding(req.user!.id, "community_message_posted", "community", { sourceType: "community_message", sourceId: msg.id });
+        }
+      }).catch(console.error);
+      // Notify everyone who has posted in this topic before (the thread's
+      // participants), not the whole audience -- replies are scoped to who's
+      // actually in the conversation.
+      const priorMessages = await storage.listCommunityMessagesForTopic(topic.id);
+      const participantIds = Array.from(new Set(priorMessages.map((m) => m.senderId))).filter(
+        (id) => id !== req.user!.id,
+      );
+      notifyUsers(participantIds, "community", {
+        genericTitle: "New Community reply",
+        genericBody: `${req.user!.name} replied in "${topic.title}"`,
+        previewTitle: `New reply in "${topic.title}"`,
+        previewBody: `${req.user!.name}: ${parsed.data.body.slice(0, 140)}`,
+        url: "/community",
+      }).catch(console.error);
+      res.status(201).json(msg);
+    },
+  );
+
+  app.get(
+    "/api/admin/community/topics/:id/reads",
+    requireAuth,
+    requireRole("admin"),
+    async (req, res) => {
+      const messages = await storage.listCommunityMessagesForTopic(Number(req.params.id));
+      const reads = await storage.getCommunityReadsForMessages(messages.map((m) => m.id));
+      res.json(reads);
+    },
+  );
+
+  // ChatComposer (shared with 1:1 chat) always appends the form field as
+  // "threadId" -- see ChatComposer.uploadFile(). For Community we reuse the
+  // same composer with threadId={topic.id}, so this route deliberately
+  // reads req.body.threadId as the topic id rather than renaming the shared
+  // component's field.
+  app.post(
+    "/api/community/upload",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    upload.single("file"),
+    async (req: AuthedRequest, res) => {
+      const topicId = Number(req.body.threadId);
+      if (!topicId) return res.status(400).json({ message: "threadId is required" });
+      const topic = await storage.getCommunityTopic(topicId);
+      if (!topic) return res.status(404).json({ message: "Not found" });
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      try {
+        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        await storage.createUploadedFile({
+          driveFileId,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          category: "community",
+          ownerId: req.user!.id,
+          uploadedAt: Date.now(),
+        });
+        const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
+        res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+      } catch {
+        res.status(502).json({ message: "File storage upload failed" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/community/topics/:id/archive",
+    requireAuth,
+    requireRole("admin"),
+    async (req, res) => {
+      const archived = !!req.body.archived;
+      const updated = await storage.updateCommunityTopic(Number(req.params.id), {
+        archivedAt: archived ? Date.now() : null,
+      });
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    },
+  );
+
+  app.delete("/api/admin/community/topics/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    await storage.deleteCommunityTopic(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/admin/community/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const msg = await storage.deleteCommunityMessage(Number(req.params.id), req.user!.name);
+    res.json(msg);
+  });
+
+  app.post("/api/admin/community/users/:id/block", requireAuth, requireRole("admin"), async (req, res) => {
+    const blocked = !!req.body.blocked;
+    const updated = await storage.setCommunityBlocked(Number(req.params.id), blocked);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(toPublicUser(updated));
+  });
+
+  app.patch(
+    "/api/community/visibility",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    async (req: AuthedRequest, res) => {
+      const parsed = communityVisibilitySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+      const updated = await storage.updateCommunityVisibility(req.user!.id, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(toPublicUser(updated));
+    },
+  );
+
+  // ---------- MAHA STANDING (internal engagement scoring) ----------
+  // Member-facing: tier name + soft progress ONLY -- never raw points or
+  // how they're earned (see shared/schema.ts note).
+  app.get("/api/standing/mine", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
+    const { points, tier } = await storage.getStandingSummaryForUser(req.user!.id);
+    const tierIndex = STANDING_TIERS.findIndex((t) => t.key === tier.key);
+    const nextTier = STANDING_TIERS[tierIndex + 1] ?? null;
+    // Soft 0-100 progress toward the next tier, with no numbers disclosed.
+    let progressPercent = 100;
+    if (nextTier) {
+      const span = nextTier.minPoints - tier.minPoints;
+      progressPercent = span > 0 ? Math.min(100, Math.round(((points - tier.minPoints) / span) * 100)) : 0;
+    }
+    res.json({ tierLabel: tier.label, hasNextTier: !!nextTier, progressPercent });
+  });
+
+  // Admin-only: exact points, full breakdown per user, and the tier ladder.
+  app.get("/api/admin/standing", requireAuth, requireRole("admin"), async (_req, res) => {
+    const summaries = await storage.listStandingSummaries();
+    res.json(summaries);
+  });
+
+  app.get("/api/admin/standing/:userId/entries", requireAuth, requireRole("admin"), async (req, res) => {
+    const entries = await storage.listStandingEntriesForUser(Number(req.params.userId));
+    res.json(entries);
+  });
+
+  app.get("/api/admin/standing/rewards", requireAuth, requireRole("admin"), async (req, res) => {
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const rewards = await storage.listStandingRewards(status);
+    res.json(rewards);
+  });
+
+  app.patch("/api/admin/standing/rewards/:id/fulfill", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const note = typeof req.body?.note === "string" ? req.body.note : undefined;
+    const updated = await storage.fulfillStandingReward(Number(req.params.id), req.user!.name, note);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  // ---------- NOTIFICATION PREFERENCES (self-service, all roles) ----------
+  app.patch("/api/notifications/preferences", requireAuth, async (req: AuthedRequest, res) => {
+    const parsed = updateNotificationPreferenceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+    const updated = await storage.updateNotificationPreference(req.user!.id, parsed.data.category, {
+      enabled: parsed.data.enabled,
+      style: parsed.data.style,
+    });
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(toPublicUser(updated));
+  });
+
   // ---------- PUSH NOTIFICATIONS ----------
   app.get("/api/push/vapid-public-key", (_req, res) => {
     const key = getVapidPublicKey();
@@ -2407,15 +2868,25 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
     const url = parsed.data.url && parsed.data.url.length > 0 ? parsed.data.url : null;
 
+    // Special offers respect each recipient's own "offers" notification
+    // preference (enabled + style) via notifyUsers -- no raw unconditional
+    // send here anymore, since that would double-push everyone who is
+    // subscribed AND opted in.
     const subs = await storage.listPushSubscriptionsForAudience(parsed.data.audience);
-    const result = await sendToSubscriptions(subs, {
-      title: parsed.data.title,
-      body: parsed.data.body,
+    const audienceRole = parsed.data.audience === "partners" ? "partner" : parsed.data.audience === "students" ? "student" : undefined;
+    const audienceUsers = await storage.listUsersByRoleStatus(audienceRole);
+    const audienceUserIds = audienceUsers.filter((u) => u.role !== "admin").map((u) => u.id);
+    await notifyUsers(audienceUserIds, "offers", {
+      previewTitle: parsed.data.title,
+      previewBody: parsed.data.body,
+      genericTitle: "New announcement",
+      genericBody: "MAHA has a new announcement for you.",
       url,
     });
-    if (result.removedEndpoints.length) {
-      await storage.deletePushSubscriptionsByEndpoints(result.removedEndpoints);
-    }
+    // Approximate recipient count for the admin's sent log: how many
+    // devices in this audience were subscribed at send time. (The exact
+    // enabled/style breakdown per user isn't tracked at delivery time.)
+    const result = { sent: subs.length, failed: 0, removedEndpoints: [] as string[] };
 
     const announcement = await storage.createAnnouncement({
       title: parsed.data.title,

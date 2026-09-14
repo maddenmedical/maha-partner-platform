@@ -22,11 +22,22 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
 
+  // When there are more tabs than fit (the scrollable-row case below), the
+  // active tab can start off partially or fully scrolled out of view --
+  // e.g. landing on the last tab right after adding a 6th one. Nudge it
+  // into view on mount/navigation so the current section is never clipped.
+  const activeTabRef = useState<{ current: HTMLAnchorElement | null }>(() => ({ current: null }))[0];
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [location]);
+
   // Unread marker (Item 10): a small dot on the Chat tab when the MAHA team
   // has sent a message the partner/student hasn't opened yet. Shares the
   // same query/cache the Chat page itself uses, so this adds no extra load.
   const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/chat/threads"], refetchInterval: 15000 });
   const hasUnreadChat = !!chatThreads?.some((t) => t.unread);
+  const { data: communityUnread } = useQuery<{ count: number }>({ queryKey: ["/api/community/unread-count"], refetchInterval: 15000 });
+  const hasUnreadCommunity = !!communityUnread?.count;
 
   // Track an in-app navigation stack (not just sub-pages) so the back arrow
   // shows whenever there's a real "previous page" to return to — including
@@ -111,6 +122,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
             <Link
               key={tab.href}
               href={tab.href}
+              ref={active ? activeTabRef : undefined}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-medium hover-elevate active-elevate-2",
                 tabs.length > 5 ? "min-w-[4.25rem] flex-1" : "",
@@ -122,6 +134,9 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
                 <tab.icon className="h-5 w-5" />
                 {tab.href === "/chat" && hasUnreadChat && (
                   <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab" />
+                )}
+                {tab.href === "/community" && hasUnreadCommunity && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-community-tab" />
                 )}
               </span>
               <span>{tab.label}</span>
@@ -148,6 +163,9 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
                   <tab.icon className="h-5 w-5" />
                   {tab.href === "/chat" && hasUnreadChat && (
                     <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab-desktop" />
+                  )}
+                  {tab.href === "/community" && hasUnreadCommunity && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-community-tab-desktop" />
                   )}
                 </span>
                 <span>{tab.label}</span>

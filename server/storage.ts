@@ -4,6 +4,8 @@ import {
   classSessions, homeworkSubmissions, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources, adminTodos,
+  appSettings, communityTopics, communityMessages, communityMessageReads,
+  standingEntries, standingRewards,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -17,7 +19,10 @@ import type {
   CaseDiscussion, InsertCaseDiscussion, LegacyOrder, InsertLegacyOrder,
   WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
   AdminTodo, InsertAdminTodo,
+  AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
+  StandingEntry, StandingReward,
 } from "@shared/schema";
+import { STANDING_TIERS, standingTierForPoints } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, asc, gte, gt, lte, isNull, inArray, like } from "drizzle-orm";
@@ -283,6 +288,53 @@ export interface IStorage {
   findCaseDiscussionsNeedingNotification(windowStartMs: number, nowMs: number): Promise<CaseDiscussion[]>;
   markCaseDiscussionNotified(id: number, whenMs: number): Promise<void>;
   updateAdminNavOrder(userId: number, order: string[]): Promise<User | undefined>;
+
+  // ---------- app settings (feature flags) ----------
+  getAppSetting(key: string): Promise<string | undefined>;
+  setAppSetting(key: string, value: string): Promise<void>;
+
+  // ---------- notification preferences (stored directly on users) ----------
+  updateNotificationPreference(userId: number, category: string, patch: { enabled?: boolean; style?: string }): Promise<User | undefined>;
+
+  // ---------- community visibility ----------
+  updateCommunityVisibility(userId: number, patch: { communityShowPhone?: boolean; communityShowEmail?: boolean }): Promise<User | undefined>;
+  setCommunityBlocked(userId: number, blocked: boolean): Promise<User | undefined>;
+
+  // ---------- community topics ----------
+  createCommunityTopic(t: InsertCommunityTopic & { createdAt: number; lastMessageAt: number }): Promise<CommunityTopic>;
+  listCommunityTopics(includeArchived?: boolean): Promise<CommunityTopic[]>;
+  getCommunityTopic(id: number): Promise<CommunityTopic | undefined>;
+  updateCommunityTopic(id: number, patch: Partial<{ archivedAt: number | null; lastMessageAt: number }>): Promise<CommunityTopic | undefined>;
+  deleteCommunityTopic(id: number): Promise<void>;
+
+  // ---------- community messages ----------
+  createCommunityMessage(m: { topicId: number; senderId: number; senderRole: string; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<CommunityMessage>;
+  listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null })[]>;
+  getCommunityMessage(id: number): Promise<CommunityMessage | undefined>;
+  deleteCommunityMessage(id: number, deletedByName: string): Promise<CommunityMessage>;
+  countCommunityMessagesForTopic(topicId: number): Promise<number>;
+
+  // ---------- community read receipts (admin-only visibility) ----------
+  markCommunityMessagesRead(messageIds: number[], userId: number, userName: string): Promise<void>;
+  getCommunityReadsForMessages(messageIds: number[]): Promise<CommunityMessageRead[]>;
+  getUnreadCommunityMessageIds(topicId: number, userId: number): Promise<number[]>;
+  countUnreadCommunityTopicsForUser(userId: number): Promise<number>;
+
+  // ---------- MAHA Standing (internal engagement scoring) ----------
+  // Awards points, appends a ledger row, and keeps users.standingPoints in
+  // sync -- the one place point totals ever change. Returns the ledger row
+  // and whether this award crossed the user into a new tier (so the caller
+  // can enqueue a reward). category='app_activity' entries must never carry
+  // a sourceId tied to a specific referral -- see shared/schema.ts note.
+  awardStandingPoints(args: { userId: number; category: string; points: number; sourceType?: string; sourceId?: number }): Promise<{ entry: StandingEntry; newTierKey: string | null }>;
+  countStandingEntriesToday(userId: number, sourceType: string): Promise<number>;
+  hasStandingEntry(userId: number, sourceType: string, sourceId?: number): Promise<boolean>;
+  getStandingSummaryForUser(userId: number): Promise<{ points: number; tier: (typeof STANDING_TIERS)[number] }>;
+  listStandingSummaries(): Promise<{ userId: number; userName: string; userRole: string; points: number; tierKey: string; tierLabel: string }[]>;
+  listStandingEntriesForUser(userId: number): Promise<StandingEntry[]>;
+  createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number }): Promise<StandingReward>;
+  listStandingRewards(status?: string): Promise<(StandingReward & { userName: string })[]>;
+  fulfillStandingReward(id: number, fulfilledByName: string, note?: string): Promise<StandingReward | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -837,6 +889,7 @@ export class DatabaseStorage implements IStorage {
         attachmentUrl: chatMessages.attachmentUrl,
         attachmentType: chatMessages.attachmentType,
         attachmentName: chatMessages.attachmentName,
+        replyToMessageId: chatMessages.replyToMessageId,
         createdAt: chatMessages.createdAt,
         deletedAt: chatMessages.deletedAt,
         deletedByName: chatMessages.deletedByName,
@@ -868,6 +921,7 @@ export class DatabaseStorage implements IStorage {
         attachmentUrl: chatMessages.attachmentUrl,
         attachmentType: chatMessages.attachmentType,
         attachmentName: chatMessages.attachmentName,
+        replyToMessageId: chatMessages.replyToMessageId,
         createdAt: chatMessages.createdAt,
         deletedAt: chatMessages.deletedAt,
         deletedByName: chatMessages.deletedByName,
@@ -1041,6 +1095,245 @@ export class DatabaseStorage implements IStorage {
   // ---------- admin nav order (drag-and-drop sidebar reorder) ----------
   async updateAdminNavOrder(userId: number, order: string[]) {
     return db.update(users).set({ adminNavOrder: JSON.stringify(order) }).where(eq(users.id, userId)).returning().get();
+  }
+
+  // ---------- app settings (feature flags) ----------
+  async getAppSetting(key: string) {
+    return db.select().from(appSettings).where(eq(appSettings.key, key)).get()?.value;
+  }
+  async setAppSetting(key: string, value: string) {
+    const existing = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
+    if (existing) {
+      db.update(appSettings).set({ value }).where(eq(appSettings.key, key)).run();
+    } else {
+      db.insert(appSettings).values({ key, value }).run();
+    }
+  }
+
+  // ---------- notification preferences ----------
+  async updateNotificationPreference(userId: number, category: string, patch: { enabled?: boolean; style?: string }) {
+    const colMap: Record<string, { enabled: keyof typeof users.$inferInsert; style: keyof typeof users.$inferInsert }> = {
+      community: { enabled: "notifyCommunityEnabled", style: "notifyCommunityStyle" },
+      chat: { enabled: "notifyChatEnabled", style: "notifyChatStyle" },
+      orders: { enabled: "notifyOrdersEnabled", style: "notifyOrdersStyle" },
+      offers: { enabled: "notifyOffersEnabled", style: "notifyOffersStyle" },
+    };
+    const cols = colMap[category];
+    if (!cols) return this.getUser(userId);
+    const set: Record<string, any> = {};
+    if (patch.enabled !== undefined) set[cols.enabled] = patch.enabled;
+    if (patch.style !== undefined) set[cols.style] = patch.style;
+    if (Object.keys(set).length === 0) return this.getUser(userId);
+    return db.update(users).set(set).where(eq(users.id, userId)).returning().get();
+  }
+
+  // ---------- community visibility ----------
+  async updateCommunityVisibility(userId: number, patch: { communityShowPhone?: boolean; communityShowEmail?: boolean }) {
+    return db.update(users).set(patch).where(eq(users.id, userId)).returning().get();
+  }
+  async setCommunityBlocked(userId: number, blocked: boolean) {
+    return db.update(users).set({ communityBlockedAt: blocked ? Date.now() : null }).where(eq(users.id, userId)).returning().get();
+  }
+
+  // ---------- community topics ----------
+  async createCommunityTopic(t: any) {
+    return db.insert(communityTopics).values(t).returning().get();
+  }
+  async listCommunityTopics(includeArchived = false) {
+    const q = db.select().from(communityTopics);
+    const rows = includeArchived
+      ? q.orderBy(desc(communityTopics.lastMessageAt)).all()
+      : db.select().from(communityTopics).where(isNull(communityTopics.archivedAt)).orderBy(desc(communityTopics.lastMessageAt)).all();
+    return rows;
+  }
+  async getCommunityTopic(id: number) {
+    return db.select().from(communityTopics).where(eq(communityTopics.id, id)).get();
+  }
+  async updateCommunityTopic(id: number, patch: any) {
+    return db.update(communityTopics).set(patch).where(eq(communityTopics.id, id)).returning().get();
+  }
+  async deleteCommunityTopic(id: number) {
+    const msgIds = db.select({ id: communityMessages.id }).from(communityMessages).where(eq(communityMessages.topicId, id)).all().map((r) => r.id);
+    if (msgIds.length > 0) {
+      db.delete(communityMessageReads).where(inArray(communityMessageReads.messageId, msgIds)).run();
+    }
+    db.delete(communityMessages).where(eq(communityMessages.topicId, id)).run();
+    db.delete(communityTopics).where(eq(communityTopics.id, id)).run();
+  }
+
+  // ---------- community messages ----------
+  async createCommunityMessage(m: any) {
+    const row = await db.insert(communityMessages).values({
+      topicId: m.topicId,
+      senderId: m.senderId,
+      senderRole: m.senderRole,
+      senderName: m.senderName,
+      body: m.body,
+      attachmentUrl: m.attachmentUrl ?? null,
+      attachmentType: m.attachmentType ?? null,
+      attachmentName: m.attachmentName ?? null,
+      replyToMessageId: m.replyToMessageId ?? null,
+      createdAt: m.createdAt,
+    }).returning().get();
+    db.update(communityTopics).set({ lastMessageAt: m.createdAt }).where(eq(communityTopics.id, m.topicId)).run();
+    return row;
+  }
+  async listCommunityMessagesForTopic(topicId: number) {
+    return db
+      .select({
+        id: communityMessages.id,
+        topicId: communityMessages.topicId,
+        senderId: communityMessages.senderId,
+        senderRole: communityMessages.senderRole,
+        senderName: communityMessages.senderName,
+        body: communityMessages.body,
+        attachmentUrl: communityMessages.attachmentUrl,
+        attachmentType: communityMessages.attachmentType,
+        attachmentName: communityMessages.attachmentName,
+        replyToMessageId: communityMessages.replyToMessageId,
+        createdAt: communityMessages.createdAt,
+        deletedAt: communityMessages.deletedAt,
+        deletedByName: communityMessages.deletedByName,
+        editedAt: communityMessages.editedAt,
+        senderPhotoUrl: users.photoUrl,
+      })
+      .from(communityMessages)
+      .leftJoin(users, eq(communityMessages.senderId, users.id))
+      .where(eq(communityMessages.topicId, topicId))
+      .orderBy(communityMessages.createdAt)
+      .all();
+  }
+  async getCommunityMessage(id: number) {
+    return db.select().from(communityMessages).where(eq(communityMessages.id, id)).get();
+  }
+  async deleteCommunityMessage(id: number, deletedByName: string) {
+    return db.update(communityMessages)
+      .set({ deletedAt: Date.now(), deletedByName })
+      .where(eq(communityMessages.id, id))
+      .returning()
+      .get();
+  }
+  async countCommunityMessagesForTopic(topicId: number) {
+    return db.select().from(communityMessages).where(eq(communityMessages.topicId, topicId)).all().length;
+  }
+
+  // ---------- community read receipts ----------
+  async markCommunityMessagesRead(messageIds: number[], userId: number, userName: string) {
+    if (messageIds.length === 0) return;
+    const already = new Set(
+      db.select({ messageId: communityMessageReads.messageId }).from(communityMessageReads)
+        .where(and(inArray(communityMessageReads.messageId, messageIds), eq(communityMessageReads.userId, userId)))
+        .all().map((r) => r.messageId)
+    );
+    const now = Date.now();
+    for (const messageId of messageIds) {
+      if (already.has(messageId)) continue;
+      db.insert(communityMessageReads).values({ messageId, userId, userName, readAt: now }).run();
+    }
+  }
+  async getCommunityReadsForMessages(messageIds: number[]) {
+    if (messageIds.length === 0) return [];
+    return db.select().from(communityMessageReads).where(inArray(communityMessageReads.messageId, messageIds)).all();
+  }
+  async getUnreadCommunityMessageIds(topicId: number, userId: number) {
+    const msgIds = db.select({ id: communityMessages.id }).from(communityMessages).where(eq(communityMessages.topicId, topicId)).all().map((r) => r.id);
+    if (msgIds.length === 0) return [];
+    const readIds = new Set(
+      db.select({ messageId: communityMessageReads.messageId }).from(communityMessageReads)
+        .where(and(inArray(communityMessageReads.messageId, msgIds), eq(communityMessageReads.userId, userId)))
+        .all().map((r) => r.messageId)
+    );
+    return msgIds.filter((id) => !readIds.has(id));
+  }
+  async countUnreadCommunityTopicsForUser(userId: number) {
+    const topics = db.select().from(communityTopics).where(isNull(communityTopics.archivedAt)).all();
+    let count = 0;
+    for (const t of topics) {
+      const unread = await this.getUnreadCommunityMessageIds(t.id, userId);
+      // Don't count a topic as unread solely because of the current user's
+      // own messages within it.
+      const unreadFromOthers = unread.filter((id) => {
+        const msg = db.select().from(communityMessages).where(eq(communityMessages.id, id)).get();
+        return msg && msg.senderId !== userId;
+      });
+      if (unreadFromOthers.length > 0) count++;
+    }
+    return count;
+  }
+
+  // ---------- MAHA Standing (internal engagement scoring) ----------
+  async awardStandingPoints(args: { userId: number; category: string; points: number; sourceType?: string; sourceId?: number }) {
+    const now = Date.now();
+    const user = db.select().from(users).where(eq(users.id, args.userId)).get();
+    if (!user) throw new Error("User not found for standing award");
+    const prevTier = standingTierForPoints(user.standingPoints);
+    const entry = db.insert(standingEntries).values({
+      userId: args.userId,
+      category: args.category,
+      points: args.points,
+      sourceType: args.sourceType ?? null,
+      sourceId: args.sourceId ?? null,
+      createdAt: now,
+    }).returning().get();
+    const newTotal = user.standingPoints + args.points;
+    db.update(users).set({ standingPoints: newTotal }).where(eq(users.id, args.userId)).run();
+    const newTier = standingTierForPoints(newTotal);
+    return { entry, newTierKey: newTier.key !== prevTier.key ? newTier.key : null };
+  }
+
+  async countStandingEntriesToday(userId: number, sourceType: string) {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const rows = db.select().from(standingEntries)
+      .where(and(eq(standingEntries.userId, userId), eq(standingEntries.sourceType, sourceType), gte(standingEntries.createdAt, startOfDay.getTime())))
+      .all();
+    return rows.length;
+  }
+
+  async hasStandingEntry(userId: number, sourceType: string, sourceId?: number) {
+    const conditions = [eq(standingEntries.userId, userId), eq(standingEntries.sourceType, sourceType)];
+    if (sourceId !== undefined) conditions.push(eq(standingEntries.sourceId, sourceId));
+    const row = db.select().from(standingEntries).where(and(...conditions)).get();
+    return !!row;
+  }
+
+  async getStandingSummaryForUser(userId: number) {
+    const user = db.select().from(users).where(eq(users.id, userId)).get();
+    const points = user?.standingPoints ?? 0;
+    return { points, tier: standingTierForPoints(points) };
+  }
+
+  async listStandingSummaries() {
+    const rows = db.select().from(users).all();
+    return rows.map((u) => {
+      const tier = standingTierForPoints(u.standingPoints);
+      return { userId: u.id, userName: u.name, userRole: u.role, points: u.standingPoints, tierKey: tier.key, tierLabel: tier.label };
+    }).sort((a, b) => b.points - a.points);
+  }
+
+  async listStandingEntriesForUser(userId: number) {
+    return db.select().from(standingEntries).where(eq(standingEntries.userId, userId)).orderBy(desc(standingEntries.createdAt)).all();
+  }
+
+  async createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number }) {
+    return db.insert(standingRewards).values({ ...r, status: "pending" }).returning().get();
+  }
+
+  async listStandingRewards(status?: string) {
+    const rows = status
+      ? db.select().from(standingRewards).where(eq(standingRewards.status, status)).orderBy(desc(standingRewards.createdAt)).all()
+      : db.select().from(standingRewards).orderBy(desc(standingRewards.createdAt)).all();
+    return rows.map((r) => {
+      const user = db.select().from(users).where(eq(users.id, r.userId)).get();
+      return { ...r, userName: user?.name ?? "Unknown" };
+    });
+  }
+
+  async fulfillStandingReward(id: number, fulfilledByName: string, note?: string) {
+    return db.update(standingRewards)
+      .set({ status: "fulfilled", fulfilledAt: Date.now(), fulfilledByName, fulfillmentNote: note ?? null })
+      .where(eq(standingRewards.id, id))
+      .returning().get();
   }
 }
 

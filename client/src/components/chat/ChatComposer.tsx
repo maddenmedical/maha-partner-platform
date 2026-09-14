@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, API_BASE } from "@/lib/queryClient";
 import { EmojiPicker } from "./EmojiPicker";
-import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, Stethoscope, MessageSquare, Plus } from "lucide-react";
+import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, Stethoscope, MessageSquare, Plus, Reply } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { type MentionCandidate, findActiveMention, formatMentionToken, newChatMentionLabel } from "@/lib/chatMentions";
@@ -19,12 +19,21 @@ export interface PendingAttachment {
   type: "image" | "video" | "audio" | "document";
 }
 
+export interface ReplyContext {
+  id: number;
+  senderName: string;
+  snippet: string;
+}
+
 interface ChatComposerProps {
   uploadUrl: string;
   threadId: number;
-  onSend: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) => Promise<unknown> | unknown;
+  onSend: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string; replyToMessageId?: number }) => Promise<unknown> | unknown;
   sending?: boolean;
   testIdPrefix?: string;
+  disableAttachments?: boolean;
+  replyingTo?: ReplyContext | null;
+  onCancelReply?: () => void;
   // Other chats (and unlinked referrals) with the same partner that "@" can
   // reference -- typing "@" and picking one drops in a jump-link the reader
   // can click to switch straight to that conversation. Omit or pass [] to
@@ -37,12 +46,16 @@ interface ChatComposerProps {
   // round-trip. Required for "referral"/"new" candidates to be selectable;
   // omit to only offer direct thread jumps.
   onResolveMention?: (candidate: MentionCandidate, query: string) => Promise<{ id: number; label: string }>;
+  // Overrides the default composer placeholder. Use this when the mention
+  // feature ("@ to link another chat") is not wired up for this surface --
+  // the default text would otherwise advertise a feature that does nothing.
+  placeholder?: string;
 }
 
 // Voice notes are always recorded as real audio via MediaRecorder and sent as
 // a normal audio attachment the recipient can play back -- no speech-to-text,
 // no transcription. Server-side transcription (Whisper) is out of scope.
-export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", mentionThreads = [], onResolveMention }: ChatComposerProps) {
+export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", disableAttachments, replyingTo, onCancelReply, mentionThreads = [], onResolveMention, placeholder }: ChatComposerProps) {
   const { toast } = useToast();
   const [body, setBody] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -191,16 +204,33 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
       attachmentUrl: pendingAttachment?.url,
       attachmentType: pendingAttachment?.type,
       attachmentName: pendingAttachment?.name,
+      replyToMessageId: replyingTo?.id,
     });
     setBody("");
     setPendingAttachment(null);
     setMention(null);
+    onCancelReply?.();
   }
 
   const busy = uploading || sending || recording;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t border-border pt-3">
+      {replyingTo && (
+        <div
+          className="flex items-center gap-2 rounded-md border-l-2 border-primary bg-muted/50 px-2.5 py-1.5 text-xs"
+          data-testid={`${testIdPrefix}-reply-preview`}
+        >
+          <Reply className="h-3.5 w-3.5 text-primary shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-primary truncate" data-testid={`${testIdPrefix}-reply-preview-name`}>{replyingTo.senderName}</p>
+            <p className="text-muted-foreground truncate">{replyingTo.snippet}</p>
+          </div>
+          <button type="button" onClick={onCancelReply} data-testid={`button-${testIdPrefix}-cancel-reply`} aria-label="Cancel reply">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       {pendingAttachment && (
         <div
           className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2 py-1.5 text-xs"
@@ -267,42 +297,48 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             )}
           </div>
         )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="sr-only"
-          onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
-          data-testid={`input-${testIdPrefix}-attachment`}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="shrink-0"
-          disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
-          data-testid={`button-${testIdPrefix}-attach`}
-        >
-          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-        </Button>
+        {!disableAttachments && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="sr-only"
+            onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
+            data-testid={`input-${testIdPrefix}-attachment`}
+          />
+        )}
+        {!disableAttachments && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+            data-testid={`button-${testIdPrefix}-attach`}
+          >
+            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+          </Button>
+        )}
         <EmojiPicker onSelect={(e) => setBody((b) => b + e)} testId={`button-${testIdPrefix}-emoji`} />
-        <Button
-          type="button"
-          variant={recording ? "destructive" : "ghost"}
-          size="icon"
-          className="shrink-0"
-          disabled={uploading || sending}
-          onClick={handleMicClick}
-          data-testid={`button-${testIdPrefix}-mic`}
-        >
-          {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-        </Button>
+        {!disableAttachments && (
+          <Button
+            type="button"
+            variant={recording ? "destructive" : "ghost"}
+            size="icon"
+            className="shrink-0"
+            disabled={uploading || sending}
+            onClick={handleMicClick}
+            data-testid={`button-${testIdPrefix}-mic`}
+          >
+            {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </Button>
+        )}
         <Textarea
           ref={textareaRef}
           value={body}
           disabled={mentionResolving}
           onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
-          placeholder="Type a message... (@ to link another chat)"
+          placeholder={placeholder ?? "Type a message... (@ to link another chat)"}
           rows={1}
           className="resize-none min-h-9"
           onKeyDown={(e) => {

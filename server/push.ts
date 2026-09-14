@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import type { PushSubscriptionRow } from "@shared/schema";
+import { storage } from "./storage";
 
 let configured = false;
 
@@ -24,6 +25,10 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string | null;
+  // "silent" tells the service worker to bump the app-icon badge instead of
+  // showing a system notification. badgeCount is the running total to set.
+  silent?: boolean;
+  badgeCount?: number;
 }
 
 export interface SendResult {
@@ -64,5 +69,83 @@ export async function sendToSubscriptions(
     }),
   );
 
+  if (removedEndpoints.length > 0) {
+    await storage.deletePushSubscriptionsByEndpoints(removedEndpoints);
+  }
+
   return { sent, failed, removedEndpoints };
+}
+
+// ---------------------------------------------------------------------------
+// Preference-aware notifications
+//
+// Every push a user receives falls into one of four categories they control
+// independently (community / chat / orders / offers), each with its own
+// on/off switch and delivery style:
+//   - "silent"  -- app-icon badge count only, no sound or popup
+//   - "alert"   -- tone + popup, generic text (no message content revealed)
+//   - "preview" -- tone + popup with the actual content (platform default)
+// notifyUsers() is the single place that turns a caller's "what happened"
+// description into the right payload for each recipient's own preference,
+// so route handlers never have to branch on style themselves.
+// ---------------------------------------------------------------------------
+
+export type NotificationCategory = "community" | "chat" | "orders" | "offers";
+
+export interface NotifyContent {
+  // Shown for "alert" style -- must not reveal message/order content.
+  genericTitle: string;
+  genericBody: string;
+  // Shown for "preview" style -- the real content, e.g.
+  // `Dr. Moreira just opened a new Community thread called "..."`.
+  previewTitle: string;
+  previewBody: string;
+  url?: string | null;
+}
+
+const CATEGORY_COLS: Record<NotificationCategory, { enabled: string; style: string }> = {
+  community: { enabled: "notifyCommunityEnabled", style: "notifyCommunityStyle" },
+  chat: { enabled: "notifyChatEnabled", style: "notifyChatStyle" },
+  orders: { enabled: "notifyOrdersEnabled", style: "notifyOrdersStyle" },
+  offers: { enabled: "notifyOffersEnabled", style: "notifyOffersStyle" },
+};
+
+// Sends one notification per recipient, each shaped by that recipient's own
+// category preference. userIds with the category disabled are skipped
+// entirely (not even a silent badge bump). Safe to call with an empty list.
+export async function notifyUsers(
+  userIds: number[],
+  category: NotificationCategory,
+  content: NotifyContent,
+): Promise<void> {
+  const uniqueIds = Array.from(new Set(userIds));
+  if (uniqueIds.length === 0) return;
+  const cols = CATEGORY_COLS[category];
+
+  await Promise.all(
+    uniqueIds.map(async (userId) => {
+      const user = await storage.getUser(userId);
+      if (!user) return;
+      const enabled = (user as any)[cols.enabled];
+      if (!enabled) return;
+      const style: string = (user as any)[cols.style] || "preview";
+
+      const subs = await storage.getPushSubscriptionsForUserIds([userId]);
+      if (subs.length === 0 && style !== "silent") return;
+
+      let payload: PushPayload;
+      if (style === "silent") {
+        const nextCount = (user.unreadBadgeCount ?? 0) + 1;
+        await storage.updateUserProfile(userId, { unreadBadgeCount: nextCount });
+        if (subs.length === 0) return;
+        payload = { title: "", body: "", silent: true, badgeCount: nextCount, url: content.url ?? null };
+      } else if (style === "alert") {
+        payload = { title: content.genericTitle, body: content.genericBody, url: content.url ?? null };
+      } else {
+        payload = { title: content.previewTitle, body: content.previewBody, url: content.url ?? null };
+      }
+
+      await sendToSubscriptions(subs, payload);
+    }),
+  );
 }

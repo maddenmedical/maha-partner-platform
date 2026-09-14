@@ -30,7 +30,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical,
 } from "lucide-react";
 
 const navItems = [
@@ -41,6 +41,7 @@ const navItems = [
   { href: "/admin/videos", label: "Videos", icon: Video, testId: "link-admin-videos" },
   { href: "/admin/institute", label: "Institute", icon: GraduationCap, testId: "link-admin-institute" },
   { href: "/admin/chat", label: "Chat Inbox", icon: MessageSquare, testId: "link-admin-chat" },
+  { href: "/admin/community", label: "Community", icon: Users2, testId: "link-admin-community" },
   { href: "/admin/todos", label: "To-Dos", icon: ListTodo, testId: "link-admin-todos" },
   { href: "/admin/team", label: "Team", icon: Users, testId: "link-admin-team" },
   { href: "/admin/partners", label: "Partners & Students", icon: Contact, testId: "link-admin-partners" },
@@ -112,11 +113,13 @@ function AdminSidebar() {
   const { data: referrals } = useQuery<Referral[]>({ queryKey: ["/api/admin/referrals"], refetchInterval: 15000 });
   const { data: orders } = useQuery<Order[]>({ queryKey: ["/api/admin/orders"], refetchInterval: 15000 });
   const { data: threads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/admin/chat/threads"], refetchInterval: 15000 });
+  const { data: communityUnread } = useQuery<{ count: number }>({ queryKey: ["/api/community/unread-count"], refetchInterval: 15000 });
 
   const badgeCounts: Record<string, number> = {
     "/admin/referrals": referrals?.filter((r) => r.status === "New").length ?? 0,
     "/admin/orders": orders?.filter((o) => o.status === "Requested").length ?? 0,
     "/admin/chat": threads?.filter((t) => t.unread).length ?? 0,
+    "/admin/community": communityUnread?.count ?? 0,
   };
 
   // Saved order is a JSON array of hrefs on the admin's own account, so it

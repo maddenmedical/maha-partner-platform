@@ -72,6 +72,36 @@ export const users = sqliteTable("users", {
   // means "use the default order". Server-managed only — never part of
   // registration or profile-edit payloads.
   adminNavOrder: text("admin_nav_order"),
+  // ---- Community Chat visibility (self-chosen) ----
+  // Title + name are always shown to fellow Community members and are not
+  // configurable. Phone/email are private by default; a member opts in here.
+  communityShowPhone: integer("community_show_phone", { mode: "boolean" }).notNull().default(false),
+  communityShowEmail: integer("community_show_email", { mode: "boolean" }).notNull().default(false),
+  // Admin-only moderation: blocks a member from posting/reading Community
+  // Chat without touching their platform account otherwise. Null = not blocked.
+  communityBlockedAt: integer("community_blocked_at"),
+  // ---- Push notification preferences, per category ----
+  // "silent" = app-icon badge count only, no sound/popup. "alert" = tone +
+  // popup with generic text (no message content). "preview" = tone + popup
+  // with the actual content (default for every category; user-adjustable).
+  notifyCommunityEnabled: integer("notify_community_enabled", { mode: "boolean" }).notNull().default(true),
+  notifyCommunityStyle: text("notify_community_style").notNull().default("preview"),
+  notifyChatEnabled: integer("notify_chat_enabled", { mode: "boolean" }).notNull().default(true),
+  notifyChatStyle: text("notify_chat_style").notNull().default("preview"),
+  notifyOrdersEnabled: integer("notify_orders_enabled", { mode: "boolean" }).notNull().default(true),
+  notifyOrdersStyle: text("notify_orders_style").notNull().default("preview"),
+  notifyOffersEnabled: integer("notify_offers_enabled", { mode: "boolean" }).notNull().default(true),
+  notifyOffersStyle: text("notify_offers_style").notNull().default("preview"),
+  // Running count for the "silent" style's app-icon badge (Badging API).
+  // Incremented on each qualifying silent-style event, reset to 0 whenever
+  // the app confirms the user has opened/focused it.
+  unreadBadgeCount: integer("unread_badge_count").notNull().default(0),
+  // MAHA Standing (internal engagement scoring) -- denormalized running
+  // total kept in sync with standingEntries so admin lists can sort/filter
+  // by points without summing the ledger on every request. The member's
+  // own tier (derived from this via STANDING_TIERS) is the only thing ever
+  // shown to them -- never the raw number or how it was earned.
+  standingPoints: integer("standing_points").notNull().default(0),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -168,6 +198,25 @@ export const updateProfileSchema = z.object({
     .optional(),
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+
+// Self-service Community Chat visibility toggle -- title + name are always
+// shown to fellow members and are not part of this schema; phone/email are
+// opt-in only.
+export const communityVisibilitySchema = z.object({
+  communityShowPhone: z.boolean().optional(),
+  communityShowEmail: z.boolean().optional(),
+});
+export type CommunityVisibilityInput = z.infer<typeof communityVisibilitySchema>;
+
+// Self-service push notification preferences -- one category at a time.
+export const NOTIFICATION_CATEGORIES = ["community", "chat", "orders", "offers"] as const;
+export const NOTIFICATION_STYLES = ["silent", "alert", "preview"] as const;
+export const updateNotificationPreferenceSchema = z.object({
+  category: z.enum(NOTIFICATION_CATEGORIES),
+  enabled: z.boolean().optional(),
+  style: z.enum(NOTIFICATION_STYLES).optional(),
+});
+export type UpdateNotificationPreferenceInput = z.infer<typeof updateNotificationPreferenceSchema>;
 
 // Admin-initiated edit of another user's core contact details -- deliberately
 // narrower than updateProfileSchema. Scope is name, email, phone, and photo;
@@ -714,6 +763,10 @@ export const chatMessages = sqliteTable("chat_messages", {
   attachmentUrl: text("attachment_url"),
   attachmentType: text("attachment_type"), // 'image' | 'video' | 'document' | 'audio' (voice note)
   attachmentName: text("attachment_name"),
+  // Swipe-to-reply: points at the message this one is quoting. Null for an
+  // ordinary (non-reply) message. The quoted snippet is resolved at read
+  // time from this id -- nothing about the original is duplicated here.
+  replyToMessageId: integer("reply_to_message_id"),
   createdAt: integer("created_at").notNull(),
   // Soft delete (admin-only). Kept as a row (not removed) so thread flow,
   // reactions, flags, and admin to-dos linked to this messageId stay valid.
@@ -845,3 +898,181 @@ export const createAnnouncementSchema = z.object({
   audience: z.enum(["all", "partners", "students"]),
 });
 export type CreateAnnouncementInput = z.infer<typeof createAnnouncementSchema>;
+
+// ---------- APP SETTINGS (simple key/value flags) ----------
+// Minimal global switches, e.g. the Community Chat kill switch. Kept
+// separate from any one table since it's not tied to a specific record.
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+export type AppSetting = typeof appSettings.$inferSelect;
+export const COMMUNITY_ENABLED_KEY = "community_enabled";
+
+// ---------- COMMUNITY CHAT (Partner Community, admin-toggleable) ----------
+// Topic-based, forum-like discussion open to partners, students, and admins.
+// Deliberately NOT a single scrolling feed -- every discussion lives in its
+// own named topic so conversations stay organized (the whole point vs. a
+// WhatsApp group). No private messaging exists anywhere in this feature.
+// Gated behind appSettings[COMMUNITY_ENABLED_KEY] so it can be switched off
+// instantly, without losing any data, if not approved or needs changes.
+export const communityTopics = sqliteTable("community_topics", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  createdByUserId: integer("created_by_user_id").notNull(),
+  createdByName: text("created_by_name").notNull(),
+  createdByRole: text("created_by_role").notNull(), // 'partner' | 'student' | 'admin'
+  // Bumped to the newest message's createdAt on every post, so the topic
+  // list can sort by recent activity without a join.
+  lastMessageAt: integer("last_message_at").notNull(),
+  // Admin-only reversible hide, same pattern as chatThreads.archivedAt.
+  archivedAt: integer("archived_at"),
+  createdAt: integer("created_at").notNull(),
+});
+export const insertCommunityTopicSchema = createInsertSchema(communityTopics).omit({
+  id: true, lastMessageAt: true, archivedAt: true, createdAt: true,
+});
+export type InsertCommunityTopic = z.infer<typeof insertCommunityTopicSchema>;
+export type CommunityTopic = typeof communityTopics.$inferSelect;
+
+// Payload for creating a topic: a title plus its first message in one call.
+export const createCommunityTopicSchema = z.object({
+  title: z.string().min(1, "Give the topic a title").max(140, "Keep the title under 140 characters"),
+  body: z.string().max(5000).optional().default(""),
+  attachmentUrl: z.string().optional().nullable(),
+  attachmentType: z.string().optional().nullable(),
+  attachmentName: z.string().optional().nullable(),
+});
+export type CreateCommunityTopicInput = z.infer<typeof createCommunityTopicSchema>;
+
+// ---------- COMMUNITY MESSAGES ----------
+export const communityMessages = sqliteTable("community_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  topicId: integer("topic_id").notNull(),
+  senderId: integer("sender_id").notNull(),
+  senderRole: text("sender_role").notNull(), // 'partner' | 'student' | 'admin'
+  senderName: text("sender_name").notNull(),
+  body: text("body").notNull(),
+  attachmentUrl: text("attachment_url"),
+  attachmentType: text("attachment_type"),
+  attachmentName: text("attachment_name"),
+  // Swipe-to-reply, same contract as chatMessages.replyToMessageId.
+  replyToMessageId: integer("reply_to_message_id"),
+  createdAt: integer("created_at").notNull(),
+  // Admin-only soft delete, same pattern as chatMessages.
+  deletedAt: integer("deleted_at"),
+  deletedByName: text("deleted_by_name"),
+  editedAt: integer("edited_at"),
+});
+export const insertCommunityMessageSchema = createInsertSchema(communityMessages).omit({
+  id: true, createdAt: true, deletedAt: true, deletedByName: true, editedAt: true,
+});
+export type InsertCommunityMessage = z.infer<typeof insertCommunityMessageSchema>;
+export type CommunityMessage = typeof communityMessages.$inferSelect;
+
+export const postCommunityMessageSchema = z.object({
+  body: z.string().max(5000).optional().default(""),
+  attachmentUrl: z.string().optional().nullable(),
+  attachmentType: z.string().optional().nullable(),
+  attachmentName: z.string().optional().nullable(),
+  replyToMessageId: z.number().int().positive().optional().nullable(),
+});
+export type PostCommunityMessageInput = z.infer<typeof postCommunityMessageSchema>;
+
+// ---------- COMMUNITY MESSAGE READS ----------
+// WhatsApp-style bulk read receipts: opening a topic marks every currently
+// unread message as read for that user in a single batch stamped with one
+// "opened at" time -- not per-message scroll tracking. One row per
+// (messageId, userId). Surfaced ONLY to admins (who viewed a message and
+// when); regular members never see anyone else's read state.
+export const communityMessageReads = sqliteTable("community_message_reads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  messageId: integer("message_id").notNull(),
+  userId: integer("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  readAt: integer("read_at").notNull(),
+});
+export type CommunityMessageRead = typeof communityMessageReads.$inferSelect;
+
+// ---------- MAHA STANDING (internal engagement scoring, admin-only) ----------
+// Recognizes and rewards genuine app activity -- referrals, purchases,
+// education, community participation. Two hard rules drive the design:
+//   1. Members only ever see their tier name (e.g. "Connector") and a vague
+//      progress indicator -- never the raw point total, never a breakdown
+//      of what earns points. This is internal-only, for admin visibility.
+//   2. Patient-referral activity is logged under the generic "app_activity"
+//      category with NO link back to a specific referral record (sourceId
+//      stays null) and NO bonus tied to referral outcome/completion. This
+//      keeps the ledger from ever attributing a reward to a specific
+//      patient referral -- avoiding anything that could look like a
+//      referral commission/kickback for a healthcare professional.
+export const STANDING_CATEGORIES = ["app_activity", "shop", "education", "learning", "community"] as const;
+export type StandingCategory = (typeof STANDING_CATEGORIES)[number];
+
+export const standingEntries = sqliteTable("standing_entries", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  category: text("category").notNull(), // one of STANDING_CATEGORIES
+  points: integer("points").notNull(),
+  // Never populated for category='app_activity' (referral-driven) entries --
+  // see note above. Used for shop/education/learning/community entries only,
+  // so an admin debugging "why did this user get points on this date" can
+  // trace it back to the order/submission/post that earned them.
+  sourceType: text("source_type"),
+  sourceId: integer("source_id"),
+  createdAt: integer("created_at").notNull(),
+});
+export type StandingEntry = typeof standingEntries.$inferSelect;
+
+// Cumulative lifetime points (never decays). Reward is what's granted the
+// moment a member crosses into that tier -- fulfilled by an admin via the
+// standingRewards queue below, not automated at checkout (no discount/coupon
+// infrastructure exists yet).
+export const STANDING_TIERS = [
+  { key: "newcomer", label: "Newcomer", minPoints: 0, reward: null as string | null },
+  { key: "active_member", label: "Active Member", minPoints: 100, reward: "5% shop discount code" },
+  { key: "connector", label: "Connector", minPoints: 350, reward: "10% shop discount code" },
+  { key: "mentor", label: "Mentor", minPoints: 800, reward: "\u20ac25 shop credit" },
+  { key: "maha_fellow", label: "MAHA Fellow", minPoints: 1500, reward: "Personal outreach from MAHA -- no automated reward" },
+] as const;
+export type StandingTierKey = (typeof STANDING_TIERS)[number]["key"];
+
+export function standingTierForPoints(points: number): (typeof STANDING_TIERS)[number] {
+  let current: (typeof STANDING_TIERS)[number] = STANDING_TIERS[0];
+  for (const tier of STANDING_TIERS) {
+    if (points >= tier.minPoints) current = tier;
+  }
+  return current;
+}
+
+// One-time-per-activity point values. Referral points are intentionally the
+// same order of magnitude as other high-effort activities, not a multiple
+// of them -- see the category note above for why no outcome-based bonus
+// exists.
+export const STANDING_POINTS: Record<string, number> = {
+  referral_submitted: 50, // category: app_activity, no sourceId
+  order_confirmed_per_5_eur: 1, // category: shop, sourceId = order id
+  student_approved: 100, // category: education, sourceId = user id
+  institute_application_submitted: 30, // category: education, sourceId = application id
+  homework_submitted: 20, // category: education, sourceId = submission id
+  video_completed: 5, // category: learning, sourceId = video id, capped 3/day
+  community_message_posted: 2, // category: community, sourceId = message id, capped 5/day
+  community_topic_created: 10, // category: community, sourceId = topic id
+  community_welcome_posted: 20, // category: community, one-time
+};
+
+// Pending reward fulfillment queue (Phase 1: manual). An admin marks a
+// reward fulfilled once the discount code/credit has actually been issued
+// by hand -- see fulfillmentNote for what was sent.
+export const standingRewards = sqliteTable("standing_rewards", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  tierKey: text("tier_key").notNull(),
+  rewardDescription: text("reward_description").notNull(),
+  status: text("status").notNull().default("pending"), // 'pending' | 'fulfilled'
+  createdAt: integer("created_at").notNull(),
+  fulfilledAt: integer("fulfilled_at"),
+  fulfilledByName: text("fulfilled_by_name"),
+  fulfillmentNote: text("fulfillment_note"),
+});
+export type StandingReward = typeof standingRewards.$inferSelect;

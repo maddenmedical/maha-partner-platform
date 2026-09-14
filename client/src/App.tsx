@@ -18,7 +18,7 @@ import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPa
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare, CalendarClock } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, GraduationCap, FileUp, MessageSquare, CalendarClock, Users2 } from "lucide-react";
 
 import PartnerHome from "@/pages/partner/PartnerHome";
 import ReferPatient from "@/pages/partner/ReferPatient";
@@ -30,6 +30,7 @@ import MyClasses from "@/pages/student/MyClasses";
 import Homework from "@/pages/student/Homework";
 
 import Chat from "@/pages/Chat";
+import Community from "@/pages/Community";
 import Account from "@/pages/Account";
 
 import PendingApprovals from "@/pages/admin/PendingApprovals";
@@ -39,6 +40,7 @@ import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminVideos from "@/pages/admin/AdminVideos";
 import AdminInstitute from "@/pages/admin/AdminInstitute";
 import AdminChatInbox from "@/pages/admin/AdminChatInbox";
+import AdminCommunity from "@/pages/admin/AdminCommunity";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminPartners from "@/pages/admin/AdminPartners";
 import AdminAnnouncements from "@/pages/admin/AdminAnnouncements";
@@ -56,6 +58,7 @@ const partnerTabs: TabItem[] = [
   { href: "/shop", label: "Shop", icon: ShoppingCart, testId: "tab-shop" },
   { href: "/videos", label: "Learn", icon: GraduationCap, testId: "tab-education" },
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
+  { href: "/community", label: "Community", icon: Users2, testId: "tab-community" },
 ];
 
 // A student has everything a partner has (referrals, shop, the paid video
@@ -69,6 +72,7 @@ const studentTabs: TabItem[] = [
   { href: "/classes", label: "Classes", icon: CalendarClock, testId: "tab-classes" },
   { href: "/homework", label: "Homework", icon: FileUp, testId: "tab-homework" },
   { href: "/chat", label: "Chat", icon: MessageSquare, testId: "tab-chat" },
+  { href: "/community", label: "Community", icon: Users2, testId: "tab-community" },
 ];
 
 const ADMIN_TITLES: Record<string, string> = {
@@ -79,6 +83,7 @@ const ADMIN_TITLES: Record<string, string> = {
   "/admin/videos": "Videos",
   "/admin/institute": "Institute",
   "/admin/chat": "Chat Inbox",
+  "/admin/community": "Community",
   "/admin/team": "Team",
   "/admin/partners": "All Partners",
   "/admin/announcements": "Announcements",
@@ -100,6 +105,7 @@ function PartnerApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
+        <Route path="/community" component={Community} />
         <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
@@ -127,6 +133,7 @@ function StudentApp() {
         <Route path="/chat">
           <Chat label="Chat with MAHA Team" />
         </Route>
+        <Route path="/community" component={Community} />
         <Route path="/account" component={Account} />
         <Route component={NotFound} />
       </Switch>
@@ -157,6 +164,9 @@ function AdminApp() {
       </Route>
       <Route path="/admin/chat">
         <AdminLayout title={ADMIN_TITLES["/admin/chat"]}><AdminChatInbox /></AdminLayout>
+      </Route>
+      <Route path="/admin/community">
+        <AdminLayout title={ADMIN_TITLES["/admin/community"]}><AdminCommunity /></AdminLayout>
       </Route>
       <Route path="/admin/team">
         <AdminLayout title={ADMIN_TITLES["/admin/team"]}><AdminTeam /></AdminLayout>

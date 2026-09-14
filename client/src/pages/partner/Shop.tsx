@@ -101,7 +101,13 @@ export default function Shop() {
   const [activeTab, setActiveTab] = useState<string>(() => (readHashParams().get("tab") === "orders" ? "orders" : "catalog"));
 
   useEffect(() => {
-    if (readHashParams().get("tab")) clearHashParams();
+    // Deep-link support for announcement/notification links: "#/shop?product=5"
+    // opens that product's detail dialog on load; "#/shop?tab=orders" switches
+    // tab (handled by the initializer above). Both are one-shot -- strip the
+    // query off the hash immediately so back/refresh doesn't re-trigger them.
+    const productId = readHashParams().get("product");
+    if (productId && !Number.isNaN(Number(productId))) setDetailProductId(Number(productId));
+    if (readHashParams().get("tab") || productId) clearHashParams();
   }, []);
 
   const { data: products, isLoading } = useQuery<ProductWithTiers[]>({ queryKey: ["/api/products"] });

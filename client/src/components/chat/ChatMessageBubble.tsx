@@ -3,7 +3,8 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X, MoreVertical } from "lucide-react";
+import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X, MoreVertical, Reply, CornerUpLeft } from "lucide-react";
+import { useSwipeToReply } from "./useSwipeToReply";
 import { EmojiPicker, QUICK_EMOJIS } from "./EmojiPicker";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,11 @@ export interface ChatMessageWithMeta extends ChatMessage {
   senderPhotoUrl?: string | null;
 }
 
+export interface QuotedMessage {
+  senderName: string;
+  snippet: string;
+}
+
 interface ChatMessageBubbleProps {
   message: ChatMessageWithMeta;
   isMe: boolean;
@@ -87,9 +93,21 @@ interface ChatMessageBubbleProps {
   // chip inside this message (see chatMentions.ts). Omit to render chips
   // as plain inert labels.
   onNavigateToThread?: (threadId: number) => void;
+  // Swipe-to-reply / tap-Reply support. `quoted` is a pre-resolved lookup
+  // of the message this one replies to (the bubble itself has no message
+  // list to search) -- pass it whenever `message.replyToMessageId` is set
+  // so the quoted preview above the body can render; omit to hide reply
+  // affordances entirely (e.g. while a message list hasn't loaded yet).
+  onReply?: (messageId: number) => void;
+  quoted?: QuotedMessage | null;
+  // Community Chat has no backend flag/reaction support -- set both to hide
+  // the Star (flag) button and all reaction/emoji-picker UI for that caller
+  // rather than wiring onToggleFlag/onReact to no-ops.
+  hideFlag?: boolean;
+  hideReactions?: boolean;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions }: ChatMessageBubbleProps) {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(m.body || "");
@@ -112,6 +130,8 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
     pressStartRef.current = null;
   }
 
+  const swipe = useSwipeToReply(() => onReply?.(m.id));
+
   function handleBubblePointerDown(e: React.PointerEvent) {
     if (e.pointerType !== "touch" || isEditing) return;
     pressStartRef.current = { x: e.clientX, y: e.clientY };
@@ -125,10 +145,27 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
   }
 
   function handleBubblePointerMove(e: React.PointerEvent) {
+    swipe.handlers.onPointerMove(e);
+    if (swipe.isSwiping) clearPressTimer();
     if (!pressStartRef.current) return;
     const dx = Math.abs(e.clientX - pressStartRef.current.x);
     const dy = Math.abs(e.clientY - pressStartRef.current.y);
     if (dx > LONG_PRESS_MOVE_TOLERANCE_PX || dy > LONG_PRESS_MOVE_TOLERANCE_PX) clearPressTimer();
+  }
+
+  function handleBubblePointerDownMerged(e: React.PointerEvent) {
+    swipe.handlers.onPointerDown(e);
+    handleBubblePointerDown(e);
+  }
+
+  function handleBubblePointerUpMerged(e: React.PointerEvent) {
+    swipe.handlers.onPointerUp(e);
+    clearPressTimer();
+  }
+
+  function handleBubblePointerCancelMerged(e: React.PointerEvent) {
+    swipe.handlers.onPointerCancel(e);
+    clearPressTimer();
   }
 
   function startEdit() {
@@ -190,23 +227,42 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
     >
       <div className="flex items-start gap-1">
         {!isMe && <UserAvatar photoUrl={m.senderPhotoUrl} name={m.senderName} size="sm" className="mt-1" />}
-        {!isMe && (
+        {!isMe && !hideReactions && (
           <div className="hidden sm:block">
             <ReactionTrigger messageId={m.id} onReact={onReact} order="before" />
           </div>
+        )}
+        <div className="relative" style={swipe.bubbleStyle}>
+        {swipe.showIcon && (
+          <CornerUpLeft
+            className="absolute top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none"
+            style={swipe.iconStyle}
+          />
         )}
         <div
           className={cn(
             "rounded-lg px-3 py-2 text-sm flex flex-col gap-1.5 touch-manipulation",
             isMe ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
           )}
-          onPointerDown={handleBubblePointerDown}
+          onPointerDown={handleBubblePointerDownMerged}
           onPointerMove={handleBubblePointerMove}
-          onPointerUp={clearPressTimer}
+          onPointerUp={handleBubblePointerUpMerged}
           onPointerLeave={clearPressTimer}
-          onPointerCancel={clearPressTimer}
+          onPointerCancel={handleBubblePointerCancelMerged}
           onContextMenu={(e) => e.preventDefault()}
         >
+          {quoted && (
+            <div
+              className={cn(
+                "flex flex-col gap-0.5 rounded-md border-l-2 px-2 py-1 text-xs",
+                isMe ? "border-primary-foreground/40 bg-primary-foreground/10" : "border-primary bg-background/60"
+              )}
+              data-testid={`quoted-message-${m.id}`}
+            >
+              <span className={cn("font-medium", isMe ? "text-primary-foreground/90" : "text-primary")}>{quoted.senderName}</span>
+              <span className={cn("truncate", isMe ? "text-primary-foreground/70" : "text-muted-foreground")}>{quoted.snippet}</span>
+            </div>
+          )}
           {attachmentSrc && m.attachmentType === "image" && (
             <img
               src={attachmentSrc}
@@ -302,24 +358,39 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             )
           )}
         </div>
+        </div>
         {/* Desktop-only hover-reveal action row. On touch screens there is no
             hover state, so these end up tiny, cramped, and inconsistently
             visible -- touch users get the long-press action sheet below
             instead (opened from the bubble's onPointerDown handler). */}
         <div className="hidden sm:flex sm:items-center">
-          {isMe && <ReactionTrigger messageId={m.id} onReact={onReact} order="after" />}
-          <button
-            type="button"
-            onClick={() => onToggleFlag(m.id)}
-            className={cn(
-              "shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity",
-              m.flaggedByMe && "opacity-100"
-            )}
-            data-testid={`button-flag-${m.id}`}
-            aria-label={m.flaggedByMe ? "Unflag message" : "Flag message"}
-          >
-            <Star className={cn("h-3.5 w-3.5", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
-          </button>
+          {isMe && !hideReactions && <ReactionTrigger messageId={m.id} onReact={onReact} order="after" />}
+          {onReply && (
+            <button
+              type="button"
+              onClick={() => onReply(m.id)}
+              className="shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+              data-testid={`button-reply-${m.id}`}
+              aria-label="Reply"
+              title="Reply"
+            >
+              <Reply className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {!hideFlag && (
+            <button
+              type="button"
+              onClick={() => onToggleFlag(m.id)}
+              className={cn(
+                "shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity",
+                m.flaggedByMe && "opacity-100"
+              )}
+              data-testid={`button-flag-${m.id}`}
+              aria-label={m.flaggedByMe ? "Unflag message" : "Flag message"}
+            >
+              <Star className={cn("h-3.5 w-3.5", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
+            </button>
+          )}
           {isAdmin && isMe && onEdit && !isEditing && (
             <button
               type="button"
@@ -366,7 +437,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           aria-label="Message options"
           data-testid={`button-mobile-actions-${m.id}`}
         >
-          {m.flaggedByMe ? (
+          {m.flaggedByMe && !hideFlag ? (
             <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
           ) : (
             <MoreVertical className="h-3.5 w-3.5" />
@@ -380,37 +451,55 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             <DrawerTitle className="text-sm">Message options</DrawerTitle>
             <DrawerDescription className="sr-only">React to, star, or manage this message</DrawerDescription>
           </DrawerHeader>
-          <div className="px-4 pb-2">
-            <div className="grid grid-cols-6 gap-1">
-              {QUICK_EMOJIS.slice(0, 12).map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  onClick={() => {
-                    onReact(m.id, e);
-                    setActionSheetOpen(false);
-                  }}
-                  className="text-2xl rounded-md p-2 hover-elevate active-elevate-2"
-                  data-testid={`sheet-react-${m.id}-${e}`}
-                >
-                  {e}
-                </button>
-              ))}
+          {!hideReactions && (
+            <div className="px-4 pb-2">
+              <div className="grid grid-cols-6 gap-1">
+                {QUICK_EMOJIS.slice(0, 12).map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => {
+                      onReact(m.id, e);
+                      setActionSheetOpen(false);
+                    }}
+                    className="text-2xl rounded-md p-2 hover-elevate active-elevate-2"
+                    data-testid={`sheet-react-${m.id}-${e}`}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
           <div className="flex flex-col border-t border-border">
-            <button
-              type="button"
-              onClick={() => {
-                onToggleFlag(m.id);
-                setActionSheetOpen(false);
-              }}
-              className="flex items-center gap-3 px-4 py-3.5 text-sm text-left hover-elevate active-elevate-2"
-              data-testid={`sheet-flag-${m.id}`}
-            >
-              <Star className={cn("h-4 w-4", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
-              {m.flaggedByMe ? "Remove star" : "Star message"}
-            </button>
+            {onReply && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActionSheetOpen(false);
+                  onReply(m.id);
+                }}
+                className="flex items-center gap-3 px-4 py-3.5 text-sm text-left hover-elevate active-elevate-2"
+                data-testid={`sheet-reply-${m.id}`}
+              >
+                <Reply className="h-4 w-4 text-muted-foreground" />
+                Reply
+              </button>
+            )}
+            {!hideFlag && (
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleFlag(m.id);
+                  setActionSheetOpen(false);
+                }}
+                className="flex items-center gap-3 px-4 py-3.5 text-sm text-left hover-elevate active-elevate-2"
+                data-testid={`sheet-flag-${m.id}`}
+              >
+                <Star className={cn("h-4 w-4", m.flaggedByMe ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
+                {m.flaggedByMe ? "Remove star" : "Star message"}
+              </button>
+            )}
             {isAdmin && isMe && onEdit && !isEditing && (
               <button
                 type="button"
@@ -462,7 +551,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         </DrawerContent>
       </Drawer>
 
-      {!!m.reactions?.length && (
+      {!hideReactions && !!m.reactions?.length && (
         <div className={cn("flex gap-1 mt-1 flex-wrap", isMe ? "justify-end" : "justify-start")}>
           {m.reactions.map((r) => (
             <button
