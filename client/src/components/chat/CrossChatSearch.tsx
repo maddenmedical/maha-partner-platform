@@ -24,12 +24,13 @@ interface CrossChatSearchProps {
   searchUrl: string;
   onSelectThread: (threadId: number) => void;
   testIdPrefix?: string;
+  label?: string;
 }
 
 // Search box across every one of the user's own chat threads (or, for the
 // admin inbox, every thread in the system) -- as opposed to the per-thread
 // "Search messages..." box which only searches the currently open chat.
-export function CrossChatSearch({ searchUrl, onSelectThread, testIdPrefix = "cross-chat" }: CrossChatSearchProps) {
+export function CrossChatSearch({ searchUrl, onSelectThread, testIdPrefix = "cross-chat", label = "Search all chats" }: CrossChatSearchProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -86,11 +87,11 @@ export function CrossChatSearch({ searchUrl, onSelectThread, testIdPrefix = "cro
         onClick={() => setOpen(true)}
         data-testid={`button-${testIdPrefix}-open`}
       >
-        <Search className="h-4 w-4" /> Search all chats
+        <Search className="h-4 w-4" /> {label}
       </Button>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Search all chats</DialogTitle>
+          <DialogTitle>{label}</DialogTitle>
         </DialogHeader>
         <div className="relative">
           <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />

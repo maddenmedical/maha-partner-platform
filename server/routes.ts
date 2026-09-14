@@ -2625,6 +2625,24 @@ export async function registerRoutes(
     },
   );
 
+  // Cross-topic search (the "outside" search vs. the per-topic "Search
+  // messages..." box that only filters the currently open topic). Mirrors
+  // GET /api/chat/search's response shape so the frontend can reuse the same
+  // CrossChatSearch component for both. Admins additionally search archived
+  // topics, since those still show up in the admin console.
+  app.get(
+    "/api/community/search",
+    requireAuth,
+    requireRole("partner", "student", "admin"),
+    requireCommunityEnabled,
+    async (req: AuthedRequest, res) => {
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (!q) return res.json([]);
+      const results = await storage.searchCommunityMessages(q, { includeArchived: req.user!.role === "admin" });
+      res.json(results.map((r) => ({ ...r, threadKind: "community" })));
+    },
+  );
+
   app.post(
     "/api/community/topics",
     requireAuth,
@@ -2799,6 +2817,20 @@ export async function registerRoutes(
       const archived = !!req.body.archived;
       const updated = await storage.updateCommunityTopic(Number(req.params.id), {
         archivedAt: archived ? Date.now() : null,
+      });
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    },
+  );
+
+  app.patch(
+    "/api/admin/community/topics/:id/pin",
+    requireAuth,
+    requireRole("admin"),
+    async (req, res) => {
+      const pinned = !!req.body.pinned;
+      const updated = await storage.updateCommunityTopic(Number(req.params.id), {
+        pinnedAt: pinned ? Date.now() : null,
       });
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);

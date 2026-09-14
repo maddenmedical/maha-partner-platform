@@ -306,8 +306,28 @@ export interface IStorage {
   createCommunityTopic(t: InsertCommunityTopic & { createdAt: number; lastMessageAt: number }): Promise<CommunityTopic>;
   listCommunityTopics(includeArchived?: boolean): Promise<CommunityTopic[]>;
   getCommunityTopic(id: number): Promise<CommunityTopic | undefined>;
-  updateCommunityTopic(id: number, patch: Partial<{ archivedAt: number | null; lastMessageAt: number }>): Promise<CommunityTopic | undefined>;
+  updateCommunityTopic(id: number, patch: Partial<{ archivedAt: number | null; pinnedAt: number | null; lastMessageAt: number }>): Promise<CommunityTopic | undefined>;
   deleteCommunityTopic(id: number): Promise<void>;
+  // Cross-topic search, same shape as searchMessages but scoped to
+  // community_messages/community_topics. Non-admins never search into
+  // archived topics they wouldn't otherwise see in the topic list.
+  searchCommunityMessages(query: string, opts?: { includeArchived?: boolean }): Promise<{
+    id: number;
+    threadId: number;
+    senderId: number;
+    senderRole: string;
+    senderName: string;
+    body: string;
+    attachmentUrl: string | null;
+    attachmentType: string | null;
+    attachmentName: string | null;
+    replyToMessageId: number | null;
+    createdAt: number;
+    deletedAt: number | null;
+    deletedByName: string | null;
+    editedAt: number | null;
+    threadTopic: string;
+  }[]>;
 
   // ---------- community messages ----------
   createCommunityMessage(m: { topicId: number; senderId: number; senderRole: string; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<CommunityMessage>;
@@ -909,6 +929,41 @@ export class DatabaseStorage implements IStorage {
   }
   async setAdminTodoStatus(id: number, status: string, completedAt: number | null) {
     return db.update(adminTodos).set({ status, completedAt }).where(eq(adminTodos.id, id)).returning().get();
+  }
+  async searchCommunityMessages(query: string, opts?: { includeArchived?: boolean }) {
+    const q = `%${query.toLowerCase()}%`;
+    // Deleted messages keep their row for audit purposes but must never
+    // surface through search -- same pattern as searchMessages above.
+    const notDeleted = isNull(communityMessages.deletedAt);
+    // Non-admins never see archived topics in the plain topic list, so a
+    // cross-topic search must not let them search into one either.
+    const scopeClause = opts?.includeArchived ? notDeleted : and(notDeleted, isNull(communityTopics.archivedAt));
+    const whereClause = and(scopeClause, like(communityMessages.body, q));
+    const rows = db
+      .select({
+        id: communityMessages.id,
+        threadId: communityMessages.topicId,
+        senderId: communityMessages.senderId,
+        senderRole: communityMessages.senderRole,
+        senderName: communityMessages.senderName,
+        body: communityMessages.body,
+        attachmentUrl: communityMessages.attachmentUrl,
+        attachmentType: communityMessages.attachmentType,
+        attachmentName: communityMessages.attachmentName,
+        replyToMessageId: communityMessages.replyToMessageId,
+        createdAt: communityMessages.createdAt,
+        deletedAt: communityMessages.deletedAt,
+        deletedByName: communityMessages.deletedByName,
+        editedAt: communityMessages.editedAt,
+        threadTopic: communityTopics.title,
+      })
+      .from(communityMessages)
+      .innerJoin(communityTopics, eq(communityTopics.id, communityMessages.topicId))
+      .where(whereClause)
+      .orderBy(desc(communityMessages.createdAt))
+      .limit(50)
+      .all();
+    return rows;
   }
   async searchMessages(query: string, threadIds?: number[]) {
     const q = `%${query.toLowerCase()}%`;

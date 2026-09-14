@@ -16,10 +16,11 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Users2, Plus, Info, MessagesSquare, Globe2, Handshake, TrendingUp, Loader2 } from "lucide-react";
+import { Users2, Plus, Info, MessagesSquare, Globe2, Handshake, TrendingUp, Loader2, Search, Pin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
+import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TierBadge } from "@/components/TierBadge";
 import { ChatCommunitySwitcher } from "@/components/ChatCommunitySwitcher";
@@ -103,16 +104,20 @@ export default function Community() {
     createTopicMutation.mutate({ title: newTitle.trim(), body: newBody.trim() });
   }
 
-  // "General" always pinned at top -- there's no schema flag for it, so we
-  // sort by an exact title match first, then most-recently-active.
+  // Admin-pinned topics (e.g. "General") always float to the top,
+  // most-recently-pinned first; everything else sorts by recent activity.
   const sortedTopics = (topics || [])
     .slice()
     .sort((a, b) => {
-      const aGeneral = a.title.trim().toLowerCase() === "general";
-      const bGeneral = b.title.trim().toLowerCase() === "general";
-      if (aGeneral !== bGeneral) return aGeneral ? -1 : 1;
+      if (!!a.pinnedAt !== !!b.pinnedAt) return a.pinnedAt ? -1 : 1;
+      if (a.pinnedAt && b.pinnedAt) return b.pinnedAt - a.pinnedAt;
       return b.lastMessageAt - a.lastMessageAt;
     });
+
+  function handleSelectSearchResult(topicId: number) {
+    const found = topics?.find((t) => t.id === topicId);
+    if (found) setSelectedTopic(found);
+  }
 
   if (!enabledLoading && enabledData && !enabledData.enabled) {
     return (
@@ -161,8 +166,9 @@ export default function Community() {
               </Popover>
             </h1>
             <p className="text-sm text-muted-foreground mt-1">Your global network of MAHA partners.</p>
-            <div className="mt-2">
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
               <ChatCommunitySwitcher active="community" hasUnreadInbox={hasUnreadInbox} hasUnreadCommunity={hasUnreadCommunity} />
+              <CrossChatSearch searchUrl="/api/community/search" onSelectThread={handleSelectSearchResult} testIdPrefix="community-search" label="Search all topics" />
             </div>
           </div>
         </div>
@@ -234,6 +240,7 @@ export default function Community() {
                 data-testid={`button-topic-${t.id}`}
               >
                 <span className="flex items-center gap-1.5 min-w-0">
+                  {!!t.pinnedAt && <Pin className="h-3 w-3 text-primary shrink-0" data-testid={`icon-pinned-topic-${t.id}`} />}
                   {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-topic-${t.id}`} />}
                   <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.title}</span>
                 </span>
@@ -279,6 +286,7 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState("");
 
   const messagesKey = ["/api/community/topics", topic.id, "messages"];
   const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: CommunityMessage[] }>({
@@ -304,11 +312,30 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages?.length]);
 
+  const filteredMessages = (messages || []).filter((m) => {
+    if (search.trim() && !m.body.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    return true;
+  });
+
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
       <div className="hidden sm:flex items-center gap-1.5 border-b border-border pb-2 -mt-1">
+        {!!topic.pinnedAt && <Pin className="h-3.5 w-3.5 text-primary shrink-0" />}
         <span className="text-sm font-medium truncate">{topic.title}</span>
       </div>
+
+      {(messages?.length ?? 0) > 0 && (
+        <div className="relative">
+          <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search messages..."
+            className="h-8 pl-7 text-xs"
+            data-testid="input-search-community-messages"
+          />
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
@@ -321,8 +348,12 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
             <Users2 className="h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm max-w-xs">No messages yet. Be the first to post in this topic.</p>
           </div>
+        ) : filteredMessages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground gap-2">
+            <p className="text-sm">No messages match your search.</p>
+          </div>
         ) : (
-          messages.map((m) => {
+          filteredMessages.map((m) => {
             const isMe = m.senderId === user?.id && m.senderRole === user?.role;
             return (
               <ChatMessageBubble

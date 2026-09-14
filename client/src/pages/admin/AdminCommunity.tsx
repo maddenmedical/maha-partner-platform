@@ -18,13 +18,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Users2, MoreVertical, Archive, ArchiveRestore, Trash2, Eye, Ban, ShieldCheck } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Users2, MoreVertical, Archive, ArchiveRestore, Trash2, Eye, Ban, ShieldCheck, Pin, PinOff, Plus, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
+import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { TierBadge } from "@/components/TierBadge";
 import type { CommunityTopic, CommunityMessage, CommunityMessageRead } from "@shared/schema";
 
@@ -49,6 +52,9 @@ export default function AdminCommunity() {
   const [selectedTopic, setSelectedTopic] = useState<TopicRow | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [deleteTopicId, setDeleteTopicId] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newBody, setNewBody] = useState("");
 
   const { data: enabledData } = useQuery<{ enabled: boolean }>({ queryKey: ["/api/community/enabled"] });
 
@@ -93,6 +99,48 @@ export default function AdminCommunity() {
     onError: (err: any) => toast({ title: "Could not delete topic", description: err.message, variant: "destructive" }),
   });
 
+  const pinTopicMutation = useMutation({
+    mutationFn: ({ id, pinned }: { id: number; pinned: boolean }) =>
+      apiRequest("PATCH", `/api/admin/community/topics/${id}/pin`, { pinned }),
+    onSuccess: (_data, { pinned }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/community/topics", "includeArchived"] });
+      toast({ title: pinned ? "Topic pinned to top" : "Topic unpinned" });
+    },
+    onError: (err: any) => toast({ title: "Could not update topic", description: err.message, variant: "destructive" }),
+  });
+
+  const createTopicMutation = useMutation({
+    mutationFn: (payload: { title: string; body?: string }) => apiRequest("POST", "/api/community/topics", payload),
+    onSuccess: async (res) => {
+      const data = await res.json();
+      setNewTitle("");
+      setNewBody("");
+      setCreateOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["/api/community/topics", "includeArchived"] });
+      setSelectedTopic({
+        ...data.topic,
+        messageCount: data.firstMessage ? 1 : 0,
+        lastMessagePreview: data.firstMessage?.body ?? "",
+        lastMessageSenderName: data.firstMessage?.senderName ?? null,
+        lastMessageSenderTierKey: null,
+        lastMessageSenderTierLabel: null,
+        unread: false,
+      });
+    },
+    onError: (err: any) => toast({ title: "Could not create topic", description: err.message, variant: "destructive" }),
+  });
+
+  function handleCreateTopic(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+    createTopicMutation.mutate({ title: newTitle.trim(), body: newBody.trim() });
+  }
+
+  function handleSelectSearchResult(topicId: number) {
+    const found = topics?.find((t) => t.id === topicId);
+    if (found) setSelectedTopic(found);
+  }
+
   const activeTopics = (topics || []).filter((t) => !t.archivedAt);
   const archivedTopics = (topics || []).filter((t) => t.archivedAt);
   const visibleTopics = showArchived ? archivedTopics : activeTopics;
@@ -130,14 +178,55 @@ export default function AdminCommunity() {
 
   return (
     <div className="flex flex-col h-[calc(100dvh-6.5rem)] max-w-5xl -m-1">
-      <div className="mb-3 flex items-center justify-end gap-2 shrink-0">
-        <Label htmlFor="community-enabled-toggle" className="text-sm text-muted-foreground">Community enabled</Label>
-        <Switch
-          id="community-enabled-toggle"
-          checked={!!enabledData?.enabled}
-          onCheckedChange={(v) => toggleEnabledMutation.mutate(v)}
-          data-testid="switch-community-enabled"
-        />
+      <div className="mb-3 flex items-center justify-between gap-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2">
+          <CrossChatSearch searchUrl="/api/community/search" onSelectThread={handleSelectSearchResult} testIdPrefix="admin-community-search" label="Search all topics" />
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button type="button" size="sm" variant="outline" className="gap-1.5" data-testid="button-new-topic">
+                <Plus className="h-4 w-4" /> New topic
+              </Button>
+            </DialogTrigger>
+            <DialogContent data-testid="dialog-new-topic">
+              <DialogHeader>
+                <DialogTitle>Start a Community topic</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleCreateTopic} className="flex flex-col gap-3">
+                <Input
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="Topic title, e.g. General"
+                  data-testid="input-new-topic-title"
+                  autoFocus
+                />
+                <Textarea
+                  value={newBody}
+                  onChange={(e) => setNewBody(e.target.value)}
+                  placeholder="Optional opening message..."
+                  rows={3}
+                  data-testid="input-new-topic-body"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} data-testid="button-cancel-new-topic">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={!newTitle.trim() || createTopicMutation.isPending} data-testid="button-submit-new-topic">
+                    Create topic
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="community-enabled-toggle" className="text-sm text-muted-foreground">Community enabled</Label>
+          <Switch
+            id="community-enabled-toggle"
+            checked={!!enabledData?.enabled}
+            onCheckedChange={(v) => toggleEnabledMutation.mutate(v)}
+            data-testid="switch-community-enabled"
+          />
+        </div>
       </div>
       <div className="flex flex-1 min-h-0 gap-4">
         <div className="w-full sm:w-72 shrink-0 flex flex-col gap-2 overflow-y-auto overscroll-contain">
@@ -181,7 +270,11 @@ export default function AdminCommunity() {
           ) : (
             visibleTopics
               .slice()
-              .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+              .sort((a, b) => {
+                if (!!a.pinnedAt !== !!b.pinnedAt) return a.pinnedAt ? -1 : 1;
+                if (a.pinnedAt && b.pinnedAt) return b.pinnedAt - a.pinnedAt;
+                return b.lastMessageAt - a.lastMessageAt;
+              })
               .map((t) => (
                 <div
                   key={t.id}
@@ -201,7 +294,10 @@ export default function AdminCommunity() {
                   data-testid={`button-topic-${t.id}`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium truncate">{t.title}</span>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {!!t.pinnedAt && <Pin className="h-3 w-3 text-primary shrink-0" data-testid={`icon-pinned-topic-${t.id}`} />}
+                      <span className="text-sm font-medium truncate">{t.title}</span>
+                    </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -217,6 +313,23 @@ export default function AdminCommunity() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            pinTopicMutation.mutate({ id: t.id, pinned: !t.pinnedAt });
+                          }}
+                          data-testid={`menu-item-list-toggle-pin-${t.id}`}
+                        >
+                          {t.pinnedAt ? (
+                            <>
+                              <PinOff className="h-4 w-4 mr-2" /> Unpin topic
+                            </>
+                          ) : (
+                            <>
+                              <Pin className="h-4 w-4 mr-2" /> Pin topic to top
+                            </>
+                          )}
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
@@ -310,6 +423,7 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
   const { toast } = useToast();
   const bottomRef = useRef<HTMLDivElement>(null);
   const [readsOpen, setReadsOpen] = useState(false);
+  const [search, setSearch] = useState("");
 
   const messagesKey = ["/api/community/topics", topic.id, "messages"];
   const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: CommunityMessage[] }>({
@@ -336,6 +450,15 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
     onSuccess: (_data, archived) => {
       queryClient.invalidateQueries({ queryKey: ["/api/community/topics", "includeArchived"] });
       toast({ title: archived ? "Topic archived" : "Topic unarchived" });
+    },
+    onError: (err: any) => toast({ title: "Could not update topic", description: err.message, variant: "destructive" }),
+  });
+
+  const pinMutation = useMutation({
+    mutationFn: (pinned: boolean) => apiRequest("PATCH", `/api/admin/community/topics/${topic.id}/pin`, { pinned }),
+    onSuccess: (_data, pinned) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/community/topics", "includeArchived"] });
+      toast({ title: pinned ? "Topic pinned to top" : "Topic unpinned" });
     },
     onError: (err: any) => toast({ title: "Could not update topic", description: err.message, variant: "destructive" }),
   });
@@ -381,6 +504,7 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
+          {!!topic.pinnedAt && <Pin className="h-3.5 w-3.5 text-primary shrink-0" />}
           <span className="text-sm font-medium truncate">{topic.title}</span>
           {!!topic.archivedAt && (
             <Badge variant="outline" className="text-xs shrink-0 no-default-hover-elevate no-default-active-elevate" data-testid="badge-topic-archived">
@@ -397,6 +521,17 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setReadsOpen(true)} data-testid="menu-item-view-reads">
               <Eye className="h-4 w-4 mr-2" /> View who's read this
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => pinMutation.mutate(!topic.pinnedAt)} data-testid="menu-item-toggle-pin">
+              {topic.pinnedAt ? (
+                <>
+                  <PinOff className="h-4 w-4 mr-2" /> Unpin topic
+                </>
+              ) : (
+                <>
+                  <Pin className="h-4 w-4 mr-2" /> Pin topic to top
+                </>
+              )}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => archiveMutation.mutate(!topic.archivedAt)} data-testid="menu-item-toggle-archive">
               {topic.archivedAt ? (
@@ -420,13 +555,28 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
         </DropdownMenu>
       </div>
 
+      {(messages?.length ?? 0) > 0 && (
+        <div className="relative">
+          <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search messages..."
+            className="h-8 pl-7 text-xs"
+            data-testid="input-search-community-messages"
+          />
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
           <Skeleton className="h-12 w-2/3 rounded-lg skeleton-shimmer" />
         ) : !messages || messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">No messages yet.</div>
+        ) : (messages.filter((m) => !search.trim() || m.body.toLowerCase().includes(search.trim().toLowerCase()))).length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">No messages match your search.</div>
         ) : (
-          messages.map((m) => (
+          messages.filter((m) => !search.trim() || m.body.toLowerCase().includes(search.trim().toLowerCase())).map((m) => (
             <div key={m.id} className="group/msg relative pt-4">
               <ChatMessageBubble
                 message={toBubbleMessage(m)}

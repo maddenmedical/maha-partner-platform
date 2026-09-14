@@ -969,10 +969,15 @@ export const communityTopics = sqliteTable("community_topics", {
   lastMessageAt: integer("last_message_at").notNull(),
   // Admin-only reversible hide, same pattern as chatThreads.archivedAt.
   archivedAt: integer("archived_at"),
+  // Admin-only pin -- pinned topics sort first in every topic list
+  // (partner-facing Community and the admin console alike). Nullable
+  // timestamp rather than a boolean so multiple pins can be ordered by
+  // most-recently-pinned if that's ever needed.
+  pinnedAt: integer("pinned_at"),
   createdAt: integer("created_at").notNull(),
 });
 export const insertCommunityTopicSchema = createInsertSchema(communityTopics).omit({
-  id: true, lastMessageAt: true, archivedAt: true, createdAt: true,
+  id: true, lastMessageAt: true, archivedAt: true, pinnedAt: true, createdAt: true,
 });
 export type InsertCommunityTopic = z.infer<typeof insertCommunityTopicSchema>;
 export type CommunityTopic = typeof communityTopics.$inferSelect;
