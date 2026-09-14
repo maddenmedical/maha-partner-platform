@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { UserAvatar } from "@/components/UserAvatar";
+import { TierBadge } from "@/components/TierBadge";
 import type { CommunityTopic, CommunityMessage } from "@shared/schema";
 
 // Adapts a community message onto the shared ChatMessageBubble's expected
@@ -35,6 +36,8 @@ interface TopicRow extends CommunityTopic {
   messageCount: number;
   lastMessagePreview: string;
   lastMessageSenderName: string | null;
+  lastMessageSenderTierKey: string | null;
+  lastMessageSenderTierLabel: string | null;
   unread: boolean;
 }
 
@@ -217,9 +220,12 @@ export default function Community() {
                   {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-topic-${t.id}`} />}
                   <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.title}</span>
                 </span>
-                <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>
-                  {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
-                  {t.lastMessagePreview || "No messages yet"}
+                <p className={cn("text-xs truncate mt-0.5 flex items-center gap-1", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>
+                  <span className="truncate min-w-0">
+                    {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
+                    {t.lastMessagePreview || "No messages yet"}
+                  </span>
+                  <TierBadge tierKey={t.lastMessageSenderTierKey} tierLabel={t.lastMessageSenderTierLabel} className="shrink-0" />
                 </p>
               </button>
             ))

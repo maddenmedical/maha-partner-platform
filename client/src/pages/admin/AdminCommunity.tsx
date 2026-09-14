@@ -25,12 +25,15 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
+import { TierBadge } from "@/components/TierBadge";
 import type { CommunityTopic, CommunityMessage, CommunityMessageRead } from "@shared/schema";
 
 interface TopicRow extends CommunityTopic {
   messageCount: number;
   lastMessagePreview: string;
   lastMessageSenderName: string | null;
+  lastMessageSenderTierKey: string | null;
+  lastMessageSenderTierLabel: string | null;
   unread: boolean;
 }
 
@@ -244,9 +247,12 @@ export default function AdminCommunity() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <p className="text-xs truncate mt-0.5 text-muted-foreground">
-                    {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
-                    {t.lastMessagePreview || "No messages yet"}
+                  <p className="text-xs truncate mt-0.5 text-muted-foreground flex items-center gap-1">
+                    <span className="truncate min-w-0">
+                      {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
+                      {t.lastMessagePreview || "No messages yet"}
+                    </span>
+                    <TierBadge tierKey={t.lastMessageSenderTierKey} tierLabel={t.lastMessageSenderTierLabel} className="shrink-0" />
                   </p>
                 </div>
               ))

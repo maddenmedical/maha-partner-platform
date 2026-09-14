@@ -2586,6 +2586,8 @@ export async function registerRoutes(
             messageCount: messages.length,
             lastMessagePreview: lastVisible ? lastVisible.body.slice(0, 140) : "",
             lastMessageSenderName: last?.senderName ?? null,
+            lastMessageSenderTierKey: last?.senderTierKey ?? null,
+            lastMessageSenderTierLabel: last?.senderTierLabel ?? null,
             unread: unreadFromOthers.length > 0,
           };
         }),

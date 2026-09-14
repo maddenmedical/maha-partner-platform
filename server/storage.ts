@@ -311,7 +311,10 @@ export interface IStorage {
 
   // ---------- community messages ----------
   createCommunityMessage(m: { topicId: number; senderId: number; senderRole: string; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<CommunityMessage>;
-  listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null })[]>;
+  // senderTierKey/senderTierLabel: the sender's current MAHA Standing tier
+  // (see shared/schema.ts) -- null for admin senders, since the reward
+  // program is partner/student-facing only. Never includes raw points.
+  listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null; senderTierKey: string | null; senderTierLabel: string | null })[]>;
   getCommunityMessage(id: number): Promise<CommunityMessage | undefined>;
   deleteCommunityMessage(id: number, deletedByName: string): Promise<CommunityMessage>;
   countCommunityMessagesForTopic(topicId: number): Promise<number>;
@@ -1198,7 +1201,7 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
   async listCommunityMessagesForTopic(topicId: number) {
-    return db
+    const rows = db
       .select({
         id: communityMessages.id,
         topicId: communityMessages.topicId,
@@ -1215,12 +1218,20 @@ export class DatabaseStorage implements IStorage {
         deletedByName: communityMessages.deletedByName,
         editedAt: communityMessages.editedAt,
         senderPhotoUrl: users.photoUrl,
+        senderStandingPoints: users.standingPoints,
       })
       .from(communityMessages)
       .leftJoin(users, eq(communityMessages.senderId, users.id))
       .where(eq(communityMessages.topicId, topicId))
       .orderBy(communityMessages.createdAt)
       .all();
+    return rows.map((r) => {
+      const { senderStandingPoints, ...rest } = r;
+      // Reward program is partner/student-facing only -- admins never get a
+      // tier badge, regardless of any points their account has accrued.
+      const tier = rest.senderRole === "admin" ? null : standingTierForPoints(senderStandingPoints ?? 0);
+      return { ...rest, senderTierKey: tier?.key ?? null, senderTierLabel: tier?.label ?? null };
+    });
   }
   async getCommunityMessage(id: number) {
     return db.select().from(communityMessages).where(eq(communityMessages.id, id)).get();

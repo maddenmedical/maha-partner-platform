@@ -12,6 +12,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, Dr
 import { useToast } from "@/hooks/use-toast";
 import { mentionTokenRegex } from "@/lib/chatMentions";
 import { UserAvatar } from "@/components/UserAvatar";
+import { TierBadge } from "@/components/TierBadge";
 import type { ChatMessage } from "@shared/schema";
 
 // Long-press threshold before the mobile action sheet opens, and the max
@@ -67,6 +68,10 @@ export interface ChatMessageWithMeta extends ChatMessage {
   flaggedByMe?: boolean;
   reactions?: Reaction[];
   senderPhotoUrl?: string | null;
+  // Community Chat only -- the sender's MAHA Standing tier badge. Omitted
+  // (undefined) everywhere else, so 1:1 patient/student chat is unaffected.
+  senderTierKey?: string | null;
+  senderTierLabel?: string | null;
 }
 
 export interface QuotedMessage {
@@ -213,8 +218,10 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         <div className="rounded-lg px-3 py-2 text-sm italic text-muted-foreground bg-muted/50 border border-dashed border-border">
           This message was deleted{isAdmin && m.deletedByName ? ` by ${m.deletedByName}` : ""}.
         </div>
-        <span className="text-xs text-muted-foreground mt-1 px-1">
-          {isMe ? "You" : m.senderName} · {format(new Date(m.createdAt), "MMM d, HH:mm")}
+        <span className="text-xs text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
+          {isMe ? "You" : m.senderName}
+          <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
+          · {format(new Date(m.createdAt), "MMM d, HH:mm")}
         </span>
       </div>
     );
@@ -572,8 +579,10 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         </div>
       )}
 
-      <span className="text-xs text-muted-foreground mt-1 px-1">
-        {isMe ? "You" : m.senderName} · {format(new Date(m.createdAt), "MMM d, HH:mm")}
+      <span className="text-xs text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
+        {isMe ? "You" : m.senderName}
+        <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
+        · {format(new Date(m.createdAt), "MMM d, HH:mm")}
       </span>
     </div>
   );
