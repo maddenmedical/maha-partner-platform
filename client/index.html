@@ -9,19 +9,22 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="MAHA" />
-    <!-- Twin-manifest trick, phase 1: if the page was opened via a direct
-         ?app=admin / ?app=partner link (e.g. an install link sent to a
-         partner before they've ever logged in), swap the manifest/icon/title
-         synchronously, before any JS bundle loads or the browser reads the
-         manifest for an install prompt. This runs ahead of the React-side
-         role-based swap in use-pwa-manifest.ts, which only has a signed-in
-         user's role to go on and previously left a signed-out visitor's
-         install icon determined by whichever manifest happened to load
-         first — see use-pwa-manifest.ts for the full swap contract. -->
+    <!-- Twin-manifest trick, phase 1: if the page was opened under the /admin
+         path (its own PWA scope, so Android/iOS can tell the two installed
+         apps apart and route shared links to the correct one) or via a
+         direct ?app=admin / ?app=partner link (e.g. an install link sent to
+         a partner before they've ever logged in), swap the manifest/icon/
+         title synchronously, before any JS bundle loads or the browser reads
+         the manifest for an install prompt. This runs ahead of the
+         React-side role-based swap in use-pwa-manifest.ts, which only has a
+         signed-in user's role to go on and previously left a signed-out
+         visitor's install icon determined by whichever manifest happened to
+         load first — see use-pwa-manifest.ts for the full swap contract. -->
     <script>
       (function () {
+        var isAdminPath = /^\/admin(\/|$)/.test(window.location.pathname);
         var appParam = new URLSearchParams(window.location.search).get("app");
-        if (appParam !== "admin") return;
+        if (!isAdminPath && appParam !== "admin") return;
         var manifestLink = document.querySelector('link[rel="manifest"]');
         if (manifestLink) manifestLink.setAttribute("href", "/manifest-admin.json");
         var touchIconLink = document.querySelector('link[rel="apple-touch-icon"]');

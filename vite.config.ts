@@ -12,7 +12,13 @@ export default defineConfig({
     },
   },
   root: path.resolve(import.meta.dirname, "client"),
-  base: "./",
+  // Absolute (root-relative) asset paths: this app is now served at more
+  // than one real URL depth on the same origin ("/" for partners/students,
+  // "/admin/" for the separately-scoped admin PWA), and relative "./"
+  // asset URLs resolve differently depending on which one loaded the page —
+  // "/admin/" would look for "/admin/assets/..." and 404. Absolute paths
+  // resolve the same regardless of URL depth.
+  base: "/",
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
