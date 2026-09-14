@@ -46,7 +46,7 @@ import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simp
 async function awardStanding(userId: number, activityKey: keyof typeof STANDING_POINTS, category: string, opts?: { sourceType?: string; sourceId?: number; points?: number }) {
   try {
     const points = opts?.points ?? STANDING_POINTS[activityKey];
-    const { newTierKey } = await storage.awardStandingPoints({
+    const { newTierKey, clinicId } = await storage.awardStandingPoints({
       userId,
       category,
       points,
@@ -56,11 +56,15 @@ async function awardStanding(userId: number, activityKey: keyof typeof STANDING_
     if (newTierKey) {
       const tier = STANDING_TIERS.find((t) => t.key === newTierKey);
       if (tier?.reward) {
+        // Pooled clinics: one reward record for the practice as a whole
+        // (clinicId set), so admins reach out to the clinic rather than
+        // crediting whichever individual member's action tipped it over.
         await storage.createStandingReward({
           userId,
           tierKey: tier.key,
           rewardDescription: tier.reward,
           createdAt: Date.now(),
+          clinicId,
         });
       }
     }
@@ -522,6 +526,20 @@ export async function registerRoutes(
       legalAcceptedVersion: CURRENT_LEGAL_VERSION,
       legalAcceptedAt: Date.now(),
     } as any);
+
+    // Clinic status pooling: reuse the businessName they already entered as
+    // the clinic-matching key. Exact normalized match auto-joins an existing
+    // clinic; no match auto-creates one -- every partner naturally ends up
+    // in a clinic (even a "clinic of one" for solo practices), so the
+    // pooled-tier math is uniform everywhere. No approval step, per spec.
+    if (data.businessName && data.businessName.trim()) {
+      try {
+        const clinic = await storage.findOrCreateClinicByName(data.businessName.trim());
+        await storage.setUserClinic(user.id, clinic.id);
+      } catch (err) {
+        console.error("[register] failed to auto-join/create clinic:", err);
+      }
+    }
 
     // Notify partner@maha.clinic with the full registration and one-click
     // approve/decline links. Never let an email hiccup fail the signup itself.
@@ -2855,6 +2873,47 @@ export async function registerRoutes(
     const updated = await storage.fulfillStandingReward(Number(req.params.id), req.user!.name, note);
     if (!updated) return res.status(404).json({ message: "Not found" });
     res.json(updated);
+  });
+
+  // ---------- CLINICS (shared MAHA Standing pooling, admin-managed) ----------
+  // Every clinic and its pooled point total + member roster. Members join
+  // automatically at registration (businessName exact match); this is the
+  // admin's view of the result plus the manual regroup tool for accounts
+  // whose businessName strings didn't match exactly (typos/variations).
+  app.get("/api/admin/clinics", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.json(await storage.listClinicsWithStats());
+  });
+
+  app.post("/api/admin/clinics", requireAuth, requireRole("admin"), async (req, res) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name) return res.status(400).json({ message: "Clinic name is required" });
+    const clinic = await storage.findOrCreateClinicByName(name);
+    res.json(clinic);
+  });
+
+  // Assign, move, or remove (clinicId: null) a single account's clinic
+  // pool membership. Retroactive grouping (e.g. 6 doctors + 3 nurses + 5
+  // admins at one practice whose businessName strings vary) is admin-tool
+  // only -- there is no self-service request path for this, per spec.
+  app.patch("/api/admin/users/:id/clinic", requireAuth, requireRole("admin"), async (req, res) => {
+    const user = await storage.getUser(Number(req.params.id));
+    if (!user) return res.status(404).json({ message: "Not found" });
+    const { clinicId, clinicName } = req.body as { clinicId?: number | null; clinicName?: string };
+    let targetClinicId: number | null = null;
+    if (clinicName && clinicName.trim()) {
+      const clinic = await storage.findOrCreateClinicByName(clinicName.trim());
+      targetClinicId = clinic.id;
+    } else if (clinicId === null) {
+      targetClinicId = null;
+    } else if (typeof clinicId === "number") {
+      const clinic = await storage.getClinic(clinicId);
+      if (!clinic) return res.status(404).json({ message: "Clinic not found" });
+      targetClinicId = clinicId;
+    } else {
+      return res.status(400).json({ message: "Provide clinicId (number or null) or clinicName" });
+    }
+    const updated = await storage.setUserClinic(user.id, targetClinicId);
+    res.json(toPublicUser(updated!));
   });
 
   // ---------- NOTIFICATION PREFERENCES (self-service, all roles) ----------

@@ -30,7 +30,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2,
 } from "lucide-react";
 
 const navItems = [
@@ -45,6 +45,7 @@ const navItems = [
   { href: "/admin/todos", label: "To-Dos", icon: ListTodo, testId: "link-admin-todos" },
   { href: "/admin/team", label: "Team", icon: Users, testId: "link-admin-team" },
   { href: "/admin/partners", label: "Partners & Students", icon: Contact, testId: "link-admin-partners" },
+  { href: "/admin/clinics", label: "Clinics", icon: Building2, testId: "link-admin-clinics" },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone, testId: "link-admin-announcements" },
   { href: "/admin/case-discussions", label: "Events", icon: CalendarClock, testId: "link-admin-case-discussions" },
   { href: "/admin/migration", label: "Partner Migration", icon: UploadCloud, testId: "link-admin-migration" },

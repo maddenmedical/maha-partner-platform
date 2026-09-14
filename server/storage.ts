@@ -5,7 +5,7 @@ import {
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
-  standingEntries, standingRewards,
+  standingEntries, standingRewards, clinics,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -20,7 +20,7 @@ import type {
   WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
   AdminTodo, InsertAdminTodo,
   AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
-  StandingEntry, StandingReward,
+  StandingEntry, StandingReward, Clinic,
 } from "@shared/schema";
 import { STANDING_TIERS, standingTierForPoints } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -331,13 +331,30 @@ export interface IStorage {
   // and whether this award crossed the user into a new tier (so the caller
   // can enqueue a reward). category='app_activity' entries must never carry
   // a sourceId tied to a specific referral -- see shared/schema.ts note.
-  awardStandingPoints(args: { userId: number; category: string; points: number; sourceType?: string; sourceId?: number }): Promise<{ entry: StandingEntry; newTierKey: string | null }>;
+  awardStandingPoints(args: { userId: number; category: string; points: number; sourceType?: string; sourceId?: number }): Promise<{ entry: StandingEntry; newTierKey: string | null; clinicId: number | null }>;
   countStandingEntriesToday(userId: number, sourceType: string): Promise<number>;
   hasStandingEntry(userId: number, sourceType: string, sourceId?: number): Promise<boolean>;
   getStandingSummaryForUser(userId: number): Promise<{ points: number; tier: (typeof STANDING_TIERS)[number] }>;
   listStandingSummaries(): Promise<{ userId: number; userName: string; userRole: string; points: number; tierKey: string; tierLabel: string }[]>;
   listStandingEntriesForUser(userId: number): Promise<StandingEntry[]>;
-  createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number }): Promise<StandingReward>;
+
+  // ---------- Clinics (shared standing pooling) ----------
+  findOrCreateClinicByName(name: string): Promise<Clinic>;
+  getClinic(id: number): Promise<Clinic | undefined>;
+  listClinics(): Promise<Clinic[]>;
+  getClinicAggregatePoints(clinicId: number): Promise<number>;
+  setUserClinic(userId: number, clinicId: number | null): Promise<User | undefined>;
+  listClinicsWithStats(): Promise<
+    {
+      id: number;
+      name: string;
+      points: number;
+      tierKey: string;
+      tierLabel: string;
+      members: { id: number; name: string; role: string; email: string; standingPoints: number }[];
+    }[]
+  >;
+  createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number; clinicId?: number | null }): Promise<StandingReward>;
   listStandingRewards(status?: string): Promise<(StandingReward & { userName: string })[]>;
   fulfillStandingReward(id: number, fulfilledByName: string, note?: string): Promise<StandingReward | undefined>;
 }
@@ -1219,17 +1236,26 @@ export class DatabaseStorage implements IStorage {
         editedAt: communityMessages.editedAt,
         senderPhotoUrl: users.photoUrl,
         senderStandingPoints: users.standingPoints,
+        senderClinicId: users.clinicId,
       })
       .from(communityMessages)
       .leftJoin(users, eq(communityMessages.senderId, users.id))
       .where(eq(communityMessages.topicId, topicId))
       .orderBy(communityMessages.createdAt)
       .all();
+    // Batch clinic aggregates once per distinct clinic instead of a query per
+    // message, so a pooled clinic's tier badge reflects the shared total.
+    const clinicIds = Array.from(new Set(rows.map((r) => r.senderClinicId).filter((id): id is number => id != null)));
+    const clinicPoints = new Map<number, number>();
+    for (const clinicId of clinicIds) {
+      clinicPoints.set(clinicId, await this.getClinicAggregatePoints(clinicId));
+    }
     return rows.map((r) => {
-      const { senderStandingPoints, ...rest } = r;
+      const { senderStandingPoints, senderClinicId, ...rest } = r;
+      const effectivePoints = senderClinicId != null ? (clinicPoints.get(senderClinicId) ?? 0) : (senderStandingPoints ?? 0);
       // Reward program is partner/student-facing only -- admins never get a
       // tier badge, regardless of any points their account has accrued.
-      const tier = rest.senderRole === "admin" ? null : standingTierForPoints(senderStandingPoints ?? 0);
+      const tier = rest.senderRole === "admin" ? null : standingTierForPoints(effectivePoints);
       return { ...rest, senderTierKey: tier?.key ?? null, senderTierLabel: tier?.label ?? null };
     });
   }
@@ -1296,7 +1322,13 @@ export class DatabaseStorage implements IStorage {
     const now = Date.now();
     const user = db.select().from(users).where(eq(users.id, args.userId)).get();
     if (!user) throw new Error("User not found for standing award");
-    const prevTier = standingTierForPoints(user.standingPoints);
+    // Tier-up detection is based on whatever pool this user's points count
+    // toward: their own total normally, or the CLINIC's pooled total when
+    // clinicId is set -- "it should all be one status of that clinic", so a
+    // nurse's referral can tip the whole practice into a new tier even
+    // though her own points alone wouldn't.
+    const prevPoolPoints = user.clinicId ? await this.getClinicAggregatePoints(user.clinicId) : user.standingPoints;
+    const prevTier = standingTierForPoints(prevPoolPoints);
     const entry = db.insert(standingEntries).values({
       userId: args.userId,
       category: args.category,
@@ -1307,8 +1339,16 @@ export class DatabaseStorage implements IStorage {
     }).returning().get();
     const newTotal = user.standingPoints + args.points;
     db.update(users).set({ standingPoints: newTotal }).where(eq(users.id, args.userId)).run();
-    const newTier = standingTierForPoints(newTotal);
-    return { entry, newTierKey: newTier.key !== prevTier.key ? newTier.key : null };
+    // Pooled clinics: the aggregate only changed by this same award amount
+    // (only one member's row changed), so add the increment rather than
+    // re-querying -- equivalent to prevPoolPoints + args.points.
+    const newPoolPoints = user.clinicId ? prevPoolPoints + args.points : newTotal;
+    const newTier = standingTierForPoints(newPoolPoints);
+    return {
+      entry,
+      newTierKey: newTier.key !== prevTier.key ? newTier.key : null,
+      clinicId: user.clinicId ?? null,
+    };
   }
 
   async countStandingEntriesToday(userId: number, sourceType: string) {
@@ -1329,15 +1369,80 @@ export class DatabaseStorage implements IStorage {
 
   async getStandingSummaryForUser(userId: number) {
     const user = db.select().from(users).where(eq(users.id, userId)).get();
-    const points = user?.standingPoints ?? 0;
+    if (!user) return { points: 0, tier: standingTierForPoints(0) };
+    const points = user.clinicId ? await this.getClinicAggregatePoints(user.clinicId) : user.standingPoints;
     return { points, tier: standingTierForPoints(points) };
+  }
+
+  // ---------- Clinics (shared MAHA Standing pooling) ----------
+  private normalizeClinicName(name: string) {
+    return name.trim().toLowerCase();
+  }
+
+  async findOrCreateClinicByName(name: string) {
+    const trimmed = name.trim();
+    const normalized = this.normalizeClinicName(trimmed);
+    const existing = db.select().from(clinics).where(eq(clinics.normalizedName, normalized)).get();
+    if (existing) return existing;
+    try {
+      return db.insert(clinics).values({ name: trimmed, normalizedName: normalized, createdAt: Date.now() }).returning().get();
+    } catch {
+      // Race: another request created the same clinic between our lookup and
+      // insert (unique index on normalizedName). Re-read instead of erroring.
+      const row = db.select().from(clinics).where(eq(clinics.normalizedName, normalized)).get();
+      if (row) return row;
+      throw new Error(`Failed to find or create clinic "${trimmed}"`);
+    }
+  }
+
+  async getClinic(id: number) {
+    return db.select().from(clinics).where(eq(clinics.id, id)).get();
+  }
+
+  async listClinics() {
+    return db.select().from(clinics).orderBy(asc(clinics.name)).all();
+  }
+
+  async getClinicAggregatePoints(clinicId: number) {
+    const members = db.select().from(users).where(eq(users.clinicId, clinicId)).all();
+    return members.reduce((sum, m) => sum + m.standingPoints, 0);
+  }
+
+  async setUserClinic(userId: number, clinicId: number | null) {
+    return db.update(users).set({ clinicId }).where(eq(users.id, userId)).returning().get();
+  }
+
+  async listClinicsWithStats() {
+    const allClinics = db.select().from(clinics).orderBy(asc(clinics.name)).all();
+    const allUsers = db.select().from(users).all();
+    return allClinics.map((c) => {
+      const members = allUsers.filter((u) => u.clinicId === c.id);
+      const points = members.reduce((sum, m) => sum + m.standingPoints, 0);
+      const tier = standingTierForPoints(points);
+      return {
+        id: c.id,
+        name: c.name,
+        points,
+        tierKey: tier.key,
+        tierLabel: tier.label,
+        members: members
+          .map((m) => ({ id: m.id, name: m.name, role: m.role, email: m.email, standingPoints: m.standingPoints }))
+          .sort((a, b) => b.standingPoints - a.standingPoints),
+      };
+    }).sort((a, b) => b.points - a.points);
   }
 
   async listStandingSummaries() {
     const rows = db.select().from(users).all();
+    const clinicIds = Array.from(new Set(rows.map((u) => u.clinicId).filter((id): id is number => id != null)));
+    const clinicPoints = new Map<number, number>();
+    for (const clinicId of clinicIds) {
+      clinicPoints.set(clinicId, await this.getClinicAggregatePoints(clinicId));
+    }
     return rows.map((u) => {
-      const tier = standingTierForPoints(u.standingPoints);
-      return { userId: u.id, userName: u.name, userRole: u.role, points: u.standingPoints, tierKey: tier.key, tierLabel: tier.label };
+      const effectivePoints = u.clinicId != null ? (clinicPoints.get(u.clinicId) ?? 0) : u.standingPoints;
+      const tier = standingTierForPoints(effectivePoints);
+      return { userId: u.id, userName: u.name, userRole: u.role, points: effectivePoints, tierKey: tier.key, tierLabel: tier.label };
     }).sort((a, b) => b.points - a.points);
   }
 
@@ -1345,8 +1450,8 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(standingEntries).where(eq(standingEntries.userId, userId)).orderBy(desc(standingEntries.createdAt)).all();
   }
 
-  async createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number }) {
-    return db.insert(standingRewards).values({ ...r, status: "pending" }).returning().get();
+  async createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number; clinicId?: number | null }) {
+    return db.insert(standingRewards).values({ ...r, clinicId: r.clinicId ?? null, status: "pending" }).returning().get();
   }
 
   async listStandingRewards(status?: string) {

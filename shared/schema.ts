@@ -102,6 +102,14 @@ export const users = sqliteTable("users", {
   // own tier (derived from this via STANDING_TIERS) is the only thing ever
   // shown to them -- never the raw number or how it was earned.
   standingPoints: integer("standing_points").notNull().default(0),
+  // Clinic status pooling: when set, this user's MAHA Standing tier is
+  // computed from the SUM of every member's standingPoints in the same
+  // clinic (see clinics table below), not this column alone -- "it doesn't
+  // matter who referred the patient, it should all be one status of that
+  // clinic". Auto-matched at registration from businessName (exact,
+  // normalized match) or set retroactively by an admin. Null means the
+  // user is unpooled and uses their own standingPoints (legacy behavior).
+  clinicId: integer("clinic_id"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -109,9 +117,36 @@ export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
   adminNavOrder: true,
+  // Clinic pooling is resolved server-side (auto-join at registration by
+  // businessName, or admin assignment) -- never accept a client-supplied
+  // clinicId directly on a registration/profile payload.
+  clinicId: true,
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+// ---------- CLINICS (shared MAHA Standing pooling) ----------
+// A clinic pools the standing/tier status of every user whose clinicId
+// points here, so a clinic's doctors/nurses/admins rise together instead
+// of individually. Deliberately no denormalized total-points column --
+// the pooled total is always SUM(users.standingPoints) WHERE clinicId = X
+// computed at read time, so there's no drift/merge bookkeeping and a
+// user's points count toward the pool the instant clinicId is set.
+export const clinics = sqliteTable("clinics", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  // Trimmed + lowercased form of `name`, unique, used for exact-match
+  // auto-join/auto-create at registration (matched against the existing
+  // businessName field partners already fill in -- no new form field).
+  normalizedName: text("normalized_name").notNull().unique(),
+  createdAt: integer("created_at").notNull(),
+});
+export const insertClinicSchema = createInsertSchema(clinics).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertClinic = z.infer<typeof insertClinicSchema>;
+export type Clinic = typeof clinics.$inferSelect;
 
 // Public-facing registration schema (subset, with plain password)
 export const registerSchema = z.object({
@@ -1074,6 +1109,12 @@ export const STANDING_POINTS: Record<string, number> = {
 export const standingRewards = sqliteTable("standing_rewards", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),
+  // Set when the triggering user is pooled into a clinic -- the tier-up
+  // that caused this reward was the CLINIC's aggregate crossing a
+  // threshold, so admins should read this as "reach out to this clinic",
+  // with userId kept only for traceability of which member's action
+  // triggered it. Null for unpooled (solo) users -- unchanged behavior.
+  clinicId: integer("clinic_id"),
   tierKey: text("tier_key").notNull(),
   rewardDescription: text("reward_description").notNull(),
   status: text("status").notNull().default("pending"), // 'pending' | 'fulfilled'

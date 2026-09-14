@@ -43,6 +43,7 @@ import AdminChatInbox from "@/pages/admin/AdminChatInbox";
 import AdminCommunity from "@/pages/admin/AdminCommunity";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminPartners from "@/pages/admin/AdminPartners";
+import AdminClinics from "@/pages/admin/AdminClinics";
 import AdminAnnouncements from "@/pages/admin/AdminAnnouncements";
 import AdminCaseDiscussions from "@/pages/admin/AdminCaseDiscussions";
 import AdminMigration from "@/pages/admin/AdminMigration";
@@ -86,6 +87,7 @@ const ADMIN_TITLES: Record<string, string> = {
   "/admin/community": "Community",
   "/admin/team": "Team",
   "/admin/partners": "All Partners",
+  "/admin/clinics": "Clinics",
   "/admin/announcements": "Announcements",
   "/admin/case-discussions": "Events",
   "/admin/migration": "Partner Migration",
@@ -173,6 +175,9 @@ function AdminApp() {
       </Route>
       <Route path="/admin/partners">
         <AdminLayout title={ADMIN_TITLES["/admin/partners"]}><AdminPartners /></AdminLayout>
+      </Route>
+      <Route path="/admin/clinics">
+        <AdminLayout title={ADMIN_TITLES["/admin/clinics"]}><AdminClinics /></AdminLayout>
       </Route>
       <Route path="/admin/announcements">
         <AdminLayout title={ADMIN_TITLES["/admin/announcements"]}><AdminAnnouncements /></AdminLayout>
