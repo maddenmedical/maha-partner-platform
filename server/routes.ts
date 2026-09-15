@@ -3037,7 +3037,7 @@ export async function registerRoutes(
       const span = nextTier.minPoints - tier.minPoints;
       progressPercent = span > 0 ? Math.min(100, Math.round(((points - tier.minPoints) / span) * 100)) : 0;
     }
-    res.json({ tierLabel: tier.label, hasNextTier: !!nextTier, progressPercent });
+    res.json({ tierKey: tier.key, tierLabel: tier.label, hasNextTier: !!nextTier, progressPercent });
   });
 
   // Admin-only: exact points, full breakdown per user, and the tier ladder.

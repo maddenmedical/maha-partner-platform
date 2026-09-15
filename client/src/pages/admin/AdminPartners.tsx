@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UserAvatar } from "@/components/UserAvatar";
+import { TierBadge } from "@/components/TierBadge";
 import { resizeImageToDataUrl } from "@/lib/imageResize";
 import { useToast } from "@/hooks/use-toast";
 import { openAuthedFile } from "@/lib/fileAccess";
@@ -32,6 +33,14 @@ export default function AdminPartners() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: partners, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/all-partners"] });
+  const { data: standings } = useQuery<{ userId: number; userName: string; userRole: string; points: number; tierKey: string; tierLabel: string }[]>({
+    queryKey: ["/api/admin/standing"],
+  });
+  const standingByUserId = useMemo(() => {
+    const map = new Map<number, { points: number; tierKey: string; tierLabel: string }>();
+    for (const s of standings || []) map.set(s.userId, s);
+    return map;
+  }, [standings]);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -214,6 +223,14 @@ export default function AdminPartners() {
                       <Badge variant="outline" className="capitalize no-default-hover-elevate no-default-active-elevate" data-testid={`badge-role-${u.id}`}>
                         {u.role}
                       </Badge>
+                      {(u.role === "partner" || u.role === "student") && standingByUserId.get(u.id) && (
+                        <span className="flex items-center gap-1.5" data-testid={`standing-${u.id}`}>
+                          <TierBadge tierKey={standingByUserId.get(u.id)!.tierKey} tierLabel={standingByUserId.get(u.id)!.tierLabel} />
+                          <span className="text-xs text-muted-foreground" data-testid={`text-points-${u.id}`}>
+                            {standingByUserId.get(u.id)!.points} pts
+                          </span>
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground break-words" data-testid={`text-email-${u.id}`}>
                       {u.email}{u.phone ? ` · ${u.phone}` : ""}
