@@ -14,7 +14,7 @@ type LevelRow = { key: string; label: string; minPoints: number };
 // client-side, so the reward field can never end up in this bundle -- see
 // "We don't want any rewards at all" in project rules. Do not add reward
 // text here under any circumstance.
-export function StandingLevelsDialog({
+export function PartnerLevelsDialog({
   currentTierKey,
   trigger,
 }: {
@@ -34,9 +34,9 @@ export function StandingLevelsDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-sm" data-testid="dialog-standing-levels">
+      <DialogContent className="max-w-sm" data-testid="dialog-partner-levels">
         <DialogHeader>
-          <DialogTitle>MAHA Standing levels</DialogTitle>
+          <DialogTitle>All Partner Levels</DialogTitle>
           <DialogDescription>
             Stay active in the community and events to move up.
           </DialogDescription>

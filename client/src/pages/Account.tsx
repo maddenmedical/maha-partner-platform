@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { UserAvatar } from "@/components/UserAvatar";
-import { MyStandingCard } from "@/components/MyStandingCard";
+import { MyPartnerLevelCard } from "@/components/MyPartnerLevelCard";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
@@ -234,7 +234,7 @@ export default function Account() {
       </div>
 
       {(user?.role === "partner" || user?.role === "student") && (
-        <MyStandingCard />
+        <MyPartnerLevelCard />
       )}
 
       <Card>

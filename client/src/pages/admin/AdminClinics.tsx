@@ -85,7 +85,7 @@ export default function AdminClinics() {
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <p className="text-sm text-muted-foreground">
-        Clinics pool MAHA Standing status across everyone who works there — a clinic's doctors, nurses, and
+        Clinics pool Partner Level status across everyone who works there — a clinic's doctors, nurses, and
         administrators all share one status, regardless of who personally submitted a referral or order. Accounts
         join automatically at registration when their business name matches; use "Add member" here for retroactive
         grouping or to fix mismatched business names.

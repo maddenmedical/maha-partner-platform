@@ -2,14 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { TierBadge } from "@/components/TierBadge";
-import { StandingLevelsDialog } from "@/components/StandingLevelsDialog";
+import { PartnerLevelsDialog } from "@/components/PartnerLevelsDialog";
 
 type MyStanding = { tierKey: string; tierLabel: string; hasNextTier: boolean; progressPercent: number };
 
-// Own MAHA Standing tier + soft progress, shared between Account and Home so
+// Own Partner Level tier + soft progress, shared between Account and Home so
 // partners/students see it in both places. Never shows raw points or how
 // they're earned -- see shared/schema.ts note on STANDING_TIERS.
-export function MyStandingCard({ className }: { className?: string }) {
+export function MyPartnerLevelCard({ className }: { className?: string }) {
   const { data: myStanding } = useQuery<MyStanding>({
     queryKey: ["/api/standing/mine"],
   });
@@ -20,7 +20,7 @@ export function MyStandingCard({ className }: { className?: string }) {
     <Card className={className} data-testid="card-my-standing">
       <CardContent className="p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold">MAHA Standing</h2>
+          <h2 className="text-sm font-semibold">Partner Level</h2>
           {myStanding.tierKey === "newcomer" ? (
             <span className="text-xs text-muted-foreground" data-testid="text-standing-newcomer">{myStanding.tierLabel}</span>
           ) : (
@@ -40,7 +40,7 @@ export function MyStandingCard({ className }: { className?: string }) {
           </p>
         )}
         <div>
-          <StandingLevelsDialog currentTierKey={myStanding.tierKey} />
+          <PartnerLevelsDialog currentTierKey={myStanding.tierKey} />
         </div>
       </CardContent>
     </Card>

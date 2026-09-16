@@ -107,7 +107,7 @@ const APP_BASE_URL = `${SITE_ORIGIN}${API_PATH_PREFIX}`;
 // the plain site origin.
 const FRONTEND_SIGNIN_URL = `${SITE_ORIGIN}/`;
 
-// Admin-only alert for a MAHA Standing level-up -- fires on both email (to
+// Admin-only alert for a Partner Level level-up -- fires on both email (to
 // every admin's own address, always) and push (respecting each admin's own
 // "offers" push preference, the closest existing category). Deliberately
 // never touches the member's own notification preferences or channels --
@@ -119,13 +119,13 @@ async function notifyAdminsOfLevelUp(userId: number, tierLabel: string, pooled: 
   await Promise.all([
     sendEmail(
       admins.map((a) => a.email),
-      `${user.name} reached ${tierLabel} in MAHA Standing`,
+      `${user.name} reached ${tierLabel} Partner Level`,
       buildLevelUpEmailHtml({ userName: user.name, userEmail: user.email, tierLabel, pooled, openUrl })
     ),
     notifyUsers(admins.map((a) => a.id), "standing", {
-      previewTitle: "MAHA Standing level-up",
+      previewTitle: "Partner Level up",
       previewBody: `${user.name} reached ${tierLabel}`,
-      genericTitle: "MAHA Standing level-up",
+      genericTitle: "Partner Level up",
       genericBody: "A partner reached a new level",
       url: "/admin/partners",
     }),
