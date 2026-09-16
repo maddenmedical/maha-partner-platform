@@ -29,6 +29,14 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 const ROLE_FILTERS = ["all", "partner", "student"] as const;
 type RoleFilter = (typeof ROLE_FILTERS)[number];
 
+// Rank only -- no labels or rewards duplicated here, those come from the
+// /api/admin/standing response already loaded into standingByUserId. Used
+// solely to sort the list by tier.
+const TIER_RANK = ["newcomer", "active_member", "connector", "mentor", "maha_fellow"];
+
+const SORT_OPTIONS = ["name", "level"] as const;
+type SortOption = (typeof SORT_OPTIONS)[number];
+
 export default function AdminPartners() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -45,6 +53,7 @@ export default function AdminPartners() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("name");
   const [confirmTarget, setConfirmTarget] = useState<User | null>(null);
   const [result, setResult] = useState<{ name: string; email: string; newPassword: string } | null>(null);
   const [roleConvertTarget, setRoleConvertTarget] = useState<User | null>(null);
@@ -132,7 +141,7 @@ export default function AdminPartners() {
   const filtered = useMemo(() => {
     if (!partners) return [];
     const q = query.trim().toLowerCase();
-    return partners.filter((u) => {
+    const list = partners.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
       if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (!q) return true;
@@ -142,7 +151,18 @@ export default function AdminPartners() {
         (u.businessName || "").toLowerCase().includes(q)
       );
     });
-  }, [partners, query, statusFilter, roleFilter]);
+    if (sortBy === "level") {
+      return [...list].sort((a, b) => {
+        const sa = standingByUserId.get(a.id);
+        const sb = standingByUserId.get(b.id);
+        const ra = sa ? TIER_RANK.indexOf(sa.tierKey) : -1;
+        const rb = sb ? TIER_RANK.indexOf(sb.tierKey) : -1;
+        if (rb !== ra) return rb - ra; // highest level first
+        return (sb?.points ?? 0) - (sa?.points ?? 0); // then most points
+      });
+    }
+    return list;
+  }, [partners, query, statusFilter, roleFilter, sortBy, standingByUserId]);
 
   function copyPassword() {
     if (!result) return;
@@ -193,6 +213,20 @@ export default function AdminPartners() {
               data-testid={`button-role-filter-${r}`}
             >
               {r === "all" ? "All roles" : r === "partner" ? "Partners" : "Students"}
+            </Button>
+          ))}
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {SORT_OPTIONS.map((s) => (
+            <Button
+              key={s}
+              size="sm"
+              variant={sortBy === s ? "default" : "outline"}
+              className="capitalize"
+              onClick={() => setSortBy(s)}
+              data-testid={`button-sort-${s}`}
+            >
+              {s === "name" ? "Sort: Name" : "Sort: Level"}
             </Button>
           ))}
         </div>

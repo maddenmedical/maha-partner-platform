@@ -14,7 +14,7 @@ import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
   sendEmail, buildRegistrationEmailHtml, buildApprovalEmailHtml, buildDeclineEmailHtml,
-  buildAdminTodoEmailHtml, buildPasswordResetEmailHtml,
+  buildAdminTodoEmailHtml, buildPasswordResetEmailHtml, buildLevelUpEmailHtml,
 } from "./email";
 import {
   registerSchema, loginSchema, changePasswordSchema, forgotPasswordSchema, resetPasswordSchema, updateProfileSchema, adminEditUserSchema, insertProductSchema, insertPriceTierSchema,
@@ -69,6 +69,14 @@ async function awardStanding(userId: number, activityKey: keyof typeof STANDING_
           clinicId,
         });
       }
+      if (tier) {
+        // Admin-only alert -- never surfaced to the member. Email always
+        // fires; push respects each admin's own "offers" preference (see
+        // notifyAdminsOfLevelUp), same as every other admin push alert.
+        notifyAdminsOfLevelUp(userId, tier.label, !!clinicId).catch((e) =>
+          console.error("[standing] level-up admin notify failed:", e)
+        );
+      }
     }
   } catch (e) {
     // Standing is a side-effect, never a reason to fail the primary action.
@@ -98,6 +106,32 @@ const APP_BASE_URL = `${SITE_ORIGIN}${API_PATH_PREFIX}`;
 // email, must NOT include the /port/5001 API prefix — the SPA is served from
 // the plain site origin.
 const FRONTEND_SIGNIN_URL = `${SITE_ORIGIN}/`;
+
+// Admin-only alert for a MAHA Standing level-up -- fires on both email (to
+// every admin's own address, always) and push (respecting each admin's own
+// "offers" push preference, the closest existing category). Deliberately
+// never touches the member's own notification preferences or channels --
+// see "Do NOT proactively communicate to partners" in project rules.
+async function notifyAdminsOfLevelUp(userId: number, tierLabel: string, pooled: boolean) {
+  const [user, admins] = await Promise.all([storage.getUser(userId), storage.listAdmins()]);
+  if (!user || admins.length === 0) return;
+  const openUrl = `${FRONTEND_SIGNIN_URL}#/admin/partners`;
+  await Promise.all([
+    sendEmail(
+      admins.map((a) => a.email),
+      `${user.name} reached ${tierLabel} in MAHA Standing`,
+      buildLevelUpEmailHtml({ userName: user.name, userEmail: user.email, tierLabel, pooled, openUrl })
+    ),
+    notifyUsers(admins.map((a) => a.id), "standing", {
+      previewTitle: "MAHA Standing level-up",
+      previewBody: `${user.name} reached ${tierLabel}`,
+      genericTitle: "MAHA Standing level-up",
+      genericBody: "A partner reached a new level",
+      url: "/admin/partners",
+    }),
+  ]);
+}
+
 // Hash-routed client page (see client/src/App.tsx) that reads the token from
 // the query string and lets the user set a new password.
 const FRONTEND_RESET_PASSWORD_URL = `${SITE_ORIGIN}/#/reset-password`;
@@ -3038,6 +3072,14 @@ export async function registerRoutes(
       progressPercent = span > 0 ? Math.min(100, Math.round(((points - tier.minPoints) / span) * 100)) : 0;
     }
     res.json({ tierKey: tier.key, tierLabel: tier.label, hasNextTier: !!nextTier, progressPercent });
+  });
+
+  // Member-facing: the full tier ladder so members can see what levels exist
+  // and are called. Names + point thresholds only -- reward field is
+  // deliberately stripped before this ever leaves the server (rewards stay
+  // fully internal; see standingRewards queue and project rules).
+  app.get("/api/standing/tiers", requireAuth, requireRole("partner", "student", "admin"), async (_req, res) => {
+    res.json(STANDING_TIERS.map((t) => ({ key: t.key, label: t.label, minPoints: t.minPoints })));
   });
 
   // Admin-only: exact points, full breakdown per user, and the tier ladder.

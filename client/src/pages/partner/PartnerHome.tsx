@@ -5,6 +5,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { getGreetingName } from "@/lib/utils";
 import type { CaseDiscussion, ClassSession } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
+import { MyStandingCard } from "@/components/MyStandingCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -244,6 +245,8 @@ export default function PartnerHome() {
         <h1 className="text-xl font-semibold" data-testid="text-welcome">Welcome back, {getGreetingName(user ?? {})}</h1>
         <p className="text-sm text-muted-foreground mt-1">Here is your personal MAHA dashboard. Let us know how we can help.</p>
       </div>
+
+      <MyStandingCard />
 
       {isStudent && <NextClassCard />}
 

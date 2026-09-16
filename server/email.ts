@@ -192,6 +192,34 @@ export function buildAdminTodoEmailHtml(r: AdminTodoEmailInput): string {
   </div>`;
 }
 
+export interface LevelUpEmailInput {
+  userName: string;
+  userEmail: string;
+  tierLabel: string;
+  pooled: boolean;
+  openUrl: string;
+}
+
+// Admin-only alert -- fires the moment a partner/student (or their pooled
+// clinic) crosses into a new MAHA Standing tier. Deliberately makes no
+// promise of a reward to the recipient admin's inbox; any outreach to the
+// member happens manually and separately (see standingRewards queue), and
+// this email must never be forwarded or quoted back to the member.
+export function buildLevelUpEmailHtml(r: LevelUpEmailInput): string {
+  const btn = (href: string, label: string) =>
+    `<a href="${href}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#ffbf42;color:#111;font-weight:600;text-decoration:none;font-size:14px;">${label}</a>`;
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
+    <h2 style="color:#111;">${escapeHtml(r.userName)} reached ${escapeHtml(r.tierLabel)}</h2>
+    <p style="color:#444;font-size:14px;">${escapeHtml(r.userName)} (${escapeHtml(r.userEmail)}) just moved up to the <strong>${escapeHtml(r.tierLabel)}</strong> level in MAHA Standing${r.pooled ? " -- this was their clinic's pooled total crossing the threshold" : ""}.</p>
+    <p style="color:#444;font-size:14px;">No reward has been sent automatically. If this level calls for outreach, follow up manually and log it in the rewards queue once done.</p>
+    <div style="margin:24px 0;">
+      ${btn(r.openUrl, "Open Partners & Students")}
+    </div>
+    <p style="font-size:12px;color:#999;">This is an internal admin notification -- please don't forward or quote it to the member.</p>
+  </div>`;
+}
+
 // Note: there is no self-service "forgot password" email flow — password
 // resets are admin-initiated only (see server/routes.ts,
 // /api/admin/users/:id/reset-password), since Resend's sandbox mode can't
