@@ -24,7 +24,7 @@ import {
   browserSupportsWebAuthn, registerPasskey, deletePasskey, type WebauthnCredentialSummary,
 } from "@/lib/webauthn";
 
-type NotifyCategory = "community" | "chat" | "orders" | "offers";
+type NotifyCategory = "community" | "chat" | "orders" | "offers" | "staff";
 type NotifyStyle = "preview" | "alert" | "silent";
 
 interface NotifyCategoryConfig {
@@ -95,6 +95,18 @@ function notifyCategoryConfigs(role: string | undefined): NotifyCategoryConfig[]
         ? "Partner level-up alerts and your own outgoing announcements."
         : "New announcements and special offers from MAHA.",
     },
+    // Admin-only -- the Staff Room and 1:1 admin DMs are internal, so this
+    // category is never rendered for partners/students (filtered below).
+    ...(isAdmin
+      ? [
+          {
+            key: "staff" as const,
+            icon: Users,
+            label: "Staff chat",
+            description: "Messages in the Staff Room or a direct message from another admin.",
+          },
+        ]
+      : []),
   ];
 }
 
@@ -119,6 +131,7 @@ export default function Account() {
     chat: { enabled: true, style: "preview" },
     orders: { enabled: true, style: "preview" },
     offers: { enabled: true, style: "preview" },
+    staff: { enabled: true, style: "preview" },
   });
   const [notifySaving, setNotifySaving] = useState<NotifyCategory | null>(null);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
@@ -133,8 +146,9 @@ export default function Account() {
       chat: { enabled: user.notifyChatEnabled ?? true, style: (user.notifyChatStyle as NotifyStyle) ?? "preview" },
       orders: { enabled: user.notifyOrdersEnabled ?? true, style: (user.notifyOrdersStyle as NotifyStyle) ?? "preview" },
       offers: { enabled: user.notifyOffersEnabled ?? true, style: (user.notifyOffersStyle as NotifyStyle) ?? "preview" },
+      staff: { enabled: user.notifyStaffEnabled ?? true, style: (user.notifyStaffStyle as NotifyStyle) ?? "preview" },
     });
-  }, [user?.id, user?.notifyCommunityEnabled, user?.notifyCommunityStyle, user?.notifyChatEnabled, user?.notifyChatStyle, user?.notifyOrdersEnabled, user?.notifyOrdersStyle, user?.notifyOffersEnabled, user?.notifyOffersStyle]);
+  }, [user?.id, user?.notifyCommunityEnabled, user?.notifyCommunityStyle, user?.notifyChatEnabled, user?.notifyChatStyle, user?.notifyOrdersEnabled, user?.notifyOrdersStyle, user?.notifyOffersEnabled, user?.notifyOffersStyle, user?.notifyStaffEnabled, user?.notifyStaffStyle]);
 
   useEffect(() => {
     setPushPermission(isPushSupported() ? Notification.permission : "unsupported");

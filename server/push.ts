@@ -90,7 +90,7 @@ export async function sendToSubscriptions(
 // so route handlers never have to branch on style themselves.
 // ---------------------------------------------------------------------------
 
-export type NotificationCategory = "community" | "chat" | "orders" | "offers" | "standing";
+export type NotificationCategory = "community" | "chat" | "orders" | "offers" | "standing" | "staff";
 
 export interface NotifyContent {
   // Shown for "alert" style -- must not reveal message/order content.
@@ -113,6 +113,7 @@ const CATEGORY_COLS: Record<NotificationCategory, { enabled: string; style: stri
   // warrant its own settings-page toggle for a single alert type. Any admin
   // who has turned off "offers" pushes for themselves will also skip this.
   standing: { enabled: "notifyOffersEnabled", style: "notifyOffersStyle" },
+  staff: { enabled: "notifyStaffEnabled", style: "notifyStaffStyle" },
 };
 
 // Sends one notification per recipient, each shaped by that recipient's own

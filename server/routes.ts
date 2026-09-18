@@ -24,7 +24,7 @@ import {
   estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
   insertCaseDiscussionSchema, createCommunityTopicSchema, postCommunityMessageSchema,
   communityVisibilitySchema, updateNotificationPreferenceSchema, COMMUNITY_ENABLED_KEY,
-  STANDING_POINTS, STANDING_TIERS,
+  STANDING_POINTS, STANDING_TIERS, postStaffChatMessageSchema,
   WELCOME_INTRO_TOPIC_ID_KEY, WELCOME_INTRO_REMIND_EVERY_N_VISITS, WELCOME_INTRO_MAX_REMINDERS,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
@@ -2651,6 +2651,180 @@ export async function registerRoutes(
     if (!status) return res.status(400).json({ message: "status must be 'open' or 'done'" });
     const updated = await storage.setAdminTodoStatus(todo.id, status, status === "done" ? Date.now() : null);
     res.json(updated);
+  });
+
+  // ---------- ADMIN TEAM CHAT (admin-to-admin, internal only -- never
+  // surfaced to partners or students) ----------
+  // Shared Staff Room: every admin reads the same feed.
+  app.get("/api/admin/staff-chat/room/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const messages = await storage.listStaffRoomMessages();
+    await storage.markStaffRoomRead(req.user!.id);
+    res.json(messages.map(redactDeletedMessage));
+  });
+
+  app.post("/api/admin/staff-chat/room/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const parsed = postStaffChatMessageSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+    if (!parsed.data.body.trim() && !parsed.data.attachmentUrl) {
+      return res.status(400).json({ message: "Message can't be empty" });
+    }
+    const msg = await storage.createStaffRoomMessage({
+      senderId: req.user!.id,
+      senderName: req.user!.name,
+      body: parsed.data.body,
+      attachmentUrl: parsed.data.attachmentUrl,
+      attachmentType: parsed.data.attachmentType,
+      attachmentName: parsed.data.attachmentName,
+      replyToMessageId: parsed.data.replyToMessageId,
+      createdAt: Date.now(),
+    });
+    const otherAdminIds = (await storage.listAdmins()).map((a) => a.id).filter((id) => id !== req.user!.id);
+    notifyUsers(otherAdminIds, "staff", {
+      genericTitle: "New message in Staff Room",
+      genericBody: "Tap to view.",
+      previewTitle: `${req.user!.name} \u2014 Staff Room`,
+      previewBody: msg.body.slice(0, 140) || "Sent an attachment.",
+      url: "/#/admin/chat",
+    }).catch((err) => console.error("[push] staff room notify failed:", err));
+    res.json(msg);
+  });
+
+  app.patch("/api/admin/staff-chat/room/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getStaffRoomMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only edit your own messages" });
+    if (message.deletedAt) return res.status(400).json({ message: "Can't edit a deleted message" });
+    const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+    if (!body) return res.status(400).json({ message: "Message can't be empty" });
+    const updated = await storage.editStaffRoomMessage(message.id, body);
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/staff-chat/room/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getStaffRoomMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only delete your own messages" });
+    const updated = message.deletedAt ? message : await storage.deleteStaffRoomMessage(message.id, req.user!.name);
+    res.json(redactDeletedMessage(updated));
+  });
+
+  // Shared with both Staff Room and DM composers -- ChatComposer always
+  // posts the file under form field "file"; access to the resulting URL is
+  // governed by category "chat" in the /api/files/:driveFileId switch above,
+  // which already grants any admin access regardless of thread ownership.
+  app.post("/api/admin/staff-chat/upload", requireAuth, requireRole("admin"), upload.single("file"), async (req: AuthedRequest, res) => {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    try {
+      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      await storage.createUploadedFile({
+        driveFileId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        category: "chat",
+        ownerId: req.user!.id,
+        uploadedAt: Date.now(),
+      });
+      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+    } catch {
+      res.status(502).json({ message: "File storage upload failed" });
+    }
+  });
+
+  // Private 1:1 admin DMs.
+  app.get("/api/admin/staff-chat/dm/threads", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const threads = await storage.listStaffDmThreadsForAdmin(req.user!.id);
+    const enriched = await Promise.all(threads.map(async (t) => {
+      const otherId = t.adminAId === req.user!.id ? t.adminBId : t.adminAId;
+      const other = await storage.getUser(otherId);
+      const messages = await storage.listStaffDmMessages(t.id);
+      const last = messages[messages.length - 1] ?? null;
+      const myLastRead = t.adminAId === req.user!.id ? t.adminALastReadAt : t.adminBLastReadAt;
+      const unread = !!last && last.senderId !== req.user!.id && (!myLastRead || last.createdAt > myLastRead);
+      return {
+        id: t.id,
+        otherAdminId: otherId,
+        otherAdminName: other?.name ?? "Unknown admin",
+        otherAdminPhotoUrl: other?.photoUrl ?? null,
+        lastMessagePreview: last ? (last.deletedAt ? "Message deleted" : (last.body || (last.attachmentUrl ? "Sent an attachment" : ""))) : null,
+        lastMessageAt: last?.createdAt ?? t.createdAt,
+        unread,
+      };
+    }));
+    enriched.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+    res.json(enriched);
+  });
+
+  app.post("/api/admin/staff-chat/dm/threads", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const otherAdminId = Number(req.body.otherAdminId);
+    if (!otherAdminId) return res.status(400).json({ message: "otherAdminId is required" });
+    if (otherAdminId === req.user!.id) return res.status(400).json({ message: "Can't start a DM with yourself" });
+    const other = await storage.getUser(otherAdminId);
+    if (!other || other.role !== "admin") return res.status(400).json({ message: "otherAdminId must be an admin" });
+    const thread = await storage.getOrCreateStaffDmThread(req.user!.id, otherAdminId);
+    res.json(thread);
+  });
+
+  app.get("/api/admin/staff-chat/dm/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.params.id);
+    const thread = await storage.getStaffDmThread(threadId);
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    if (thread.adminAId !== req.user!.id && thread.adminBId !== req.user!.id) return res.status(403).json({ message: "Forbidden" });
+    const messages = await storage.listStaffDmMessages(threadId);
+    await storage.markStaffDmThreadRead(threadId, req.user!.id);
+    res.json(messages.map(redactDeletedMessage));
+  });
+
+  app.post("/api/admin/staff-chat/dm/threads/:id/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const threadId = Number(req.params.id);
+    const thread = await storage.getStaffDmThread(threadId);
+    if (!thread) return res.status(404).json({ message: "Not found" });
+    if (thread.adminAId !== req.user!.id && thread.adminBId !== req.user!.id) return res.status(403).json({ message: "Forbidden" });
+    const parsed = postStaffChatMessageSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+    if (!parsed.data.body.trim() && !parsed.data.attachmentUrl) {
+      return res.status(400).json({ message: "Message can't be empty" });
+    }
+    const msg = await storage.createStaffDmMessage({
+      threadId,
+      senderId: req.user!.id,
+      senderName: req.user!.name,
+      body: parsed.data.body,
+      attachmentUrl: parsed.data.attachmentUrl,
+      attachmentType: parsed.data.attachmentType,
+      attachmentName: parsed.data.attachmentName,
+      replyToMessageId: parsed.data.replyToMessageId,
+      createdAt: Date.now(),
+    });
+    const otherAdminId = thread.adminAId === req.user!.id ? thread.adminBId : thread.adminAId;
+    notifyUsers([otherAdminId], "staff", {
+      genericTitle: "New direct message",
+      genericBody: "Tap to view.",
+      previewTitle: req.user!.name,
+      previewBody: msg.body.slice(0, 140) || "Sent an attachment.",
+      url: "/#/admin/chat",
+    }).catch((err) => console.error("[push] staff dm notify failed:", err));
+    res.json(msg);
+  });
+
+  app.patch("/api/admin/staff-chat/dm/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getStaffDmMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only edit your own messages" });
+    if (message.deletedAt) return res.status(400).json({ message: "Can't edit a deleted message" });
+    const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+    if (!body) return res.status(400).json({ message: "Message can't be empty" });
+    const updated = await storage.editStaffDmMessage(message.id, body);
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/staff-chat/dm/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const message = await storage.getStaffDmMessage(Number(req.params.id));
+    if (!message) return res.status(404).json({ message: "Not found" });
+    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only delete your own messages" });
+    const updated = message.deletedAt ? message : await storage.deleteStaffDmMessage(message.id, req.user!.name);
+    res.json(redactDeletedMessage(updated));
   });
 
   // ---------- HOME SUMMARY ----------

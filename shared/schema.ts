@@ -92,6 +92,12 @@ export const users = sqliteTable("users", {
   notifyOrdersStyle: text("notify_orders_style").notNull().default("preview"),
   notifyOffersEnabled: integer("notify_offers_enabled", { mode: "boolean" }).notNull().default(true),
   notifyOffersStyle: text("notify_offers_style").notNull().default("preview"),
+  // Admin-only category: messages in the Staff Room or an admin-to-admin
+  // DM. Never shown to partners/students (notifyCategoryConfigs on the
+  // client only renders it for role='admin'), but the columns still exist
+  // on every user row -- harmless unused defaults for non-admins.
+  notifyStaffEnabled: integer("notify_staff_enabled", { mode: "boolean" }).notNull().default(true),
+  notifyStaffStyle: text("notify_staff_style").notNull().default("preview"),
   // Running count for the "silent" style's app-icon badge (Badging API).
   // Incremented on each qualifying silent-style event, reset to 0 whenever
   // the app confirms the user has opened/focused it.
@@ -263,7 +269,7 @@ export const communityVisibilitySchema = z.object({
 export type CommunityVisibilityInput = z.infer<typeof communityVisibilitySchema>;
 
 // Self-service push notification preferences -- one category at a time.
-export const NOTIFICATION_CATEGORIES = ["community", "chat", "orders", "offers"] as const;
+export const NOTIFICATION_CATEGORIES = ["community", "chat", "orders", "offers", "staff"] as const;
 export const NOTIFICATION_STYLES = ["silent", "alert", "preview"] as const;
 export const updateNotificationPreferenceSchema = z.object({
   category: z.enum(NOTIFICATION_CATEGORIES),
@@ -888,6 +894,94 @@ export const chatMessageFlags = sqliteTable("chat_message_flags", {
   createdAt: integer("created_at").notNull(),
 });
 export type ChatMessageFlag = typeof chatMessageFlags.$inferSelect;
+
+// ---------- ADMIN TEAM CHAT (admin-to-admin, internal only) ----------
+// Two surfaces, both scoped to role='admin' only -- never visible to
+// partners/students: (1) a single shared "Staff Room" every admin sees the
+// same feed of, no membership list needed since it's implicitly "all
+// admins"; (2) private 1:1 DMs between two specific admins. Deliberately NOT
+// built on chatThreads/chatMessages -- that model assumes exactly one
+// non-admin "owner" plus the admin team as a single collective side, which
+// doesn't fit peer-to-peer admin messaging (a DM must be visible ONLY to its
+// two participants, not the whole admin team). Kept as small, separate
+// tables instead of overloading an unrelated shape.
+export const staffRoomMessages = sqliteTable("staff_room_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  senderId: integer("sender_id").notNull(),
+  senderName: text("sender_name").notNull(),
+  body: text("body").notNull(),
+  attachmentUrl: text("attachment_url"),
+  attachmentType: text("attachment_type"),
+  attachmentName: text("attachment_name"),
+  replyToMessageId: integer("reply_to_message_id"),
+  createdAt: integer("created_at").notNull(),
+  deletedAt: integer("deleted_at"),
+  deletedByName: text("deleted_by_name"),
+  editedAt: integer("edited_at"),
+});
+export const insertStaffRoomMessageSchema = createInsertSchema(staffRoomMessages).omit({
+  id: true, createdAt: true, deletedAt: true, deletedByName: true, editedAt: true,
+});
+export type InsertStaffRoomMessage = z.infer<typeof insertStaffRoomMessageSchema>;
+export type StaffRoomMessage = typeof staffRoomMessages.$inferSelect;
+
+// One row per admin: when they last opened the Staff Room, so unread state
+// can be computed as "any message newer than my lastReadAt" without a
+// per-message read-receipt table (WhatsApp-style bulk read, same pattern as
+// communityMessageReads but collapsed to one row per admin since there's
+// only ever one room).
+export const staffRoomReads = sqliteTable("staff_room_reads", {
+  adminId: integer("admin_id").primaryKey(),
+  lastReadAt: integer("last_read_at").notNull(),
+});
+export type StaffRoomRead = typeof staffRoomReads.$inferSelect;
+
+// One thread per unordered pair of admins. `pairKey` is the two admin ids
+// sorted ascending and joined ("12-89"), giving a single-column UNIQUE
+// constraint that auto-migrate already knows how to build -- avoids needing
+// a composite-unique-index feature the migration helper doesn't support.
+// adminAId is always the smaller id, adminBId the larger, so lookups don't
+// need to try both orderings.
+export const staffDmThreads = sqliteTable("staff_dm_threads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  adminAId: integer("admin_a_id").notNull(),
+  adminBId: integer("admin_b_id").notNull(),
+  pairKey: text("pair_key").notNull().unique(),
+  createdAt: integer("created_at").notNull(),
+  adminALastReadAt: integer("admin_a_last_read_at"),
+  adminBLastReadAt: integer("admin_b_last_read_at"),
+});
+export type StaffDmThread = typeof staffDmThreads.$inferSelect;
+
+export const staffDmMessages = sqliteTable("staff_dm_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  threadId: integer("thread_id").notNull(),
+  senderId: integer("sender_id").notNull(),
+  senderName: text("sender_name").notNull(),
+  body: text("body").notNull(),
+  attachmentUrl: text("attachment_url"),
+  attachmentType: text("attachment_type"),
+  attachmentName: text("attachment_name"),
+  replyToMessageId: integer("reply_to_message_id"),
+  createdAt: integer("created_at").notNull(),
+  deletedAt: integer("deleted_at"),
+  deletedByName: text("deleted_by_name"),
+  editedAt: integer("edited_at"),
+});
+export const insertStaffDmMessageSchema = createInsertSchema(staffDmMessages).omit({
+  id: true, createdAt: true, deletedAt: true, deletedByName: true, editedAt: true,
+});
+export type InsertStaffDmMessage = z.infer<typeof insertStaffDmMessageSchema>;
+export type StaffDmMessage = typeof staffDmMessages.$inferSelect;
+
+export const postStaffChatMessageSchema = z.object({
+  body: z.string().max(5000).optional().default(""),
+  attachmentUrl: z.string().optional().nullable(),
+  attachmentType: z.string().optional().nullable(),
+  attachmentName: z.string().optional().nullable(),
+  replyToMessageId: z.number().int().positive().optional().nullable(),
+});
+export type PostStaffChatMessageInput = z.infer<typeof postStaffChatMessageSchema>;
 
 // ---------- ADMIN TO-DOS (message-linked handoff between admins) ----------
 // One admin marks a specific chat message and hands an action item to another

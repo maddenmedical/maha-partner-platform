@@ -40,6 +40,8 @@ export type AuthUser = {
   notifyOrdersStyle: string;
   notifyOffersEnabled: boolean;
   notifyOffersStyle: string;
+  notifyStaffEnabled: boolean;
+  notifyStaffStyle: string;
   // Set only while an admin is using "View Platform as Member" -- who the
   // real admin behind this session is, so the app can show a persistent
   // banner and offer a way back. Absent/null for every normal login.

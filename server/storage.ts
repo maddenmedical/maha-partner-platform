@@ -6,6 +6,7 @@ import {
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
   standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog,
+  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, InsertSession, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -21,11 +22,12 @@ import type {
   AdminTodo, InsertAdminTodo,
   AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
   StandingEntry, StandingReward, Clinic, AdminPinnedMember, ImpersonationLogEntry,
+  StaffRoomMessage, StaffDmThread, StaffDmMessage,
 } from "@shared/schema";
 import { STANDING_TIERS, standingTierForPoints } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, asc, gte, gt, lte, isNull, inArray, like } from "drizzle-orm";
+import { eq, and, or, desc, asc, gte, gt, lte, isNull, inArray, like } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
 
 // Opening the database, setting WAL mode, and self-healing the schema all
@@ -361,6 +363,25 @@ export interface IStorage {
   getCommunityReadsForMessages(messageIds: number[]): Promise<CommunityMessageRead[]>;
   getUnreadCommunityMessageIds(topicId: number, userId: number): Promise<number[]>;
   countUnreadCommunityTopicsForUser(userId: number): Promise<number>;
+
+  // ---------- staff chat (admin-to-admin, internal only) ----------
+  listStaffRoomMessages(): Promise<StaffRoomMessage[]>;
+  createStaffRoomMessage(m: { senderId: number; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<StaffRoomMessage>;
+  getStaffRoomMessage(id: number): Promise<StaffRoomMessage | undefined>;
+  editStaffRoomMessage(id: number, body: string): Promise<StaffRoomMessage>;
+  deleteStaffRoomMessage(id: number, deletedByName: string): Promise<StaffRoomMessage>;
+  getStaffRoomLastRead(adminId: number): Promise<number | null>;
+  markStaffRoomRead(adminId: number): Promise<void>;
+
+  getOrCreateStaffDmThread(adminAId: number, adminBId: number): Promise<StaffDmThread>;
+  listStaffDmThreadsForAdmin(adminId: number): Promise<StaffDmThread[]>;
+  getStaffDmThread(id: number): Promise<StaffDmThread | undefined>;
+  listStaffDmMessages(threadId: number): Promise<StaffDmMessage[]>;
+  createStaffDmMessage(m: { threadId: number; senderId: number; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<StaffDmMessage>;
+  getStaffDmMessage(id: number): Promise<StaffDmMessage | undefined>;
+  editStaffDmMessage(id: number, body: string): Promise<StaffDmMessage>;
+  deleteStaffDmMessage(id: number, deletedByName: string): Promise<StaffDmMessage>;
+  markStaffDmThreadRead(threadId: number, adminId: number): Promise<void>;
 
   // ---------- MAHA Standing (internal engagement scoring) ----------
   // Awards points, appends a ledger row, and keeps users.standingPoints in
@@ -1357,6 +1378,7 @@ export class DatabaseStorage implements IStorage {
       chat: { enabled: "notifyChatEnabled", style: "notifyChatStyle" },
       orders: { enabled: "notifyOrdersEnabled", style: "notifyOrdersStyle" },
       offers: { enabled: "notifyOffersEnabled", style: "notifyOffersStyle" },
+      staff: { enabled: "notifyStaffEnabled", style: "notifyStaffStyle" },
     };
     const cols = colMap[category];
     if (!cols) return this.getUser(userId);
@@ -1516,6 +1538,100 @@ export class DatabaseStorage implements IStorage {
       if (unreadFromOthers.length > 0) count++;
     }
     return count;
+  }
+
+  // ---------- staff chat (admin-to-admin, internal only) ----------
+  async listStaffRoomMessages() {
+    return db.select().from(staffRoomMessages).orderBy(staffRoomMessages.createdAt).all();
+  }
+  async createStaffRoomMessage(m: any) {
+    return db.insert(staffRoomMessages).values({
+      senderId: m.senderId,
+      senderName: m.senderName,
+      body: m.body,
+      attachmentUrl: m.attachmentUrl ?? null,
+      attachmentType: m.attachmentType ?? null,
+      attachmentName: m.attachmentName ?? null,
+      replyToMessageId: m.replyToMessageId ?? null,
+      createdAt: m.createdAt,
+    }).returning().get();
+  }
+  async getStaffRoomMessage(id: number) {
+    return db.select().from(staffRoomMessages).where(eq(staffRoomMessages.id, id)).get();
+  }
+  async editStaffRoomMessage(id: number, body: string) {
+    return db.update(staffRoomMessages).set({ body, editedAt: Date.now() }).where(eq(staffRoomMessages.id, id)).returning().get();
+  }
+  async deleteStaffRoomMessage(id: number, deletedByName: string) {
+    return db.update(staffRoomMessages).set({ deletedAt: Date.now(), deletedByName }).where(eq(staffRoomMessages.id, id)).returning().get();
+  }
+  async getStaffRoomLastRead(adminId: number) {
+    const row = db.select().from(staffRoomReads).where(eq(staffRoomReads.adminId, adminId)).get();
+    return row?.lastReadAt ?? null;
+  }
+  async markStaffRoomRead(adminId: number) {
+    const now = Date.now();
+    const existing = db.select().from(staffRoomReads).where(eq(staffRoomReads.adminId, adminId)).get();
+    if (existing) {
+      db.update(staffRoomReads).set({ lastReadAt: now }).where(eq(staffRoomReads.adminId, adminId)).run();
+    } else {
+      db.insert(staffRoomReads).values({ adminId, lastReadAt: now }).run();
+    }
+  }
+
+  // Canonical pair ordering: the smaller user id is always adminAId so a
+  // lookup never has to try both (a, b) and (b, a).
+  async getOrCreateStaffDmThread(adminAId: number, adminBId: number) {
+    const lo = Math.min(adminAId, adminBId);
+    const hi = Math.max(adminAId, adminBId);
+    const pairKey = `${lo}-${hi}`;
+    const existing = db.select().from(staffDmThreads).where(eq(staffDmThreads.pairKey, pairKey)).get();
+    if (existing) return existing;
+    return db.insert(staffDmThreads).values({ adminAId: lo, adminBId: hi, pairKey, createdAt: Date.now() }).returning().get();
+  }
+  async listStaffDmThreadsForAdmin(adminId: number) {
+    return db.select().from(staffDmThreads)
+      .where(or(eq(staffDmThreads.adminAId, adminId), eq(staffDmThreads.adminBId, adminId)))
+      .orderBy(desc(staffDmThreads.createdAt))
+      .all();
+  }
+  async getStaffDmThread(id: number) {
+    return db.select().from(staffDmThreads).where(eq(staffDmThreads.id, id)).get();
+  }
+  async listStaffDmMessages(threadId: number) {
+    return db.select().from(staffDmMessages).where(eq(staffDmMessages.threadId, threadId)).orderBy(staffDmMessages.createdAt).all();
+  }
+  async createStaffDmMessage(m: any) {
+    return db.insert(staffDmMessages).values({
+      threadId: m.threadId,
+      senderId: m.senderId,
+      senderName: m.senderName,
+      body: m.body,
+      attachmentUrl: m.attachmentUrl ?? null,
+      attachmentType: m.attachmentType ?? null,
+      attachmentName: m.attachmentName ?? null,
+      replyToMessageId: m.replyToMessageId ?? null,
+      createdAt: m.createdAt,
+    }).returning().get();
+  }
+  async getStaffDmMessage(id: number) {
+    return db.select().from(staffDmMessages).where(eq(staffDmMessages.id, id)).get();
+  }
+  async editStaffDmMessage(id: number, body: string) {
+    return db.update(staffDmMessages).set({ body, editedAt: Date.now() }).where(eq(staffDmMessages.id, id)).returning().get();
+  }
+  async deleteStaffDmMessage(id: number, deletedByName: string) {
+    return db.update(staffDmMessages).set({ deletedAt: Date.now(), deletedByName }).where(eq(staffDmMessages.id, id)).returning().get();
+  }
+  async markStaffDmThreadRead(threadId: number, adminId: number) {
+    const thread = db.select().from(staffDmThreads).where(eq(staffDmThreads.id, threadId)).get();
+    if (!thread) return;
+    const now = Date.now();
+    if (thread.adminAId === adminId) {
+      db.update(staffDmThreads).set({ adminALastReadAt: now }).where(eq(staffDmThreads.id, threadId)).run();
+    } else if (thread.adminBId === adminId) {
+      db.update(staffDmThreads).set({ adminBLastReadAt: now }).where(eq(staffDmThreads.id, threadId)).run();
+    }
   }
 
   // ---------- MAHA Standing (internal engagement scoring) ----------

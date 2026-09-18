@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MessageSquare, Stethoscope, Search, Star, MoreVertical, Archive, ArchiveRestore, Trash2, Undo2 } from "lucide-react";
+import { MessageSquare, Stethoscope, Search, Star, MoreVertical, Archive, ArchiveRestore, Trash2, Undo2, Users, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId } from "@/lib/chatNav";
 import { useAuth } from "@/context/AuthContext";
@@ -65,8 +65,9 @@ export default function AdminChatInbox() {
   const { toast } = useToast();
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
-  const [showArchived, setShowArchived] = useState(false);
+  const [view, setView] = useState<"active" | "archived" | "team">("active");
   const [deleteThreadId, setDeleteThreadId] = useState<number | null>(null);
+  const [staffSelection, setStaffSelection] = useState<StaffSelection>(null);
 
   const { data: threads, isLoading } = useQuery<ThreadRow[]>({
     queryKey: ["/api/admin/chat/threads"],
@@ -97,7 +98,7 @@ export default function AdminChatInbox() {
 
   const activeThreads = (threads || []).filter((t) => !t.archivedAt);
   const archivedThreads = (threads || []).filter((t) => t.archivedAt);
-  const visibleThreads = showArchived ? archivedThreads : activeThreads;
+  const visibleThreads = view === "archived" ? archivedThreads : activeThreads;
   const reactivationRequestCount = archivedThreads.filter((t) => t.reactivationRequestedAt).length;
 
   useEffect(() => {
@@ -127,10 +128,10 @@ export default function AdminChatInbox() {
         <div className="flex items-center gap-1 rounded-lg border border-card-border bg-card p-1 shrink-0">
           <button
             type="button"
-            onClick={() => setShowArchived(false)}
+            onClick={() => setView("active")}
             className={cn(
               "flex-1 rounded-md py-1 text-xs font-medium hover-elevate active-elevate-2",
-              !showArchived ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+              view === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
             )}
             data-testid="button-tab-active-chats"
           >
@@ -138,10 +139,10 @@ export default function AdminChatInbox() {
           </button>
           <button
             type="button"
-            onClick={() => setShowArchived(true)}
+            onClick={() => setView("archived")}
             className={cn(
               "flex-1 rounded-md py-1 text-xs font-medium hover-elevate active-elevate-2 flex items-center justify-center gap-1.5",
-              showArchived ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+              view === "archived" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
             )}
             data-testid="button-tab-archived-chats"
           >
@@ -152,8 +153,21 @@ export default function AdminChatInbox() {
               </Badge>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => { setView("team"); setSelectedThread(null); }}
+            className={cn(
+              "flex-1 rounded-md py-1 text-xs font-medium hover-elevate active-elevate-2 flex items-center justify-center gap-1.5",
+              view === "team" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+            )}
+            data-testid="button-tab-team-chat"
+          >
+            <Users className="h-3.5 w-3.5" /> Team
+          </button>
         </div>
-        {isLoading ? (
+        {view === "team" ? (
+          <StaffChatSidebar onSelect={setStaffSelection} selected={staffSelection} />
+        ) : isLoading ? (
           <>
             <Skeleton className="h-16 rounded-lg skeleton-shimmer" />
             <Skeleton className="h-16 rounded-lg skeleton-shimmer" />
@@ -162,9 +176,9 @@ export default function AdminChatInbox() {
           <EmptyState icon={MessageSquare} title="No conversations" description="Partner and student messages will appear here." />
         ) : visibleThreads.length === 0 ? (
           <EmptyState
-            icon={showArchived ? Archive : MessageSquare}
-            title={showArchived ? "No archived chats" : "No active chats"}
-            description={showArchived ? "Chats you archive will show up here." : "Every chat is archived. Switch to the Archived tab to see them."}
+            icon={view === "archived" ? Archive : MessageSquare}
+            title={view === "archived" ? "No archived chats" : "No active chats"}
+            description={view === "archived" ? "Chats you archive will show up here." : "Every chat is archived. Switch to the Archived tab to see them."}
           />
         ) : (
           visibleThreads
@@ -259,7 +273,15 @@ export default function AdminChatInbox() {
       </div>
 
       <div className="flex-1 min-w-0 hidden sm:flex">
-        {selectedThread ? (
+        {view === "team" ? (
+          staffSelection ? (
+            <StaffChatDetail selection={staffSelection} onClose={() => setStaffSelection(null)} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+              Select the Staff Room or a teammate to chat with
+            </div>
+          )
+        ) : selectedThread ? (
           <ThreadDetail thread={selectedThread} allThreads={threads} onSelectSurvivor={(id) => setPendingSelectId(id)} onCloseThread={() => setSelectedThread(null)} />
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
@@ -281,6 +303,12 @@ export default function AdminChatInbox() {
             </span>
           </div>
           <ThreadDetail thread={selectedThread} allThreads={threads} onSelectSurvivor={(id) => setPendingSelectId(id)} onCloseThread={() => setSelectedThread(null)} />
+        </div>
+      )}
+
+      {view === "team" && staffSelection && (
+        <div className="sm:hidden fixed inset-0 z-20 bg-background flex flex-col">
+          <StaffChatDetail selection={staffSelection} onClose={() => setStaffSelection(null)} showBackButton />
         </div>
       )}
       </div>
@@ -671,6 +699,264 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+// ---------- ADMIN TEAM CHAT (Staff Room + private admin DMs) ----------
+// Deliberately separate from ThreadDetail above -- staff messages have no
+// senderRole/threadId columns (see schema.ts comment), so they're adapted
+// onto ChatMessageWithMeta's shape locally instead of reusing ThreadDetail's
+// partner/student-specific data model (referrals, mentions, flags).
+
+type StaffSelection = { kind: "room" } | { kind: "dm"; threadId: number; otherAdminName: string } | null;
+
+interface StaffDmThreadRow {
+  id: number;
+  otherAdminId: number;
+  otherAdminName: string;
+  otherAdminPhotoUrl: string | null;
+  lastMessagePreview: string | null;
+  lastMessageAt: number;
+  unread: boolean;
+}
+
+// Staff messages lack `senderRole`/`threadId` -- synthesize both so the
+// shared ChatMessageBubble (typed against the partner/student ChatMessage
+// shape) renders them unmodified. `threadId` is never read by the bubble
+// itself, only carried on the type, so a sentinel is safe.
+function toStaffBubbleMessage(m: { id: number; senderId: number; senderName: string; body: string; attachmentUrl: string | null; attachmentType: string | null; attachmentName: string | null; replyToMessageId: number | null; createdAt: number; deletedAt: number | null; deletedByName: string | null; editedAt?: number | null }, threadId: number): ChatMessageWithMeta {
+  return { ...m, threadId, senderRole: "admin" } as ChatMessageWithMeta;
+}
+
+function StaffChatSidebar({ onSelect, selected }: { onSelect: (s: StaffSelection) => void; selected: StaffSelection }) {
+  const { user } = useAuth();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: dmThreads, isLoading } = useQuery<StaffDmThreadRow[]>({
+    queryKey: ["/api/admin/staff-chat/dm/threads"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/staff-chat/dm/threads");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: admins } = useQuery<User[]>({
+    queryKey: ["/api/admin/team"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/team");
+      return res.json();
+    },
+    enabled: pickerOpen,
+  });
+
+  const createDmMutation = useMutation({
+    mutationFn: async (otherAdminId: number) => {
+      const res = await apiRequest("POST", "/api/admin/staff-chat/dm/threads", { otherAdminId });
+      return res.json();
+    },
+    onSuccess: (thread: { id: number }, otherAdminId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/staff-chat/dm/threads"] });
+      const other = admins?.find((a) => a.id === otherAdminId);
+      onSelect({ kind: "dm", threadId: thread.id, otherAdminName: other?.name || "Teammate" });
+      setPickerOpen(false);
+    },
+  });
+
+  const otherAdmins = (admins || []).filter((a) => a.id !== user?.id);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => onSelect({ kind: "room" })}
+        className={cn(
+          "text-left rounded-lg border p-3 hover-elevate active-elevate-2 cursor-pointer flex items-center gap-2",
+          selected?.kind === "room" ? "border-primary bg-primary/5" : "border-card-border bg-card"
+        )}
+        data-testid="button-staff-chat-room"
+      >
+        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Users className="h-4 w-4 text-primary" />
+        </div>
+        <span className="text-sm font-medium">Staff Room</span>
+      </button>
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-full justify-center gap-1.5"
+        onClick={() => setPickerOpen(true)}
+        data-testid="button-new-staff-dm"
+      >
+        <Plus className="h-3.5 w-3.5" /> New direct message
+      </Button>
+
+      {isLoading ? (
+        <Skeleton className="h-16 rounded-lg skeleton-shimmer" />
+      ) : (
+        (dmThreads || []).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onSelect({ kind: "dm", threadId: t.id, otherAdminName: t.otherAdminName })}
+            className={cn(
+              "text-left rounded-lg border p-3 hover-elevate active-elevate-2 cursor-pointer",
+              selected?.kind === "dm" && selected.threadId === t.id ? "border-primary bg-primary/5" : "border-card-border bg-card"
+            )}
+            data-testid={`button-staff-dm-thread-${t.id}`}
+          >
+            <div className="flex items-center gap-2">
+              <UserAvatar photoUrl={t.otherAdminPhotoUrl} name={t.otherAdminName} size="sm" className="shrink-0" />
+              <span className="flex items-center gap-1.5 min-w-0">
+                {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-dm-${t.id}`} />}
+                <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.otherAdminName}</span>
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground truncate mt-0.5 ml-8">{t.lastMessagePreview || "No messages yet"}</p>
+          </button>
+        ))
+      )}
+
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent data-testid="dialog-new-staff-dm">
+          <DialogHeader>
+            <DialogTitle>Start a direct message</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            {otherAdmins.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No other admins yet.</p>
+            ) : (
+              otherAdmins.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  disabled={createDmMutation.isPending}
+                  onClick={() => createDmMutation.mutate(a.id)}
+                  className="flex items-center gap-2 rounded-lg border border-card-border p-2 text-left hover-elevate active-elevate-2"
+                  data-testid={`button-pick-admin-${a.id}`}
+                >
+                  <UserAvatar photoUrl={a.photoUrl} name={a.name} size="sm" />
+                  <span className="text-sm font-medium">{a.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Exclude<StaffSelection, null>; onClose: () => void; showBackButton?: boolean }) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const isDm = selection.kind === "dm";
+  const sentinelThreadId = isDm ? selection.threadId : 0;
+
+  const messagesUrl = isDm ? `/api/admin/staff-chat/dm/threads/${selection.threadId}/messages` : "/api/admin/staff-chat/room/messages";
+  const postUrl = messagesUrl;
+  const patchBase = isDm ? "/api/admin/staff-chat/dm/messages" : "/api/admin/staff-chat/room/messages";
+  const messagesKey = isDm ? ["/api/admin/staff-chat/dm/threads", selection.threadId, "messages"] : ["/api/admin/staff-chat/room/messages"];
+
+  const { data: rawMessages, isLoading } = useQuery<any[]>({
+    queryKey: messagesKey,
+    queryFn: async () => {
+      const res = await apiRequest("GET", messagesUrl);
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const messages = (rawMessages || []).map((m) => toStaffBubbleMessage(m, sentinelThreadId));
+
+  const sendMutation = useMutation({
+    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
+      apiRequest("POST", postUrl, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: messagesKey });
+      if (isDm) queryClient.invalidateQueries({ queryKey: ["/api/admin/staff-chat/dm/threads"] });
+    },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: ({ id, body }: { id: number; body: string }) => apiRequest("PATCH", `${patchBase}/${id}`, { body }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: messagesKey }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `${patchBase}/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: messagesKey });
+      if (isDm) queryClient.invalidateQueries({ queryKey: ["/api/admin/staff-chat/dm/threads"] });
+    },
+  });
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  return (
+    <div className="flex-1 flex flex-col min-w-0 gap-3">
+      <div className="flex items-center gap-2 shrink-0 pb-1 border-b border-border">
+        {showBackButton && (
+          <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-close-staff-chat-mobile">Back</Button>
+        )}
+        {isDm ? (
+          <span className="flex items-center gap-2 text-sm font-medium truncate">
+            <UserAvatar name={selection.otherAdminName} size="sm" />
+            <span className="truncate">{selection.otherAdminName}</span>
+          </span>
+        ) : (
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <Users className="h-4 w-4 text-primary" /> Staff Room
+          </span>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
+        {isLoading ? (
+          <>
+            <Skeleton className="h-12 w-2/3 rounded-lg skeleton-shimmer self-start" />
+            <Skeleton className="h-12 w-1/2 rounded-lg skeleton-shimmer self-end" />
+          </>
+        ) : messages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground gap-2">
+            <Users className="h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm max-w-xs">{isDm ? "No messages yet. Say hello." : "No messages yet in the Staff Room."}</p>
+          </div>
+        ) : (
+          messages.map((m) => (
+            <ChatMessageBubble
+              key={m.id}
+              message={m}
+              isMe={m.senderId === user?.id}
+              isAdmin
+              hideFlag
+              hideReactions
+              onToggleFlag={() => {}}
+              onReact={() => {}}
+              onDelete={m.senderId === user?.id ? (id) => deleteMutation.mutate(id) : undefined}
+              onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
+            />
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <ChatComposer
+        key={isDm ? `dm-${selection.threadId}` : "room"}
+        uploadUrl="/api/admin/staff-chat/upload"
+        threadId={sentinelThreadId}
+        onSend={(payload) => sendMutation.mutateAsync(payload)}
+        sending={sendMutation.isPending}
+        testIdPrefix="staff-chat"
+        placeholder={isDm ? `Message ${selection.otherAdminName}...` : "Message the team..."}
+      />
     </div>
   );
 }
