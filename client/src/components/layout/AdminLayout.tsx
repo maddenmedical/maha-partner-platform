@@ -28,6 +28,7 @@ import {
   SidebarTrigger,
   SidebarHeader,
   SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
@@ -65,6 +66,7 @@ function SortableNavItem({
   count: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.href });
+  const { isMobile, setOpenMobile } = useSidebar();
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -90,7 +92,11 @@ function SortableNavItem({
         <GripVertical className="h-3.5 w-3.5" />
       </button>
       <SidebarMenuButton asChild isActive={isActive} tooltip={item.label} data-testid={item.testId} className="min-w-0">
-        <Link href={item.href}>
+        {/* On mobile the sidebar is a slide-over sheet — tapping a destination
+            should feel like navigating to a new screen, not leave the drawer
+            hanging open behind it, so close it on tap instead of requiring
+            an extra manual swipe-to-dismiss. */}
+        <Link href={item.href} onClick={() => isMobile && setOpenMobile(false)}>
           <item.icon />
           <span>{item.label}</span>
         </Link>
@@ -109,6 +115,7 @@ function AdminSidebar() {
   const { user, updateUser, viewAsMember } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { isMobile, setOpenMobile } = useSidebar();
   const { data: pinnedMembers } = useQuery<User[]>({ queryKey: ["/api/admin/pinned-members"] });
   const [viewAsPending, setViewAsPending] = useState<number | null>(null);
 
@@ -116,6 +123,10 @@ function AdminSidebar() {
     setViewAsPending(id);
     try {
       await viewAsMember(id);
+      // Impersonation swaps the whole app into the partner/student view, so
+      // the admin drawer is about to be gone anyway — but close it explicitly
+      // rather than leaving a stale open flag for whenever they return.
+      if (isMobile) setOpenMobile(false);
     } catch (err: any) {
       toast({ title: "Could not view as this member", description: err.message, variant: "destructive" });
     } finally {
