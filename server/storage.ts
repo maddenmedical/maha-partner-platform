@@ -1043,6 +1043,7 @@ export class DatabaseStorage implements IStorage {
       attachmentUrl: m.attachmentUrl ?? null,
       attachmentType: m.attachmentType ?? null,
       attachmentName: m.attachmentName ?? null,
+      replyToMessageId: m.replyToMessageId ?? null,
       createdAt: m.createdAt,
     }).returning().get();
   }
