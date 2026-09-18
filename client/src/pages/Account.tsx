@@ -4,6 +4,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -12,11 +14,25 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { resizeImageToDataUrl } from "@/lib/imageResize";
-import { ScanFace, Trash2, Loader2, Smartphone, KeyRound, AlertCircle, UserCog, Upload, FileText, Camera } from "lucide-react";
+import { isPushSupported, subscribeToPush } from "@/lib/push";
+import {
+  ScanFace, Trash2, Loader2, Smartphone, KeyRound, AlertCircle, UserCog, Upload, FileText, Camera,
+  Bell, Users, MessageSquare, ShoppingBag, Megaphone,
+} from "lucide-react";
 import { format } from "date-fns";
 import {
   browserSupportsWebAuthn, registerPasskey, deletePasskey, type WebauthnCredentialSummary,
 } from "@/lib/webauthn";
+
+type NotifyCategory = "community" | "chat" | "orders" | "offers";
+type NotifyStyle = "preview" | "alert" | "silent";
+
+interface NotifyCategoryConfig {
+  key: NotifyCategory;
+  icon: typeof Bell;
+  label: string;
+  description: string;
+}
 
 type ProfileFormState = {
   prefix: string;
@@ -44,12 +60,120 @@ function emptyProfileForm(): ProfileFormState {
   };
 }
 
+// Notification category copy, with role-aware descriptions since the same
+// four categories mean slightly different things to an admin vs. a partner.
+function notifyCategoryConfigs(role: string | undefined): NotifyCategoryConfig[] {
+  const isAdmin = role === "admin";
+  return [
+    {
+      key: "community",
+      icon: Users,
+      label: "Community Chat",
+      description: "New topics and replies posted in Community Chat.",
+    },
+    {
+      key: "chat",
+      icon: MessageSquare,
+      label: "Patient chat",
+      description: isAdmin
+        ? "New patient chats and unanswered-chat reminders."
+        : "Replies from the MAHA team in your patient chats.",
+    },
+    {
+      key: "orders",
+      icon: ShoppingBag,
+      label: "Shop orders",
+      description: isAdmin
+        ? "Shop order status updates."
+        : "Updates on the status of your shop orders.",
+    },
+    {
+      key: "offers",
+      icon: Megaphone,
+      label: isAdmin ? "Announcements & level-ups" : "Announcements & offers",
+      description: isAdmin
+        ? "Partner level-up alerts and your own outgoing announcements."
+        : "New announcements and special offers from MAHA.",
+    },
+  ];
+}
+
+const NOTIFY_STYLE_OPTIONS: { value: NotifyStyle; label: string; description: string }[] = [
+  { value: "preview", label: "Preview", description: "Show the full message, e.g. who sent it and what it says." },
+  { value: "alert", label: "Alert only", description: "Notify me, but don't show the content." },
+  { value: "silent", label: "Silent", description: "No push \u2014 just bump the in-app unread badge." },
+];
+
+type NotifyPrefs = Record<NotifyCategory, { enabled: boolean; style: NotifyStyle }>;
+
 // Account settings shared across all roles (partner, student, admin).
 // Sections: change password, manage Face ID / Fingerprint (WebAuthn passkeys).
 export default function Account() {
   const { user, updateUser } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const notifyConfigs = notifyCategoryConfigs(user?.role);
+  const [notifyPrefs, setNotifyPrefs] = useState<NotifyPrefs>({
+    community: { enabled: true, style: "preview" },
+    chat: { enabled: true, style: "preview" },
+    orders: { enabled: true, style: "preview" },
+    offers: { enabled: true, style: "preview" },
+  });
+  const [notifySaving, setNotifySaving] = useState<NotifyCategory | null>(null);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [enablingPush, setEnablingPush] = useState(false);
+
+  // Seed local notification-preference state from the logged-in user, same
+  // pattern as the profile form below.
+  useEffect(() => {
+    if (!user) return;
+    setNotifyPrefs({
+      community: { enabled: user.notifyCommunityEnabled ?? true, style: (user.notifyCommunityStyle as NotifyStyle) ?? "preview" },
+      chat: { enabled: user.notifyChatEnabled ?? true, style: (user.notifyChatStyle as NotifyStyle) ?? "preview" },
+      orders: { enabled: user.notifyOrdersEnabled ?? true, style: (user.notifyOrdersStyle as NotifyStyle) ?? "preview" },
+      offers: { enabled: user.notifyOffersEnabled ?? true, style: (user.notifyOffersStyle as NotifyStyle) ?? "preview" },
+    });
+  }, [user?.id, user?.notifyCommunityEnabled, user?.notifyCommunityStyle, user?.notifyChatEnabled, user?.notifyChatStyle, user?.notifyOrdersEnabled, user?.notifyOrdersStyle, user?.notifyOffersEnabled, user?.notifyOffersStyle]);
+
+  useEffect(() => {
+    setPushPermission(isPushSupported() ? Notification.permission : "unsupported");
+  }, []);
+
+  async function saveNotifyPref(category: NotifyCategory, patch: { enabled?: boolean; style?: NotifyStyle }) {
+    const prev = notifyPrefs[category];
+    const next = { ...prev, ...patch };
+    setNotifyPrefs((cur) => ({ ...cur, [category]: next }));
+    setNotifySaving(category);
+    try {
+      const res = await apiRequest("PATCH", "/api/notifications/preferences", {
+        category,
+        enabled: next.enabled,
+        style: next.style,
+      });
+      const data = await res.json();
+      updateUser(data);
+    } catch (err: any) {
+      // Roll back on failure so the UI never shows a state the server didn't save.
+      setNotifyPrefs((cur) => ({ ...cur, [category]: prev }));
+      toast({ title: "Could not update notification setting", description: err.message, variant: "destructive" });
+    } finally {
+      setNotifySaving(null);
+    }
+  }
+
+  async function handleEnablePushDevice() {
+    setEnablingPush(true);
+    try {
+      await subscribeToPush();
+      setPushPermission("granted");
+      toast({ title: "Push notifications enabled on this device" });
+    } catch (err: any) {
+      toast({ title: "Could not enable push", description: err.message, variant: "destructive" });
+    } finally {
+      setEnablingPush(false);
+    }
+  }
 
   const [passkeySupported, setPasskeySupported] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -402,6 +526,97 @@ export default function Account() {
               Save profile
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-4 flex flex-col gap-5">
+          <div className="flex items-start gap-3">
+            <Bell className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <h2 className="text-sm font-semibold">Notifications</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Choose how you want to hear about each type of update. These settings are just for you.
+              </p>
+            </div>
+          </div>
+
+          {pushPermission !== "granted" && pushPermission !== "unsupported" && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3" data-testid="banner-enable-push-device">
+              <p className="text-xs text-muted-foreground">
+                Push notifications aren't enabled on this device yet. Turn them on to actually receive what you choose below.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={enablingPush}
+                onClick={handleEnablePushDevice}
+                data-testid="button-enable-push-device"
+                className="shrink-0"
+              >
+                {enablingPush ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+                Enable on this device
+              </Button>
+            </div>
+          )}
+
+          <div className="flex flex-col divide-y divide-border">
+            {notifyConfigs.map((cfg) => {
+              const pref = notifyPrefs[cfg.key];
+              const Icon = cfg.icon;
+              return (
+                <div key={cfg.key} className="py-4 first:pt-0 last:pb-0 flex flex-col gap-3" data-testid={`section-notify-${cfg.key}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium" data-testid={`text-notify-label-${cfg.key}`}>{cfg.label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{cfg.description}</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={pref.enabled}
+                      disabled={notifySaving === cfg.key}
+                      onCheckedChange={(checked) => saveNotifyPref(cfg.key, { enabled: checked })}
+                      aria-label={`Toggle ${cfg.label} notifications`}
+                      data-testid={`switch-notify-${cfg.key}`}
+                      className="shrink-0"
+                    />
+                  </div>
+
+                  {pref.enabled && (
+                    <RadioGroup
+                      value={pref.style}
+                      onValueChange={(value) => saveNotifyPref(cfg.key, { style: value as NotifyStyle })}
+                      className="pl-7 grid grid-cols-1 sm:grid-cols-3 gap-2"
+                      data-testid={`radiogroup-notify-style-${cfg.key}`}
+                    >
+                      {NOTIFY_STYLE_OPTIONS.map((opt) => (
+                        <label
+                          key={opt.value}
+                          htmlFor={`notify-${cfg.key}-${opt.value}`}
+                          className="flex items-start gap-2 rounded-md border border-border p-2 cursor-pointer hover-elevate has-[[data-state=checked]]:border-primary"
+                        >
+                          <RadioGroupItem
+                            value={opt.value}
+                            id={`notify-${cfg.key}-${opt.value}`}
+                            disabled={notifySaving === cfg.key}
+                            data-testid={`radio-notify-${cfg.key}-${opt.value}`}
+                            className="mt-0.5"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium">{opt.label}</span>
+                            <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">{opt.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 

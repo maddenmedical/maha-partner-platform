@@ -28,6 +28,18 @@ export type AuthUser = {
   country: string | null;
   legalAcceptedVersion: string | null;
   adminNavOrder: string | null;
+  // Per-category notification preferences (self-service, all roles). Each
+  // category has its own on/off switch plus a "style" -- preview (full
+  // content), alert (generic, content-free), or silent (badge only, no
+  // push). Server default for every category is enabled + "preview".
+  notifyCommunityEnabled: boolean;
+  notifyCommunityStyle: string;
+  notifyChatEnabled: boolean;
+  notifyChatStyle: string;
+  notifyOrdersEnabled: boolean;
+  notifyOrdersStyle: string;
+  notifyOffersEnabled: boolean;
+  notifyOffersStyle: string;
   // Set only while an admin is using "View Platform as Member" -- who the
   // real admin behind this session is, so the app can show a persistent
   // banner and offer a way back. Absent/null for every normal login.
