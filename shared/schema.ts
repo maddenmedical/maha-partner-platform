@@ -36,6 +36,11 @@ export const users = sqliteTable("users", {
   // as part of the regular SQLite file backup.
   photoUrl: text("photo_url"),
   installBannerDismissedAt: integer("install_banner_dismissed_at"),
+  // Proactive push-notification nudge: the last time we showed the
+  // "turn on notifications" prompt (first-login ask, or a later 3-month
+  // recheck while their setup is still weak -- push off on this device, or
+  // any category dialed below "preview"). Null means never prompted yet.
+  pushNudgeLastPromptedAt: integer("push_nudge_last_prompted_at"),
   // Mirrors the fields collected on the WordPress partner.maha.clinic
   // registration form (partner-registration page), so the Portal's own
   // sign-up asks for the same information.

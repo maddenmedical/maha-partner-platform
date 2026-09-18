@@ -209,6 +209,7 @@ type PublicUser = {
   email: string;
   status: string;
   installBannerDismissedAt: number | null;
+  pushNudgeLastPromptedAt: number | null;
   prefix: string | null;
   firstName: string | null;
   lastName: string | null;
@@ -236,6 +237,8 @@ type PublicUser = {
   notifyOrdersStyle: string;
   notifyOffersEnabled: boolean;
   notifyOffersStyle: string;
+  notifyStaffEnabled: boolean;
+  notifyStaffStyle: string;
   unreadBadgeCount: number;
 };
 
@@ -251,6 +254,7 @@ function toPublicUser(user: {
   email: string;
   status: string;
   installBannerDismissedAt: number | null;
+  pushNudgeLastPromptedAt?: number | null;
   prefix?: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -278,6 +282,8 @@ function toPublicUser(user: {
   notifyOrdersStyle?: string | null;
   notifyOffersEnabled?: boolean | null;
   notifyOffersStyle?: string | null;
+  notifyStaffEnabled?: boolean | null;
+  notifyStaffStyle?: string | null;
   unreadBadgeCount?: number | null;
 }): PublicUser {
   return {
@@ -287,6 +293,7 @@ function toPublicUser(user: {
     email: user.email,
     status: user.status,
     installBannerDismissedAt: user.installBannerDismissedAt,
+    pushNudgeLastPromptedAt: user.pushNudgeLastPromptedAt ?? null,
     prefix: user.prefix ?? null,
     firstName: user.firstName ?? null,
     lastName: user.lastName ?? null,
@@ -314,6 +321,8 @@ function toPublicUser(user: {
     notifyOrdersStyle: user.notifyOrdersStyle ?? "preview",
     notifyOffersEnabled: user.notifyOffersEnabled ?? true,
     notifyOffersStyle: user.notifyOffersStyle ?? "preview",
+    notifyStaffEnabled: user.notifyStaffEnabled ?? true,
+    notifyStaffStyle: user.notifyStaffStyle ?? "preview",
     unreadBadgeCount: user.unreadBadgeCount ?? 0,
   };
 }
@@ -838,6 +847,16 @@ export async function registerRoutes(
 
   app.post("/api/auth/dismiss-install-banner", requireAuth, async (req: AuthedRequest, res) => {
     const updated = await storage.dismissInstallBanner(req.user!.id);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json(toPublicUser(updated));
+  });
+
+  // Proactive push-notification nudge: called the moment the banner becomes
+  // visible (first-login ask, or a later 3-month recheck), not just on
+  // dismiss/accept -- so it counts as "asked" even if the user ignores it or
+  // closes the tab, and won't reappear again until the next recheck window.
+  app.post("/api/auth/mark-push-nudge-prompted", requireAuth, async (req: AuthedRequest, res) => {
+    const updated = await storage.recordPushNudgePrompted(req.user!.id);
     if (!updated) return res.status(404).json({ message: "User not found" });
     res.json(toPublicUser(updated));
   });

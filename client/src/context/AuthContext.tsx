@@ -11,6 +11,7 @@ export type AuthUser = {
   email: string;
   status: string;
   installBannerDismissedAt: number | null;
+  pushNudgeLastPromptedAt: number | null;
   prefix: string | null;
   firstName: string | null;
   lastName: string | null;
@@ -71,6 +72,7 @@ interface AuthContextValue {
   exitImpersonation: () => Promise<void>;
   clearPending: () => void;
   markInstallBannerDismissed: () => void;
+  markPushNudgePrompted: () => void;
   // Merge a fresh copy of the user (e.g. after a profile edit save) into
   // the cached auth state so the header/greeting/etc. update immediately
   // without a full page reload.
@@ -211,13 +213,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => (prev ? { ...prev, installBannerDismissedAt: Date.now() } : prev));
   }, []);
 
+  const markPushNudgePrompted = useCallback(() => {
+    setUser((prev) => (prev ? { ...prev, pushNudgeLastPromptedAt: Date.now() } : prev));
+    void apiRequest("POST", "/api/auth/mark-push-nudge-prompted").catch(() => {
+      // Non-critical -- worst case we ask again a bit sooner than 3 months.
+    });
+  }, []);
+
   const updateUser = useCallback((patch: Partial<AuthUser>) => {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   return (
     <AuthContext.Provider
-      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, viewAsMember, exitImpersonation, clearPending, markInstallBannerDismissed, updateUser }}
+      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, viewAsMember, exitImpersonation, clearPending, markInstallBannerDismissed, markPushNudgePrompted, updateUser }}
     >
       {children}
     </AuthContext.Provider>

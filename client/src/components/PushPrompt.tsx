@@ -5,18 +5,49 @@ import { useToast } from "@/hooks/use-toast";
 import { isPushSupported, subscribeToPush } from "@/lib/push";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, type AuthUser } from "@/context/AuthContext";
+import { navigate } from "wouter/use-hash-location";
 
 // One-time dismissal is also tracked in memory (module scope) as a fallback so
 // the banner never reappears mid-session even before the backend call resolves.
 let dismissedThisSession = false;
 
+// How long to wait before re-asking someone whose notification setup is
+// still "weak" -- push never enabled on this device, or any category dialed
+// below "preview". ~3 months.
+const RECHECK_INTERVAL_MS = 90 * 24 * 60 * 60 * 1000;
+
+const STYLE_FIELDS: { enabled: keyof AuthUser; style: keyof AuthUser }[] = [
+  { enabled: "notifyCommunityEnabled", style: "notifyCommunityStyle" },
+  { enabled: "notifyChatEnabled", style: "notifyChatStyle" },
+  { enabled: "notifyOrdersEnabled", style: "notifyOrdersStyle" },
+  { enabled: "notifyOffersEnabled", style: "notifyOffersStyle" },
+  { enabled: "notifyStaffEnabled", style: "notifyStaffStyle" },
+];
+
+// "Weak" = push isn't actually enabled on this device at all (permission
+// never granted -- whether still undecided or explicitly denied), or the
+// person has dialed at least one category below "preview" (Alert only /
+// Silent). Either way, previews aren't reliably reaching them -- worth a
+// periodic nudge back toward full previews, since "no one will go looking
+// for this setting on their own".
+function isDeviceWeak(): boolean {
+  return !isPushSupported() || Notification.permission !== "granted";
+}
+
+function hasStyleWeakCategory(user: AuthUser): boolean {
+  return STYLE_FIELDS.some(
+    ({ enabled, style }) => user[enabled] && user[style] !== "preview"
+  );
+}
+
 export function PushPrompt() {
   const { toast } = useToast();
-  const { user, markInstallBannerDismissed } = useAuth();
+  const { user, markInstallBannerDismissed, markPushNudgePrompted } = useAuth();
   const { canInstallNative, isIosInstallable, promptInstall } = useInstallPrompt();
   const [visible, setVisible] = useState(false);
-  const [mode, setMode] = useState<"install" | "ios" | "push">("push");
+  const [mode, setMode] = useState<"install" | "ios" | "push" | "recheck">("push");
+  const [recheckReason, setRecheckReason] = useState<"device" | "style">("style");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -31,11 +62,37 @@ export function PushPrompt() {
       setVisible(true);
       return;
     }
-    if (!isPushSupported()) return;
-    if (Notification.permission === "granted" || Notification.permission === "denied") return;
-    setMode("push");
+    if (!user) return;
+
+    // First-ever ask: we've never shown this prompt before on this account.
+    const isFirstAsk = user.pushNudgeLastPromptedAt == null;
+    const dueForRecheck =
+      user.pushNudgeLastPromptedAt != null &&
+      Date.now() - user.pushNudgeLastPromptedAt > RECHECK_INTERVAL_MS;
+
+    if (!isFirstAsk && !dueForRecheck) return;
+
+    const deviceWeak = isDeviceWeak();
+    const styleWeak = hasStyleWeakCategory(user);
+    if (!deviceWeak && !styleWeak) return;
+
+    // Only offer the direct native "Enable" flow when the browser permission
+    // is genuinely still undecided ("default") -- calling
+    // Notification.requestPermission() again after the user already denied
+    // it does nothing but silently fail, producing a dead-end "Could not
+    // enable" toast. In every other weak case (already denied, or a
+    // returning user whose categories are just dialed down) we point them
+    // at their settings instead via the tailored recheck copy.
+    const canRequestNow = isPushSupported() && Notification.permission === "default";
+    if (isFirstAsk && canRequestNow) {
+      setMode("push");
+    } else {
+      setRecheckReason(deviceWeak ? "device" : "style");
+      setMode("recheck");
+    }
     setVisible(true);
-  }, [canInstallNative, isIosInstallable, user?.installBannerDismissedAt]);
+    markPushNudgePrompted();
+  }, [canInstallNative, isIosInstallable, user, markPushNudgePrompted]);
 
   const dismiss = useCallback(() => {
     dismissedThisSession = true;
@@ -45,6 +102,15 @@ export function PushPrompt() {
       // Non-critical — banner still stays hidden for this session.
     });
   }, [markInstallBannerDismissed]);
+
+  // Recheck banner dismissal shouldn't touch installBannerDismissedAt (that
+  // permanently hides the install/push-permission prompts) -- it just hides
+  // this banner for the current session; markPushNudgePrompted() above
+  // already recorded the ask so it won't reappear until the next window.
+  const dismissRecheck = useCallback(() => {
+    dismissedThisSession = true;
+    setVisible(false);
+  }, []);
 
   async function handleInstall() {
     setBusy(true);
@@ -109,6 +175,20 @@ export function PushPrompt() {
                 </p>
               </>
             )}
+            {mode === "recheck" && (
+              <>
+                <p className="text-sm font-medium">
+                  {recheckReason === "device"
+                    ? "Still not getting notifications on this device?"
+                    : "You've muted some notification previews"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {recheckReason === "device"
+                    ? "Push notifications aren't enabled here, so you could be missing updates. You can turn them on any time in your notification settings."
+                    : "Some categories are set to Alert or Silent, so you may be missing details. Want to turn previews back on?"}
+                </p>
+              </>
+            )}
           </div>
           {mode === "install" && (
             <div className="flex items-center gap-2">
@@ -130,10 +210,27 @@ export function PushPrompt() {
               </Button>
             </div>
           )}
+          {mode === "recheck" && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  dismissRecheck();
+                  navigate("/account");
+                }}
+                data-testid="button-review-notification-settings"
+              >
+                Review settings
+              </Button>
+              <Button size="sm" variant="ghost" onClick={dismissRecheck} data-testid="button-dismiss-recheck">
+                Not now
+              </Button>
+            </div>
+          )}
         </div>
         <button
           type="button"
-          onClick={dismiss}
+          onClick={mode === "recheck" ? dismissRecheck : dismiss}
           aria-label="Dismiss"
           className="shrink-0 text-muted-foreground hover-elevate active-elevate-2 rounded-md p-1"
           data-testid="button-close-push-prompt"

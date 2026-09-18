@@ -22,7 +22,14 @@ async function throwIfResNotOk(res: Response) {
         const data = JSON.parse(raw);
         message = data.message || message;
       } catch {
-        message = raw;
+        // Not JSON. This happens when the request never reached our server at
+        // all -- e.g. Render/Cloudflare's own edge returning a generic HTML
+        // error page during a network hiccup or cold start. Dumping that raw
+        // markup (often a full <html> doc with inlined fonts) into a toast is
+        // unreadable, so fall back to a plain, friendly message instead.
+        message = /^\s*<(!doctype|html)/i.test(raw)
+          ? "Network error — please check your connection and try again."
+          : raw;
       }
     }
     throw new Error(message);
