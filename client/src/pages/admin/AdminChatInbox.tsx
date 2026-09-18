@@ -862,6 +862,7 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
   const postUrl = messagesUrl;
   const patchBase = isDm ? "/api/admin/staff-chat/dm/messages" : "/api/admin/staff-chat/room/messages";
   const messagesKey = isDm ? ["/api/admin/staff-chat/dm/threads", selection.threadId, "messages"] : ["/api/admin/staff-chat/room/messages"];
+  const [replyingToId, setReplyingToId] = useState<number | null>(null);
 
   const { data: rawMessages, isLoading } = useQuery<any[]>({
     queryKey: messagesKey,
@@ -874,12 +875,18 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
 
   const messages = (rawMessages || []).map((m) => toStaffBubbleMessage(m, sentinelThreadId));
 
+  // Lookup map for rendering quoted-reply previews inside bubbles -- the
+  // bubble itself only has its own message, not the full list.
+  const messagesById = new Map(messages.map((m) => [m.id, m]));
+  const replyingToMessage = replyingToId != null ? messagesById.get(replyingToId) : null;
+
   const sendMutation = useMutation({
-    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
+    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string; replyToMessageId?: number }) =>
       apiRequest("POST", postUrl, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: messagesKey });
       if (isDm) queryClient.invalidateQueries({ queryKey: ["/api/admin/staff-chat/dm/threads"] });
+      setReplyingToId(null);
     },
   });
 
@@ -930,20 +937,25 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
             <p className="text-sm max-w-xs">{isDm ? "No messages yet. Say hello." : "No messages yet in the Staff Room."}</p>
           </div>
         ) : (
-          messages.map((m) => (
-            <ChatMessageBubble
-              key={m.id}
-              message={m}
-              isMe={m.senderId === user?.id}
-              isAdmin
-              hideFlag
-              hideReactions
-              onToggleFlag={() => {}}
-              onReact={() => {}}
-              onDelete={m.senderId === user?.id ? (id) => deleteMutation.mutate(id) : undefined}
-              onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
-            />
-          ))
+          messages.map((m) => {
+            const quotedSource = m.replyToMessageId != null ? messagesById.get(m.replyToMessageId) : null;
+            return (
+              <ChatMessageBubble
+                key={m.id}
+                message={m}
+                isMe={m.senderId === user?.id}
+                isAdmin
+                hideFlag
+                hideReactions
+                onToggleFlag={() => {}}
+                onReact={() => {}}
+                onReply={(id) => setReplyingToId(id)}
+                quoted={quotedSource ? { senderName: quotedSource.senderName, snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
+                onDelete={m.senderId === user?.id ? (id) => deleteMutation.mutate(id) : undefined}
+                onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
+              />
+            );
+          })
         )}
         <div ref={bottomRef} />
       </div>
@@ -956,6 +968,8 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
         sending={sendMutation.isPending}
         testIdPrefix="staff-chat"
         placeholder={isDm ? `Message ${selection.otherAdminName}...` : "Message the team..."}
+        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
+        onCancelReply={() => setReplyingToId(null)}
       />
     </div>
   );
