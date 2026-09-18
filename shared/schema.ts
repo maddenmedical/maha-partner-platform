@@ -323,8 +323,45 @@ export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),
   userId: integer("user_id").notNull(),
   expiresAt: integer("expires_at").notNull(),
+  // "View Platform as Member" (admin impersonation): when set, requireAuth
+  // resolves req.user to THIS user instead of the session's real owner, so
+  // the admin sees and acts as exactly what the partner/student sees --
+  // fully functional, not a read-only preview. Cleared on exit or if the
+  // target account becomes invalid. Never touches the real admin identity
+  // stored in `userId` above, so exiting always restores the admin.
+  impersonatingUserId: integer("impersonating_user_id"),
+  // The open impersonation_log row for the current "View as" session, so
+  // exiting can close out that exact row without an ambiguous lookup.
+  impersonationLogId: integer("impersonation_log_id"),
 });
 export type Session = typeof sessions.$inferSelect;
+export type InsertSession = typeof sessions.$inferInsert;
+
+// ---------- ADMIN PINNED MEMBERS ----------
+// Lets an admin "star" specific partner/student accounts they check often,
+// so "View as" doesn't require searching the full partner list every time.
+// Per-admin (adminUserId scoped) -- one admin's pins never show up for another.
+export const adminPinnedMembers = sqliteTable("admin_pinned_members", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  adminUserId: integer("admin_user_id").notNull(),
+  memberUserId: integer("member_user_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export type AdminPinnedMember = typeof adminPinnedMembers.$inferSelect;
+
+// ---------- IMPERSONATION LOG ----------
+// Audit trail of "View as" sessions -- who (admin) viewed as whom (member),
+// and for how long. Real partner/patient-adjacent data is touched during
+// impersonation, so this exists purely for accountability; nothing here is
+// ever shown to partners/students.
+export const impersonationLog = sqliteTable("impersonation_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  adminUserId: integer("admin_user_id").notNull(),
+  targetUserId: integer("target_user_id").notNull(),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at"),
+});
+export type ImpersonationLogEntry = typeof impersonationLog.$inferSelect;
 
 // ---------- PRODUCTS ----------
 export const products = sqliteTable("products", {

@@ -19,7 +19,7 @@ export interface TabItem {
 
 export function MobileAppLayout({ children, tabs, title }: { children: ReactNode; tabs: TabItem[]; title: string }) {
   const [location] = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, exitImpersonation } = useAuth();
   const { theme, toggle } = useTheme();
 
   // When there are more tabs than fit (the scrollable-row case below), the
@@ -62,6 +62,25 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
 
   return (
     <div className="h-dvh flex flex-col bg-background overflow-hidden">
+      {user?.impersonating && (
+        <div
+          className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200"
+          data-testid="banner-impersonating"
+        >
+          <span className="text-xs leading-tight">
+            Viewing as <strong>{user?.name}</strong> ({user?.role})
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs shrink-0 border-amber-500/40"
+            onClick={exitImpersonation}
+            data-testid="button-exit-impersonation"
+          >
+            Exit to Admin
+          </Button>
+        </div>
+      )}
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-2 min-w-0">
           {canGoBack ? (

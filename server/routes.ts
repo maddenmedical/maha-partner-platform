@@ -196,6 +196,10 @@ const upload = multer({
 
 interface AuthedRequest extends Request {
   user?: PublicUser;
+  // Set only while an admin is using "View Platform as Member" -- the real
+  // admin identity behind the session, kept alongside the effective
+  // (impersonated) `user` above so routes/logging can tell the two apart.
+  impersonatedBy?: PublicUser;
 }
 
 type PublicUser = {
@@ -378,6 +382,23 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
     await storage.updateSessionExpiry(token, newExpiry);
     setSessionCookie(res, token, newExpiry);
   }
+
+  // "View Platform as Member": the session row belongs to the admin, but
+  // resolves every downstream check (role, ownership, req.user.id) to the
+  // target partner/student instead -- fully functional, not read-only. If
+  // the target became invalid since impersonation started (deleted,
+  // un-approved), silently fall back to the admin rather than 401ing them
+  // out of their own account.
+  if (session.impersonatingUserId) {
+    const target = await storage.getUser(session.impersonatingUserId);
+    if (target && target.status === "approved" && (target.role === "partner" || target.role === "student")) {
+      req.user = toPublicUser(target);
+      req.impersonatedBy = toPublicUser(user);
+      return next();
+    }
+    await storage.setSessionImpersonation(token, null, null);
+  }
+
   req.user = toPublicUser(user);
   next();
 }
@@ -709,7 +730,10 @@ export async function registerRoutes(
   });
 
   app.get("/api/auth/me", requireAuth, async (req: AuthedRequest, res) => {
-    res.json(req.user);
+    res.json({
+      ...req.user,
+      impersonating: req.impersonatedBy ? { adminId: req.impersonatedBy.id, adminName: req.impersonatedBy.name } : null,
+    });
   });
 
   // One-time acknowledgment for existing users whose account predates the
@@ -1769,6 +1793,72 @@ export async function registerRoutes(
     await storage.updateUserPassword(user.id, passwordHash);
     await storage.setPasswordResetToken(user.id, null, null);
     res.json({ id: user.id, name: user.name, email: user.email, newPassword });
+  });
+
+  // Ends "View Platform as Member" and restores the admin's own identity on
+  // this same session/cookie. Deliberately not gated by requireRole("admin")
+  // -- while impersonating, req.user *is* the partner/student, so the only
+  // thing that matters is whether this exact session has an open
+  // impersonation to close.
+  //
+  // Registered BEFORE the parameterized "/api/admin/impersonate/:id" route
+  // below -- Express matches routes in registration order, and ":id" would
+  // otherwise greedily match the literal path segment "exit" (id="exit"),
+  // routing this call through requireRole("admin") instead and 403ing every
+  // exit attempt, since req.user is the impersonated partner/student at that
+  // point, not an admin.
+  app.post("/api/admin/impersonate/exit", requireAuth, async (req: AuthedRequest, res) => {
+    const token = getSessionToken(req)!;
+    const session = await storage.getSession(token);
+    if (!session?.impersonatingUserId) {
+      return res.status(400).json({ message: "Not currently viewing as a member" });
+    }
+    const admin = await storage.getUser(session.userId);
+    if (!admin) return res.status(401).json({ message: "Session invalid" });
+    if (session.impersonationLogId) await storage.endImpersonationLog(session.impersonationLogId);
+    await storage.setSessionImpersonation(token, null, null);
+    res.json({ user: toPublicUser(admin) });
+  });
+
+  // "View Platform as Member" -- lets an admin become a specific partner or
+  // student for real (fully functional, not read-only) without a second app
+  // or login. Only ever swaps the CURRENT session's effective identity; the
+  // admin's own login is untouched and restored on exit. See requireAuth for
+  // how session.impersonatingUserId is resolved on every request.
+  app.post("/api/admin/impersonate/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const target = await storage.getUser(Number(req.params.id));
+    if (!target) return res.status(404).json({ message: "Not found" });
+    if (target.role !== "partner" && target.role !== "student") {
+      return res.status(400).json({ message: "Can only view the platform as a partner or student" });
+    }
+    if (target.status !== "approved") {
+      return res.status(400).json({ message: "That account isn't approved yet" });
+    }
+    const token = getSessionToken(req)!; // requireAuth guarantees a valid token here
+    const log = await storage.startImpersonationLog(req.user!.id, target.id);
+    await storage.setSessionImpersonation(token, target.id, log.id);
+    res.json({
+      user: toPublicUser(target),
+      impersonating: { adminId: req.user!.id, adminName: req.user!.name },
+    });
+  });
+
+  // Per-admin favorites so "View as" doesn't require re-searching the same
+  // handful of accounts every time -- scoped to req.user!.id, never shared
+  // across admins.
+  app.get("/api/admin/pinned-members", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const members = await storage.listPinnedMembers(req.user!.id);
+    res.json(members.map(toPublicUser));
+  });
+  app.post("/api/admin/pinned-members/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const target = await storage.getUser(Number(req.params.id));
+    if (!target) return res.status(404).json({ message: "Not found" });
+    await storage.pinMember(req.user!.id, target.id);
+    res.json({ ok: true });
+  });
+  app.delete("/api/admin/pinned-members/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    await storage.unpinMember(req.user!.id, Number(req.params.id));
+    res.json({ ok: true });
   });
 
   // Admin-initiated edit of a user's core contact details -- works for ANY

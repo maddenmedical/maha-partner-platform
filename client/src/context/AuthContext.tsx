@@ -27,6 +27,10 @@ export type AuthUser = {
   country: string | null;
   legalAcceptedVersion: string | null;
   adminNavOrder: string | null;
+  // Set only while an admin is using "View Platform as Member" -- who the
+  // real admin behind this session is, so the app can show a persistent
+  // banner and offer a way back. Absent/null for every normal login.
+  impersonating?: { adminId: number; adminName: string } | null;
 };
 
 type PendingState = { pending: true; status: "pending" | "rejected" } | null;
@@ -45,6 +49,11 @@ interface AuthContextValue {
   // cookie on that response) rather than the email/password endpoint.
   loginWithUser: (authUser: AuthUser) => void;
   logout: () => Promise<void>;
+  // Admin-only: become a specific partner/student for real (fully
+  // functional), on this same session/cookie.
+  viewAsMember: (userId: number) => Promise<void>;
+  // Restores the admin's own identity on this session.
+  exitImpersonation: () => Promise<void>;
   clearPending: () => void;
   markInstallBannerDismissed: () => void;
   // Merge a fresh copy of the user (e.g. after a profile edit save) into
@@ -124,7 +133,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate("/", { replace: true });
   }, []);
 
+  const viewAsMember = useCallback(async (userId: number) => {
+    const res = await apiRequest("POST", `/api/admin/impersonate/${userId}`);
+    const data = await res.json();
+    // Cached queries (referrals, orders, chat threads, etc.) are keyed by
+    // path only, not by user id -- they rely entirely on the session cookie
+    // to know "whose data". Without clearing, the member's view would open
+    // showing whatever the admin had cached a moment ago.
+    queryClient.clear();
+    setUser({ ...data.user, impersonating: data.impersonating });
+    navigate("/", { replace: true });
+  }, []);
+
+  const exitImpersonation = useCallback(async () => {
+    const res = await apiRequest("POST", "/api/admin/impersonate/exit");
+    const data = await res.json();
+    queryClient.clear();
+    setUser(data.user);
+    navigate("/admin/partners", { replace: true });
+  }, []);
+
   const logout = useCallback(async () => {
+    // Guard against the header's normal logout button accidentally ending
+    // the admin's own login while mid "View as member" -- redirect to
+    // exiting the impersonation instead, which is almost certainly what was
+    // meant; the real admin login stays intact.
+    if (user?.impersonating) {
+      await exitImpersonation();
+      return;
+    }
     try {
       await apiRequest("POST", "/api/auth/logout");
     } catch {
@@ -135,7 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Reset location too, so signing back in (possibly as a different role)
     // never inherits a hash path that belongs to the previous role's shell.
     navigate("/", { replace: true });
-  }, []);
+  }, [user?.impersonating, exitImpersonation]);
 
   const clearPending = useCallback(() => setPendingState(null), []);
 
@@ -149,7 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, clearPending, markInstallBannerDismissed, updateUser }}
+      value={{ user, pendingState, loading, bootstrapping, login, loginWithUser, logout, viewAsMember, exitImpersonation, clearPending, markInstallBannerDismissed, updateUser }}
     >
       {children}
     </AuthContext.Provider>

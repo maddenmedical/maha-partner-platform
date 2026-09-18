@@ -5,10 +5,10 @@ import {
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
-  standingEntries, standingRewards, clinics,
+  standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog,
 } from "@shared/schema";
 import type {
-  User, InsertUser, Session, Product, InsertProduct, PriceTier, InsertPriceTier,
+  User, InsertUser, Session, InsertSession, Product, InsertProduct, PriceTier, InsertPriceTier,
   Order, InsertOrder, OrderItem, InsertOrderItem, Referral, InsertReferral,
   Video, InsertVideo, Course, InsertCourse, CourseAccessGrant, InsertCourseAccessGrant,
   CoursePurchase, InsertCoursePurchase, Module, InsertModule,
@@ -20,7 +20,7 @@ import type {
   WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
   AdminTodo, InsertAdminTodo,
   AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
-  StandingEntry, StandingReward, Clinic,
+  StandingEntry, StandingReward, Clinic, AdminPinnedMember, ImpersonationLogEntry,
 } from "@shared/schema";
 import { STANDING_TIERS, standingTierForPoints } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -106,10 +106,22 @@ export interface IStorage {
   getLegacyOrderByWpOrderId(wpOrderId: number): Promise<LegacyOrder | undefined>;
 
   // sessions
-  createSession(session: Session): Promise<Session>;
+  createSession(session: InsertSession): Promise<Session>;
   getSession(token: string): Promise<Session | undefined>;
   updateSessionExpiry(token: string, expiresAt: number): Promise<void>;
   deleteSession(token: string): Promise<void>;
+  // "View Platform as Member" -- swaps which user a session resolves to,
+  // without disturbing the real admin's own session row.
+  setSessionImpersonation(token: string, impersonatingUserId: number | null, impersonationLogId: number | null): Promise<void>;
+
+  // admin pinned members ("View as" favorites)
+  listPinnedMembers(adminUserId: number): Promise<User[]>;
+  pinMember(adminUserId: number, memberUserId: number): Promise<void>;
+  unpinMember(adminUserId: number, memberUserId: number): Promise<void>;
+
+  // impersonation audit log
+  startImpersonationLog(adminUserId: number, targetUserId: number): Promise<ImpersonationLogEntry>;
+  endImpersonationLog(id: number): Promise<void>;
 
   // webauthn credentials (Face ID / Fingerprint login)
   createWebauthnCredential(c: InsertWebauthnCredential & { createdAt: number }): Promise<WebauthnCredential>;
@@ -476,7 +488,7 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(legacyOrders).where(eq(legacyOrders.wpOrderId, wpOrderId)).get();
   }
 
-  async createSession(session: Session) {
+  async createSession(session: InsertSession) {
     return db.insert(sessions).values(session).returning().get();
   }
   async getSession(token: string) {
@@ -487,6 +499,42 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteSession(token: string) {
     db.delete(sessions).where(eq(sessions.token, token)).run();
+  }
+  async setSessionImpersonation(token: string, impersonatingUserId: number | null, impersonationLogId: number | null) {
+    db.update(sessions).set({ impersonatingUserId, impersonationLogId }).where(eq(sessions.token, token)).run();
+  }
+
+  async listPinnedMembers(adminUserId: number) {
+    const rows = db.select().from(adminPinnedMembers)
+      .where(eq(adminPinnedMembers.adminUserId, adminUserId))
+      .orderBy(desc(adminPinnedMembers.createdAt))
+      .all();
+    if (rows.length === 0) return [];
+    const memberIds = rows.map((r) => r.memberUserId);
+    const members = db.select().from(users).where(inArray(users.id, memberIds)).all();
+    const byId = new Map(members.map((m) => [m.id, m]));
+    // Preserve pin order (most-recently-pinned first); drop any pin whose
+    // target account was since deleted rather than surfacing a gap.
+    return rows.map((r) => byId.get(r.memberUserId)).filter((u): u is User => !!u);
+  }
+  async pinMember(adminUserId: number, memberUserId: number) {
+    const existing = db.select().from(adminPinnedMembers)
+      .where(and(eq(adminPinnedMembers.adminUserId, adminUserId), eq(adminPinnedMembers.memberUserId, memberUserId)))
+      .get();
+    if (existing) return;
+    db.insert(adminPinnedMembers).values({ adminUserId, memberUserId, createdAt: Date.now() }).run();
+  }
+  async unpinMember(adminUserId: number, memberUserId: number) {
+    db.delete(adminPinnedMembers)
+      .where(and(eq(adminPinnedMembers.adminUserId, adminUserId), eq(adminPinnedMembers.memberUserId, memberUserId)))
+      .run();
+  }
+
+  async startImpersonationLog(adminUserId: number, targetUserId: number) {
+    return db.insert(impersonationLog).values({ adminUserId, targetUserId, startedAt: Date.now(), endedAt: null }).returning().get();
+  }
+  async endImpersonationLog(id: number) {
+    db.update(impersonationLog).set({ endedAt: Date.now() }).where(eq(impersonationLog.id, id)).run();
   }
 
   async createWebauthnCredential(c: InsertWebauthnCredential & { createdAt: number }) {

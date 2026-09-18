@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/context/AuthContext";
 import type { User } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight, Pencil } from "lucide-react";
+import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight, Pencil, Eye, Star } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 
@@ -40,7 +41,11 @@ type SortOption = (typeof SORT_OPTIONS)[number];
 export default function AdminPartners() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { viewAsMember } = useAuth();
   const { data: partners, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/all-partners"] });
+  const { data: pinnedMembers } = useQuery<User[]>({ queryKey: ["/api/admin/pinned-members"] });
+  const pinnedIds = useMemo(() => new Set((pinnedMembers || []).map((u) => u.id)), [pinnedMembers]);
+  const [viewAsPending, setViewAsPending] = useState<number | null>(null);
   const { data: standings } = useQuery<{ userId: number; userName: string; userRole: string; points: number; tierKey: string; tierLabel: string }[]>({
     queryKey: ["/api/admin/standing"],
   });
@@ -170,12 +175,57 @@ export default function AdminPartners() {
     toast({ title: "Copied to clipboard" });
   }
 
+  const pinMutation = useMutation({
+    mutationFn: async ({ id, pin }: { id: number; pin: boolean }) => {
+      await apiRequest(pin ? "POST" : "DELETE", `/api/admin/pinned-members/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/pinned-members"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update pin", description: err.message, variant: "destructive" });
+    },
+  });
+
+  async function handleViewAs(u: User) {
+    setViewAsPending(u.id);
+    try {
+      await viewAsMember(u.id);
+    } catch (err: any) {
+      toast({ title: "Could not view as this member", description: err.message, variant: "destructive" });
+    } finally {
+      setViewAsPending(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <p className="text-sm text-muted-foreground">
         Every registered partner and student account, regardless of approval status. Use this to look someone up,
         reset their password, or convert them between partner and student.
       </p>
+
+      {pinnedMembers && pinnedMembers.length > 0 && (
+        <div className="flex flex-col gap-2" data-testid="section-pinned-members">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pinned</p>
+          <div className="flex flex-wrap gap-2">
+            {pinnedMembers.map((u) => (
+              <Button
+                key={u.id}
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={viewAsPending === u.id}
+                onClick={() => handleViewAs(u)}
+                data-testid={`button-view-as-pinned-${u.id}`}
+              >
+                {viewAsPending === u.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                {u.name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
@@ -310,6 +360,31 @@ export default function AdminPartners() {
                         <ArrowLeftRight className="h-3.5 w-3.5 mr-1.5" />
                         Make {u.role === "partner" ? "student" : "partner"}
                       </Button>
+                    )}
+                    {(u.role === "partner" || u.role === "student") && u.status === "approved" && (
+                      <div className="flex gap-1.5 w-full sm:w-auto">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 sm:flex-initial"
+                          disabled={viewAsPending === u.id}
+                          onClick={() => handleViewAs(u)}
+                          data-testid={`button-view-as-${u.id}`}
+                        >
+                          {viewAsPending === u.id ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Eye className="h-3.5 w-3.5 mr-1.5" />}
+                          View as member
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="px-2.5 shrink-0"
+                          onClick={() => pinMutation.mutate({ id: u.id, pin: !pinnedIds.has(u.id) })}
+                          aria-label={pinnedIds.has(u.id) ? "Unpin" : "Pin"}
+                          data-testid={`button-pin-${u.id}`}
+                        >
+                          <Star className={`h-3.5 w-3.5 ${pinnedIds.has(u.id) ? "fill-current" : ""}`} />
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>
