@@ -65,12 +65,16 @@ export default function Login() {
         <Card className="w-full max-w-sm" data-testid="card-pending-approval">
           <CardHeader className="flex flex-col items-center gap-3 pb-2">
             <MahaWordmark width={140} />
-            <h1 className="text-xl font-semibold text-center">Your account is pending review</h1>
+            <h1 className="text-xl font-semibold text-center">
+              {pendingState.status === "archived" ? "This account is no longer active" : "Your account is pending review"}
+            </h1>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 items-center text-center">
             <p className="text-sm text-muted-foreground max-w-xs">
               {pendingState.status === "rejected"
                 ? "Your registration was not approved. Please contact the MAHA team for more information."
+                : pendingState.status === "archived"
+                ? "This account has been archived. Please contact the MAHA team if you believe this is a mistake."
                 : "Thanks for registering. Our team is reviewing your submitted documents and homepage link. You'll be able to log in once approved."}
             </p>
             <Button variant="outline" onClick={clearPending} data-testid="button-back-to-login">

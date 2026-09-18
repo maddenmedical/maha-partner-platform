@@ -371,7 +371,7 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
     return res.status(401).json({ message: "Session expired" });
   }
   const user = await storage.getUser(session.userId);
-  if (!user || user.status !== "approved") {
+  if (!user || user.status !== "approved" || user.archivedAt) {
     return res.status(401).json({ message: "Account not approved" });
   }
   // Sliding expiry: push the session another 90 days out whenever it's used,
@@ -391,7 +391,7 @@ async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction
   // out of their own account.
   if (session.impersonatingUserId) {
     const target = await storage.getUser(session.impersonatingUserId);
-    if (target && target.status === "approved" && (target.role === "partner" || target.role === "student")) {
+    if (target && target.status === "approved" && !target.archivedAt && (target.role === "partner" || target.role === "student")) {
       req.user = toPublicUser(target);
       req.impersonatedBy = toPublicUser(user);
       return next();
@@ -413,7 +413,7 @@ async function getOptionalUser(req: Request): Promise<AuthedRequest["user"] | un
   const session = await storage.getSession(token);
   if (!session || session.expiresAt < Date.now()) return undefined;
   const user = await storage.getUser(session.userId);
-  if (!user || user.status !== "approved") return undefined;
+  if (!user || user.status !== "approved" || user.archivedAt) return undefined;
   return toPublicUser(user);
 }
 
@@ -713,6 +713,9 @@ export async function registerRoutes(
     if (user.status !== "approved") {
       return res.status(403).json({ message: "pending", status: user.status });
     }
+    if (user.archivedAt) {
+      return res.status(403).json({ message: "archived", status: "archived" });
+    }
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = Date.now() + NINETY_DAYS;
     await storage.createSession({ token, userId: user.id, expiresAt });
@@ -892,7 +895,7 @@ export async function registerRoutes(
     await storage.updateWebauthnCredentialCounter(stored.id, result.newCounter ?? stored.counter, Date.now());
 
     const user = await storage.getUser(stored.userId);
-    if (!user || user.status !== "approved") {
+    if (!user || user.status !== "approved" || user.archivedAt) {
       return res.status(403).json({ message: "Account not approved" });
     }
     const token = crypto.randomBytes(32).toString("hex");
@@ -1756,8 +1759,8 @@ export async function registerRoutes(
   // forth. Unlike /api/admin/partners above, which only returns approved
   // partners (used by the video-access dropdown).
   app.get("/api/admin/all-partners", requireAuth, requireRole("admin"), async (_req, res) => {
-    const partners = await storage.listUsersByRoleStatus("partner");
-    const students = await storage.listUsersByRoleStatus("student");
+    const partners = await storage.listUsersByRoleStatus("partner", undefined, true);
+    const students = await storage.listUsersByRoleStatus("student", undefined, true);
     res.json([...partners, ...students].sort((a, b) => b.createdAt - a.createdAt));
   });
 
@@ -1793,6 +1796,47 @@ export async function registerRoutes(
     await storage.updateUserPassword(user.id, passwordHash);
     await storage.setPasswordResetToken(user.id, null, null);
     res.json({ id: user.id, name: user.name, email: user.email, newPassword });
+  });
+
+  // Reversible hide: an archived partner/student disappears from the
+  // default Admin Partners & Students list and can no longer log in, but
+  // every row of their history is untouched and un-archiving restores full
+  // access immediately. Toggle, not two separate routes -- body decides.
+  app.patch("/api/admin/users/:id/archive", requireAuth, requireRole("admin"), async (req, res) => {
+    const user = await storage.getUser(Number(req.params.id));
+    if (!user) return res.status(404).json({ message: "Not found" });
+    if (user.role !== "partner" && user.role !== "student") {
+      return res.status(400).json({ message: "Only partner/student accounts can be archived" });
+    }
+    const archived = req.body?.archived !== false;
+    const updated = await storage.archiveUser(user.id, archived);
+    res.json(updated);
+  });
+
+  // Preview of dependent-row counts, shown in the admin's delete
+  // confirmation dialog before they commit to a permanent delete.
+  app.get("/api/admin/users/:id/delete-preview", requireAuth, requireRole("admin"), async (req, res) => {
+    const user = await storage.getUser(Number(req.params.id));
+    if (!user) return res.status(404).json({ message: "Not found" });
+    if (user.role !== "partner" && user.role !== "student") {
+      return res.status(400).json({ message: "Only partner/student accounts can be deleted" });
+    }
+    const counts = await storage.getUserDeletionPreview(user.id);
+    res.json({ id: user.id, name: user.name, email: user.email, counts });
+  });
+
+  // Permanent, irreversible delete -- restricted to partner/student
+  // accounts only (never admin), cascades every dependent row in a single
+  // transaction. Intended for cleaning up test accounts. Client is expected
+  // to have already shown a destructive confirmation dialog.
+  app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const user = await storage.getUser(Number(req.params.id));
+    if (!user) return res.status(404).json({ message: "Not found" });
+    if (user.role !== "partner" && user.role !== "student") {
+      return res.status(400).json({ message: "Only partner/student accounts can be deleted" });
+    }
+    await storage.deleteUserCascade(user.id);
+    res.json({ ok: true });
   });
 
   // Ends "View Platform as Member" and restores the admin's own identity on
@@ -1833,6 +1877,9 @@ export async function registerRoutes(
     }
     if (target.status !== "approved") {
       return res.status(400).json({ message: "That account isn't approved yet" });
+    }
+    if (target.archivedAt) {
+      return res.status(400).json({ message: "That account is archived" });
     }
     const token = getSessionToken(req)!; // requireAuth guarantees a valid token here
     const log = await storage.startImpersonationLog(req.user!.id, target.id);

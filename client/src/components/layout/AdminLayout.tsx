@@ -5,7 +5,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { apiRequest } from "@/lib/queryClient";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
-import type { Referral, Order } from "@shared/schema";
+import type { Referral, Order, User } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
@@ -22,6 +23,7 @@ import {
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
+  SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   SidebarHeader,
@@ -30,7 +32,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2,
+  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2,
 } from "lucide-react";
 
 const navItems = [
@@ -104,8 +106,22 @@ function SortableNavItem({
 
 function AdminSidebar() {
   const [location] = useLocation();
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, viewAsMember } = useAuth();
+  const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: pinnedMembers } = useQuery<User[]>({ queryKey: ["/api/admin/pinned-members"] });
+  const [viewAsPending, setViewAsPending] = useState<number | null>(null);
+
+  async function handleSidebarViewAs(id: number) {
+    setViewAsPending(id);
+    try {
+      await viewAsMember(id);
+    } catch (err: any) {
+      toast({ title: "Could not view as this member", description: err.message, variant: "destructive" });
+    } finally {
+      setViewAsPending(null);
+    }
+  }
 
   // Unread markers (Item 10): a small badge pill per nav item showing what
   // still needs attention. Referrals/orders reuse their existing status
@@ -198,7 +214,27 @@ function AdminSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter />
+      {pinnedMembers && pinnedMembers.length > 0 && (
+        <SidebarFooter className="gap-1 group-data-[collapsible=icon]:hidden">
+          <p className="px-2 text-xs font-medium text-sidebar-foreground/50 uppercase tracking-wide">View as</p>
+          <SidebarMenu>
+            {pinnedMembers.map((m) => (
+              <SidebarMenuItem key={m.id}>
+                <SidebarMenuButton
+                  onClick={() => handleSidebarViewAs(m.id)}
+                  disabled={viewAsPending === m.id}
+                  tooltip={`View as ${m.name}`}
+                  data-testid={`button-sidebar-view-as-${m.id}`}
+                  className="min-w-0"
+                >
+                  {viewAsPending === m.id ? <Loader2 className="animate-spin" /> : <Eye />}
+                  <span className="truncate">{m.name}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }

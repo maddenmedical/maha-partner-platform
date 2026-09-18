@@ -122,6 +122,12 @@ export const users = sqliteTable("users", {
   // Set once this member posts their welcome intro video. Null forever if
   // they keep skipping -- the flow is fully skippable, never a hard gate.
   welcomeIntroPostedAt: integer("welcome_intro_posted_at"),
+  // Admin-only reversible hide, same pattern as chatThreads/communityTopics.
+  // An archived partner/student is excluded from the default Admin
+  // Partners & Students list and cannot log in, but every row of their
+  // history (referrals, orders, chat, standing, etc.) stays intact and
+  // fully restored the moment an admin un-archives them.
+  archivedAt: integer("archived_at"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -129,6 +135,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
   adminNavOrder: true,
+  archivedAt: true,
   // Clinic pooling is resolved server-side (auto-join at registration by
   // businessName, or admin assignment) -- never accept a client-supplied
   // clinicId directly on a registration/profile payload.

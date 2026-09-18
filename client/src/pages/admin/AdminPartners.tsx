@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight, Pencil, Eye, Star } from "lucide-react";
+import { Contact, Search, ExternalLink, FileText, KeyRound, Copy, Loader2, CheckCircle2, ArrowLeftRight, Pencil, Eye, Star, Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 
@@ -67,6 +67,11 @@ export default function AdminPartners() {
   const [photoError, setPhotoError] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deletePreview, setDeletePreview] = useState<{ counts: Record<string, number> } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
   const resetMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -147,6 +152,7 @@ export default function AdminPartners() {
     if (!partners) return [];
     const q = query.trim().toLowerCase();
     const list = partners.filter((u) => {
+      if (!showArchived && u.archivedAt) return false;
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
       if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (!q) return true;
@@ -167,7 +173,7 @@ export default function AdminPartners() {
       });
     }
     return list;
-  }, [partners, query, statusFilter, roleFilter, sortBy, standingByUserId]);
+  }, [partners, query, statusFilter, roleFilter, sortBy, standingByUserId, showArchived]);
 
   function copyPassword() {
     if (!result) return;
@@ -184,6 +190,61 @@ export default function AdminPartners() {
     },
     onError: (err: any) => {
       toast({ title: "Could not update pin", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Reversible hide. A single click either way -- unlike delete, nothing is
+  // lost, so no confirmation dialog.
+  const archiveMutation = useMutation({
+    mutationFn: async ({ id, archived }: { id: number; archived: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/admin/users/${id}/archive`, { archived });
+      return res.json();
+    },
+    onSuccess: (updated: User) => {
+      queryClient.setQueryData<User[]>(["/api/admin/all-partners"], (old) =>
+        old ? old.map((u) => (u.id === updated.id ? updated : u)) : old
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/pinned-members"] });
+      toast({ title: updated.archivedAt ? `${updated.name} archived` : `${updated.name} restored` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update archive status", description: err.message, variant: "destructive" });
+    },
+  });
+
+  async function openDeleteConfirm(u: User) {
+    setDeleteTarget(u);
+    setDeletePreview(null);
+    setDeleteConfirmText("");
+    setPreviewLoading(true);
+    try {
+      const res = await apiRequest("GET", `/api/admin/users/${u.id}/delete-preview`);
+      setDeletePreview(await res.json());
+    } catch (err: any) {
+      toast({ title: "Could not load deletion preview", description: err.message, variant: "destructive" });
+      setDeleteTarget(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/admin/users/${id}`);
+    },
+    onSuccess: () => {
+      const name = deleteTarget?.name;
+      const id = deleteTarget?.id;
+      queryClient.setQueryData<User[]>(["/api/admin/all-partners"], (old) =>
+        old ? old.filter((u) => u.id !== id) : old
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/pinned-members"] });
+      setDeleteTarget(null);
+      setDeletePreview(null);
+      toast({ title: `${name} permanently deleted` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not delete account", description: err.message, variant: "destructive" });
     },
   });
 
@@ -280,6 +341,15 @@ export default function AdminPartners() {
             </Button>
           ))}
         </div>
+        <Button
+          size="sm"
+          variant={showArchived ? "default" : "outline"}
+          onClick={() => setShowArchived((v) => !v)}
+          data-testid="button-toggle-archived"
+        >
+          <Archive className="h-3.5 w-3.5 mr-1.5" />
+          {showArchived ? "Hide archived" : "Show archived"}
+        </Button>
       </div>
 
       {isLoading ? (
@@ -304,6 +374,11 @@ export default function AdminPartners() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium" data-testid={`text-name-${u.id}`}>{u.name}</p>
                       <StatusBadge status={u.status} />
+                      {u.archivedAt && (
+                        <Badge variant="outline" className="gap-1 text-muted-foreground no-default-hover-elevate no-default-active-elevate" data-testid={`badge-archived-${u.id}`}>
+                          <Archive className="h-3 w-3" /> Archived
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="capitalize no-default-hover-elevate no-default-active-elevate" data-testid={`badge-role-${u.id}`}>
                         {u.role}
                       </Badge>
@@ -361,7 +436,7 @@ export default function AdminPartners() {
                         Make {u.role === "partner" ? "student" : "partner"}
                       </Button>
                     )}
-                    {(u.role === "partner" || u.role === "student") && u.status === "approved" && (
+                    {(u.role === "partner" || u.role === "student") && u.status === "approved" && !u.archivedAt && (
                       <div className="flex gap-1.5 w-full sm:w-auto">
                         <Button
                           size="sm"
@@ -383,6 +458,31 @@ export default function AdminPartners() {
                           data-testid={`button-pin-${u.id}`}
                         >
                           <Star className={`h-3.5 w-3.5 ${pinnedIds.has(u.id) ? "fill-current" : ""}`} />
+                        </Button>
+                      </div>
+                    )}
+                    {(u.role === "partner" || u.role === "student") && (
+                      <div className="flex gap-1.5 w-full sm:w-auto">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 sm:flex-initial"
+                          disabled={archiveMutation.isPending}
+                          onClick={() => archiveMutation.mutate({ id: u.id, archived: !u.archivedAt })}
+                          data-testid={`button-archive-${u.id}`}
+                        >
+                          {u.archivedAt ? <ArchiveRestore className="h-3.5 w-3.5 mr-1.5" /> : <Archive className="h-3.5 w-3.5 mr-1.5" />}
+                          {u.archivedAt ? "Restore" : "Archive"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="px-2.5 shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => openDeleteConfirm(u)}
+                          aria-label="Delete permanently"
+                          data-testid={`button-delete-${u.id}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     )}
@@ -476,6 +576,77 @@ export default function AdminPartners() {
             >
               {roleMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) { setDeleteTarget(null); setDeletePreview(null); setDeleteConfirmText(""); }
+        }}
+      >
+        <AlertDialogContent data-testid="dialog-confirm-delete">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="flex flex-col gap-3">
+                <p>
+                  This cannot be undone. Their account, referrals, orders, course access, chat messages, and Partner
+                  Level history will all be permanently removed.
+                </p>
+                {previewLoading ? (
+                  <Skeleton className="h-16 rounded-md skeleton-shimmer" />
+                ) : deletePreview ? (
+                  (() => {
+                    const entries = Object.entries(deletePreview.counts).filter(([, n]) => n > 0);
+                    return entries.length > 0 ? (
+                      <ul className="text-xs bg-muted rounded-md p-3 flex flex-col gap-1" data-testid="text-delete-preview-counts">
+                        {entries.map(([key, n]) => (
+                          <li key={key} className="flex justify-between">
+                            <span className="capitalize text-muted-foreground">{key.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
+                            <span className="font-medium text-foreground">{n}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No related records — this account has no history.</p>
+                    );
+                  })()
+                ) : null}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="delete-confirm-email" className="text-foreground">
+                    Type <span className="font-mono">{deleteTarget?.email}</span> to confirm
+                  </Label>
+                  <Input
+                    id="delete-confirm-email"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    autoComplete="off"
+                    data-testid="input-delete-confirm-email"
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+              disabled={
+                deleteMutation.isPending ||
+                previewLoading ||
+                deleteConfirmText.trim().toLowerCase() !== (deleteTarget?.email || "").toLowerCase()
+              }
+              className="bg-destructive text-destructive-foreground hover-elevate active-elevate-2"
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete permanently
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

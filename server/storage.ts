@@ -91,9 +91,14 @@ export interface IStorage {
   dismissInstallBanner(id: number): Promise<User | undefined>;
   setPasswordResetToken(id: number, token: string | null, expiresAt: number | null): Promise<void>;
   getUserByPasswordResetToken(token: string): Promise<User | undefined>;
-  listUsersByRoleStatus(role?: string, status?: string): Promise<User[]>;
+  listUsersByRoleStatus(role?: string, status?: string, includeArchived?: boolean): Promise<User[]>;
   updateUserRole(id: number, role: string): Promise<User | undefined>;
   updateUserProfile(id: number, patch: Record<string, any>): Promise<User | undefined>;
+  // Admin-only reversible hide (archive) and permanent delete, for cleaning
+  // up test accounts / removed partners without breaking history.
+  archiveUser(id: number, archived: boolean): Promise<User | undefined>;
+  getUserDeletionPreview(id: number): Promise<Record<string, number>>;
+  deleteUserCascade(id: number): Promise<void>;
   getUserByUsername(username: string): Promise<User | undefined>;
   listAdmins(): Promise<User[]>;
   // migration (bulk-imported legacy partner.maha.clinic accounts)
@@ -414,6 +419,94 @@ export class DatabaseStorage implements IStorage {
   async updateUserPassword(id: number, passwordHash: string) {
     return db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning().get();
   }
+  // Reversible hide -- excludes the account from the default Admin
+  // Partners & Students list and blocks login, but touches nothing else.
+  // Un-archiving (archived=false) restores full access immediately.
+  async archiveUser(id: number, archived: boolean) {
+    return db.update(users).set({ archivedAt: archived ? Date.now() : null }).where(eq(users.id, id)).returning().get();
+  }
+  // Counts of dependent rows across every table that references this user,
+  // shown to the admin in the delete confirmation dialog so they know what
+  // a permanent delete will remove before confirming it.
+  async getUserDeletionPreview(id: number) {
+    const threadIds = db.select({ id: chatThreads.id }).from(chatThreads).where(eq(chatThreads.userId, id)).all().map((r) => r.id);
+    const messageCount = threadIds.length
+      ? (db.select().from(chatMessages).where(inArray(chatMessages.threadId, threadIds)).all()).length
+      : 0;
+    const count = (rows: { id: number }[]) => rows.length;
+    return {
+      referrals: count(db.select({ id: referrals.id }).from(referrals).where(eq(referrals.partnerId, id)).all()),
+      orders: count(db.select({ id: orders.id }).from(orders).where(eq(orders.partnerId, id)).all()),
+      coursePurchases: count(db.select({ id: coursePurchases.id }).from(coursePurchases).where(eq(coursePurchases.userId, id)).all()),
+      courseAccessGrants: count(db.select({ id: courseAccessGrants.id }).from(courseAccessGrants).where(eq(courseAccessGrants.partnerId, id)).all()),
+      cohortEnrollments: count(db.select({ id: cohortEnrollments.id }).from(cohortEnrollments).where(eq(cohortEnrollments.studentId, id)).all()),
+      homeworkSubmissions: count(db.select({ id: homeworkSubmissions.id }).from(homeworkSubmissions).where(eq(homeworkSubmissions.studentId, id)).all()),
+      chatThreads: threadIds.length,
+      chatMessages: messageCount,
+      legacyOrders: count(db.select({ id: legacyOrders.id }).from(legacyOrders).where(eq(legacyOrders.userId, id)).all()),
+      standingEntries: count(db.select({ id: standingEntries.id }).from(standingEntries).where(eq(standingEntries.userId, id)).all()),
+      standingRewards: count(db.select({ id: standingRewards.id }).from(standingRewards).where(eq(standingRewards.userId, id)).all()),
+    };
+  }
+  // Permanent, irreversible removal of a partner/student account and every
+  // row keyed to it. Runs as a single better-sqlite3 transaction so a
+  // failure partway through leaves the database untouched rather than
+  // half-deleted. `impersonationLog` rows are intentionally left as-is
+  // (audit trail, never joined against live user data) and
+  // `communityTopics.createdByUserId` / `communityMessages.senderId` are
+  // left orphaned too -- both already store a denormalized display name
+  // and role alongside the id, so community history keeps reading fine
+  // with no user record behind it, exactly like impersonationLog.
+  async deleteUserCascade(id: number) {
+    const run = sqliteDb.transaction((userId: number) => {
+      const threadIds = db.select({ id: chatThreads.id }).from(chatThreads).where(eq(chatThreads.userId, userId)).all().map((r) => r.id);
+      if (threadIds.length) {
+        const messageIds = db.select({ id: chatMessages.id }).from(chatMessages).where(inArray(chatMessages.threadId, threadIds)).all().map((r) => r.id);
+        if (messageIds.length) {
+          db.delete(adminTodos).where(inArray(adminTodos.messageId, messageIds)).run();
+          db.delete(chatMessageFlags).where(inArray(chatMessageFlags.messageId, messageIds)).run();
+          db.delete(chatMessageReactions).where(inArray(chatMessageReactions.messageId, messageIds)).run();
+        }
+        db.delete(chatMessages).where(inArray(chatMessages.threadId, threadIds)).run();
+      }
+      db.delete(chatThreads).where(eq(chatThreads.userId, userId)).run();
+      // Flags/reactions this user placed on messages elsewhere (e.g. an
+      // admin reply thread they don't own).
+      db.delete(chatMessageFlags).where(eq(chatMessageFlags.userId, userId)).run();
+      db.delete(chatMessageReactions).where(eq(chatMessageReactions.userId, userId)).run();
+
+      const orderIds = db.select({ id: orders.id }).from(orders).where(eq(orders.partnerId, userId)).all().map((r) => r.id);
+      if (orderIds.length) {
+        db.delete(orderItems).where(inArray(orderItems.orderId, orderIds)).run();
+      }
+      db.delete(orders).where(eq(orders.partnerId, userId)).run();
+
+      db.delete(referrals).where(eq(referrals.partnerId, userId)).run();
+      db.delete(courseAccessGrants).where(eq(courseAccessGrants.partnerId, userId)).run();
+      db.delete(coursePurchases).where(eq(coursePurchases.userId, userId)).run();
+      db.delete(cohortEnrollments).where(eq(cohortEnrollments.studentId, userId)).run();
+      db.delete(homeworkSubmissions).where(eq(homeworkSubmissions.studentId, userId)).run();
+      db.delete(legacyOrders).where(eq(legacyOrders.userId, userId)).run();
+      db.delete(webauthnCredentials).where(eq(webauthnCredentials.userId, userId)).run();
+      db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)).run();
+      db.delete(caseDiscussionRsvps).where(eq(caseDiscussionRsvps.userId, userId)).run();
+      db.delete(communityMessageReads).where(eq(communityMessageReads.userId, userId)).run();
+      db.delete(standingEntries).where(eq(standingEntries.userId, userId)).run();
+      db.delete(standingRewards).where(eq(standingRewards.userId, userId)).run();
+      db.delete(uploadedFiles).where(eq(uploadedFiles.ownerId, userId)).run();
+      db.delete(adminPinnedMembers).where(eq(adminPinnedMembers.memberUserId, userId)).run();
+      db.delete(adminPinnedMembers).where(eq(adminPinnedMembers.adminUserId, userId)).run();
+      // Log out any active sessions for this account, and detach it from any
+      // admin session currently "viewing as" it (requireAuth already falls
+      // back to the admin gracefully if the target vanishes, but clearing it
+      // here avoids a dangling pointer at rest).
+      db.delete(sessions).where(eq(sessions.userId, userId)).run();
+      db.update(sessions).set({ impersonatingUserId: null, impersonationLogId: null }).where(eq(sessions.impersonatingUserId, userId)).run();
+
+      db.delete(users).where(eq(users.id, userId)).run();
+    });
+    run(id);
+  }
   async getUserByUsername(username: string) {
     return db.select().from(users).where(eq(users.username, username)).get();
   }
@@ -454,10 +547,15 @@ export class DatabaseStorage implements IStorage {
   async getUserByPasswordResetToken(token: string) {
     return db.select().from(users).where(eq(users.passwordResetToken, token)).get();
   }
-  async listUsersByRoleStatus(role?: string, status?: string) {
+  async listUsersByRoleStatus(role?: string, status?: string, includeArchived = false) {
     let rows = db.select().from(users).all();
     if (role) rows = rows.filter((u) => u.role === role);
     if (status) rows = rows.filter((u) => u.status === status);
+    // Archived accounts are excluded everywhere by default (pending list,
+    // approved dropdowns, announcement/community audiences) -- only the
+    // admin "all partners" directory opts in with includeArchived=true so
+    // an admin can still find and un-archive them.
+    if (!includeArchived) rows = rows.filter((u) => !u.archivedAt);
     return rows;
   }
   async listAdmins() {

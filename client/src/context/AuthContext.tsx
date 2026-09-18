@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { navigate } from "wouter/use-hash-location";
@@ -33,7 +34,7 @@ export type AuthUser = {
   impersonating?: { adminId: number; adminName: string } | null;
 };
 
-type PendingState = { pending: true; status: "pending" | "rejected" } | null;
+type PendingState = { pending: true; status: "pending" | "rejected" | "archived" } | null;
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -141,7 +142,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // to know "whose data". Without clearing, the member's view would open
     // showing whatever the admin had cached a moment ago.
     queryClient.clear();
-    setUser({ ...data.user, impersonating: data.impersonating });
+    // The role flips here (admin -> partner/student), which swaps the whole
+    // routed app tree (AdminApp -> PartnerApp/StudentApp). If the hash change
+    // below fires before React has actually committed that swap, wouter
+    // still sees the OLD tree (AdminApp) at the moment "/" resolves, and
+    // AdminApp's own "/" route redirects to "/admin/approvals" -- which the
+    // new PartnerApp/StudentApp tree then 404s on next render, since neither
+    // has that route. flushSync forces the setUser commit to happen
+    // synchronously first, so the hash update always lands on the correct,
+    // already-swapped tree.
+    flushSync(() => {
+      setUser({ ...data.user, impersonating: data.impersonating });
+    });
     navigate("/", { replace: true });
   }, []);
 
@@ -149,7 +161,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await apiRequest("POST", "/api/admin/impersonate/exit");
     const data = await res.json();
     queryClient.clear();
-    setUser(data.user);
+    // Same tree-swap race as viewAsMember, in reverse (partner/student ->
+    // admin) -- flush before navigating so "/admin/partners" always resolves
+    // against the already-mounted AdminApp.
+    flushSync(() => {
+      setUser(data.user);
+    });
     navigate("/admin/partners", { replace: true });
   }, []);
 
