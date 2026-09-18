@@ -66,6 +66,45 @@ function buildCreateTableSql(tableName: string, columns: Record<string, any>): s
   return `CREATE TABLE IF NOT EXISTS "${tableName}" (${colDefs.join(", ")})`;
 }
 
+// `ALTER TABLE ADD COLUMN` above always adds the column bare (nullable, no
+// DEFAULT clause -- see comment block above), so every pre-existing row gets
+// NULL instead of the schema's declared default. For a plain `.default(false)`
+// boolean that's harmless (NULL reads back falsy, same as false). But for a
+// `.default(true)` boolean, drizzle's SQLiteBoolean.mapFromDriverValue does
+// `Number(value) === 1`, so NULL reads back as `false` -- the *opposite* of
+// the intended default -- and every existing row silently gets the disabled
+// behavior instead of the enabled one. Concretely: notifyCommunityEnabled/
+// notifyChatEnabled/notifyOrdersEnabled/notifyOffersEnabled all
+// default(true), so every user account that existed before those columns
+// were added (in a past deploy, not necessarily this boot) had push
+// notifications for that category silently OFF, with no code path that ever
+// re-checked or corrected it. Backfill NULLs to the schema's real default on
+// every boot -- for brand-new columns and for columns that already drifted
+// in a previous deploy alike -- so existing rows behave like the schema
+// says, not just newly-created ones. Idempotent: WHERE ... IS NULL is a
+// no-op once a row has any real value, including an explicit user choice.
+function backfillNullDefault(sqlite: Database.Database, tableName: string, col: any) {
+  if (!col.hasDefault || col.default === undefined || typeof col.default === "object") return;
+  const d = col.default;
+  let literal: string | null = null;
+  if (typeof d === "boolean") literal = d ? "1" : "0";
+  else if (typeof d === "number") literal = String(d);
+  else if (typeof d === "string") literal = `'${d.replace(/'/g, "''")}'`;
+  if (literal === null) return;
+  try {
+    const result = sqlite
+      .prepare(`UPDATE "${tableName}" SET "${col.name}" = ${literal} WHERE "${col.name}" IS NULL`)
+      .run();
+    if (result.changes > 0) {
+      console.log(
+        `[auto-migrate] backfilled ${result.changes} row(s) of ${tableName}.${col.name} from NULL to default ${literal}`,
+      );
+    }
+  } catch (e: any) {
+    console.error(`[auto-migrate] FAILED to backfill default for ${tableName}.${col.name}:`, e?.message || e);
+  }
+}
+
 export function autoMigrate(sqlite: Database.Database) {
   const existingTables = new Set(
     (sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
@@ -99,7 +138,10 @@ export function autoMigrate(sqlite: Database.Database) {
     );
 
     for (const col of Object.values(expectedCols) as any[]) {
-      if (actualCols.has(col.name)) continue;
+      if (actualCols.has(col.name)) {
+        backfillNullDefault(sqlite, tableName, col);
+        continue;
+      }
       const sqlType = sqlTypeFor(col.columnType);
       // SQLite's ALTER TABLE ADD COLUMN rejects a UNIQUE constraint outright
       // ("Cannot add a UNIQUE column") even though CREATE TABLE allows it.
@@ -118,6 +160,7 @@ export function autoMigrate(sqlite: Database.Database) {
         console.error(`[auto-migrate] FAILED to add ${tableName}.${col.name}:`, e?.message || e);
         continue;
       }
+      backfillNullDefault(sqlite, tableName, col);
       if (col.isUnique) {
         try {
           sqlite
