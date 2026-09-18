@@ -349,6 +349,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [replyingToId, setReplyingToId] = useState<number | null>(null);
 
   const messagesKey = ["/api/admin/chat/threads", thread.id, "messages"];
   const { data: messages, isLoading } = useQuery<ChatMessageWithMeta[]>({
@@ -397,13 +398,19 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
   }
 
   const sendMutation = useMutation({
-    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string }) =>
+    mutationFn: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string; replyToMessageId?: number }) =>
       apiRequest("POST", `/api/admin/chat/threads/${thread.id}/messages`, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: messagesKey });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/chat/threads"] });
+      setReplyingToId(null);
     },
   });
+
+  // Lookup map for rendering quoted-reply previews inside bubbles -- the
+  // bubble itself only has its own message, not the full list.
+  const messagesById = new Map((messages || []).map((m) => [m.id, m]));
+  const replyingToMessage = replyingToId != null ? messagesById.get(replyingToId) : null;
 
   const flagMutation = useMutation({
     mutationFn: (id: number) => apiRequest("PATCH", `/api/admin/chat/messages/${id}/flag`, {}),
@@ -577,20 +584,25 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
         ) : filteredMessages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">No messages match your search or filter.</div>
         ) : (
-          filteredMessages.map((m) => (
-            <ChatMessageBubble
-              key={m.id}
-              message={m}
-              isMe={m.senderRole === "admin"}
-              onToggleFlag={(id) => flagMutation.mutate(id)}
-              onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
-              isAdmin
-              onCreateTodo={(id) => setTodoMessageId(id)}
-              onDelete={(id) => setDeleteMessageId(id)}
-              onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
-              onNavigateToThread={onSelectSurvivor}
-            />
-          ))
+          filteredMessages.map((m) => {
+            const quotedSource = m.replyToMessageId != null ? messagesById.get(m.replyToMessageId) : null;
+            return (
+              <ChatMessageBubble
+                key={m.id}
+                message={m}
+                isMe={m.senderRole === "admin"}
+                onToggleFlag={(id) => flagMutation.mutate(id)}
+                onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
+                isAdmin
+                onCreateTodo={(id) => setTodoMessageId(id)}
+                onDelete={(id) => setDeleteMessageId(id)}
+                onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
+                onNavigateToThread={onSelectSurvivor}
+                onReply={(id) => setReplyingToId(id)}
+                quoted={quotedSource ? { senderName: quotedSource.senderName, snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
+              />
+            );
+          })
         )}
         <div ref={bottomRef} />
       </div>
@@ -604,6 +616,8 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
         testIdPrefix="admin-chat"
         mentionThreads={allMentionCandidates}
         onResolveMention={resolveAdminMention}
+        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
+        onCancelReply={() => setReplyingToId(null)}
       />
 
       <Dialog open={todoMessageId !== null} onOpenChange={(open) => !open && setTodoMessageId(null)}>
