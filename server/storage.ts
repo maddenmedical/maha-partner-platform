@@ -241,6 +241,10 @@ export interface IStorage {
   // uploaded files
   createUploadedFile(f: InsertUploadedFile): Promise<UploadedFile>;
   getUploadedFileByDriveId(driveFileId: string): Promise<UploadedFile | undefined>;
+  updateUploadedFileProcessing(
+    driveFileId: string,
+    fields: { status: string; mimeType?: string; size?: number; thumbnailDataUrl?: string | null },
+  ): Promise<void>;
 
   // product resources
   createProductResource(r: InsertProductResource): Promise<ProductResource>;
@@ -259,7 +263,7 @@ export interface IStorage {
   reassignMessages(sourceThreadId: number, targetThreadId: number): Promise<void>;
   countMessagesForThread(threadId: number): Promise<number>;
   createMessage(m: InsertChatMessage & { createdAt: number }): Promise<ChatMessage>;
-  listMessagesForThread(threadId: number): Promise<(ChatMessage & { senderPhotoUrl: string | null })[]>;
+  listMessagesForThread(threadId: number): Promise<(ChatMessage & { senderPhotoUrl: string | null; attachmentThumbnail: string | null; attachmentProcessing: boolean })[]>;
   getLastMessageForThread(threadId: number): Promise<ChatMessage | undefined>;
   getMessage(id: number): Promise<ChatMessage | undefined>;
   deleteMessage(id: number, deletedByName: string): Promise<ChatMessage>;
@@ -970,6 +974,12 @@ export class DatabaseStorage implements IStorage {
   async getUploadedFileByDriveId(driveFileId: string) {
     return db.select().from(uploadedFiles).where(eq(uploadedFiles.driveFileId, driveFileId)).get();
   }
+  async updateUploadedFileProcessing(
+    driveFileId: string,
+    fields: { status: string; mimeType?: string; size?: number; thumbnailDataUrl?: string | null },
+  ) {
+    db.update(uploadedFiles).set(fields).where(eq(uploadedFiles.driveFileId, driveFileId)).run();
+  }
 
   async createProductResource(r: InsertProductResource) {
     return db.insert(productResources).values({ ...r, createdAt: Date.now() }).returning().get();
@@ -1199,7 +1209,41 @@ export class DatabaseStorage implements IStorage {
       .where(eq(chatMessages.threadId, threadId))
       .orderBy(chatMessages.createdAt)
       .all();
-    return rows;
+    return this.enrichVideoAttachments(rows);
+  }
+  // Video attachments (chat only) go through the instant-send pipeline:
+  // the message row itself never stores thumbnail/processing state --
+  // that lives on the uploadedFiles row keyed by the driveFileId embedded
+  // in attachmentUrl ("/api/files/<driveFileId>"). This looks those up in
+  // one batched query and merges them onto each message so the client
+  // always sees current processing/thumbnail state without any extra
+  // request, and without ever needing to update already-sent message rows.
+  async enrichVideoAttachments<T extends { attachmentUrl: string | null; attachmentType: string | null }>(
+    rows: T[],
+  ): Promise<(T & { attachmentThumbnail: string | null; attachmentProcessing: boolean })[]> {
+    const driveIds = rows
+      .filter((r) => r.attachmentType === "video" && r.attachmentUrl)
+      .map((r) => r.attachmentUrl!.replace(/^\/api\/files\//, ""));
+    if (driveIds.length === 0) {
+      return rows.map((r) => ({ ...r, attachmentThumbnail: null, attachmentProcessing: false }));
+    }
+    const files = db.select({
+      driveFileId: uploadedFiles.driveFileId,
+      status: uploadedFiles.status,
+      thumbnailDataUrl: uploadedFiles.thumbnailDataUrl,
+    }).from(uploadedFiles).where(inArray(uploadedFiles.driveFileId, driveIds)).all();
+    const byId = new Map(files.map((f) => [f.driveFileId, f]));
+    return rows.map((r) => {
+      if (r.attachmentType !== "video" || !r.attachmentUrl) {
+        return { ...r, attachmentThumbnail: null, attachmentProcessing: false };
+      }
+      const rec = byId.get(r.attachmentUrl.replace(/^\/api\/files\//, ""));
+      return {
+        ...r,
+        attachmentThumbnail: rec?.thumbnailDataUrl ?? null,
+        attachmentProcessing: rec?.status === "processing",
+      };
+    });
   }
   async getLastMessageForThread(threadId: number) {
     return db.select().from(chatMessages).where(eq(chatMessages.threadId, threadId)).orderBy(desc(chatMessages.createdAt)).limit(1).get();

@@ -806,6 +806,15 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
   ownerId: integer("owner_id"),
   threadId: integer("thread_id"), // set when category='chat' — enables file-access checks via thread membership
   uploadedAt: integer("uploaded_at").notNull(),
+  // Chat video instant-send: the raw video is uploaded to Drive immediately
+  // under this same `driveFileId` (so the URL handed to the client never
+  // changes), then a background job re-encodes it to H.264/AAC and replaces
+  // the Drive file's content in place via `files.update`. `status` is
+  // 'ready' | 'processing' | 'failed' ('ready' for every non-video / legacy
+  // row). `thumbnailDataUrl` is a small base64 JPEG poster frame, filled in
+  // once processing finishes.
+  status: text("status").notNull().default("ready"),
+  thumbnailDataUrl: text("thumbnail_data_url"),
 });
 export const insertUploadedFileSchema = createInsertSchema(uploadedFiles).omit({ id: true });
 export type InsertUploadedFile = z.infer<typeof insertUploadedFileSchema>;

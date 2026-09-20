@@ -8,9 +8,9 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
 import { storage, sqliteDb, DB_FILE_PATH } from "./storage";
-import { uploadToDrive, streamFromDrive, streamFromDriveRanged, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
+import { uploadToDrive, streamFromDrive, streamFromDriveRanged, replaceDriveFileContent, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { convertDriveAudioToMp3, cleanupTempFiles } from "./audioConvert";
-import { normalizeVideoForUpload } from "./videoConvert";
+import { normalizeVideoForUpload, reencodeVideoForUpload } from "./videoConvert";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
@@ -194,6 +194,79 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+
+// Chat file/photo/video upload -- shared by the partner/student and admin
+// chat endpoints (both write into the same chatMessages/uploadedFiles
+// tables via storage.listMessagesForThread's enrichment).
+//
+// Videos get "instant send": the raw file goes to Drive immediately (fast --
+// pure network I/O, no ffmpeg) so the sender's message can go out right
+// away, marked `processing: true`. A real H.264/AAC re-encode + poster-frame
+// thumbnail then run in the background and replace the Drive file's content
+// in place (same driveFileId, same /api/files/:id URL), after which the next
+// 5s poll picks up the finished attachment automatically -- no separate
+// endpoint or client-side retry needed.
+async function handleChatUpload(
+  file: Express.Multer.File,
+  threadId: number,
+  ownerId: number,
+): Promise<{ url: string; name: string; mimeType: string; type: string; processing: boolean }> {
+  const isVideo = file.mimetype.startsWith("video/");
+
+  if (!isVideo) {
+    const normalized = await normalizeVideoForUpload(file.buffer, file.originalname, file.mimetype);
+    const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
+    await storage.createUploadedFile({
+      driveFileId,
+      filename: normalized.filename,
+      mimeType: normalized.mimeType,
+      size: normalized.buffer.length,
+      category: "chat",
+      ownerId,
+      threadId,
+      uploadedAt: Date.now(),
+      status: "ready",
+      thumbnailDataUrl: null,
+    });
+    const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
+    return { url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type, processing: false };
+  }
+
+  const { driveFileId } = await uploadToDrive(file.buffer, file.originalname, file.mimetype);
+  await storage.createUploadedFile({
+    driveFileId,
+    filename: file.originalname,
+    mimeType: file.mimetype,
+    size: file.buffer.length,
+    category: "chat",
+    ownerId,
+    threadId,
+    uploadedAt: Date.now(),
+    status: "processing",
+    thumbnailDataUrl: null,
+  });
+
+  // Not awaited -- runs after the response is sent.
+  reencodeVideoForUpload(file.buffer, file.originalname)
+    .then(async (result) => {
+      await replaceDriveFileContent(driveFileId, result.buffer, result.mimeType);
+      await storage.updateUploadedFileProcessing(driveFileId, {
+        status: "ready",
+        mimeType: result.mimeType,
+        size: result.buffer.length,
+        thumbnailDataUrl: result.thumbnailDataUrl,
+      });
+    })
+    .catch(async () => {
+      // Re-encode failed -- leave the original upload in place (the
+      // serving route's video/quicktime relabel fallback still covers some
+      // playback cases) and just clear "processing" so it doesn't spin
+      // forever in the UI.
+      await storage.updateUploadedFileProcessing(driveFileId, { status: "failed" }).catch(() => {});
+    });
+
+  return { url: `/api/files/${driveFileId}`, name: file.originalname, mimeType: file.mimetype, type: "video", processing: true };
+}
 
 interface AuthedRequest extends Request {
   user?: PublicUser;
@@ -507,6 +580,24 @@ export async function registerRoutes(
         allowed = isAdmin;
     }
     if (!allowed) return res.status(403).json({ message: "Forbidden" });
+
+    // Immutable caching: a given driveFileId's bytes never change once its
+    // background processing (if any) settles to "ready" -- re-uploading
+    // always creates a new record with a new id. This means every repeat
+    // request for the same attachment (re-opening a thread, the 5s chat
+    // poll re-rendering the same messages, a second viewer) can be served
+    // straight from the browser/CDN cache instead of re-doing a live
+    // 900ms-1900ms Google Drive round trip every single time. Skip caching
+    // while still "processing" since the served bytes will change once the
+    // re-encode replaces them.
+    const etag = `"${rec.driveFileId}-${rec.size}"`;
+    if (rec.status === "ready") {
+      res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+      res.setHeader("ETag", etag);
+      if (req.headers["if-none-match"] === etag) {
+        return res.status(304).end();
+      }
+    }
 
     try {
       // Video/audio elements (iOS Safari in particular) probe the resource
@@ -2358,20 +2449,8 @@ export async function registerRoutes(
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
-      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
-      await storage.createUploadedFile({
-        driveFileId,
-        filename: normalized.filename,
-        mimeType: normalized.mimeType,
-        size: normalized.buffer.length,
-        category: "chat",
-        ownerId: req.user!.id,
-        threadId,
-        uploadedAt: Date.now(),
-      });
-      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
+      const result = await handleChatUpload(req.file, threadId, req.user!.id);
+      res.json(result);
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
@@ -2554,20 +2633,8 @@ export async function registerRoutes(
     if (!thread) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
-      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
-      await storage.createUploadedFile({
-        driveFileId,
-        filename: normalized.filename,
-        mimeType: normalized.mimeType,
-        size: normalized.buffer.length,
-        category: "chat",
-        ownerId: req.user!.id,
-        threadId,
-        uploadedAt: Date.now(),
-      });
-      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
+      const result = await handleChatUpload(req.file, threadId, req.user!.id);
+      res.json(result);
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }

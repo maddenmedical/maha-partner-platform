@@ -52,6 +52,28 @@ export async function uploadToDrive(
   return { driveFileId, webViewLink: res.data.webViewLink || "" };
 }
 
+// Replaces an existing Drive file's bytes/mimeType in place, keeping the
+// same `fileId` (and therefore the same public-facing /api/files/:id URL).
+// Used by the chat video pipeline: the original upload lands on Drive
+// immediately under a stable id so the message can be sent right away, then
+// once the background re-encode finishes this swaps in the transcoded
+// version without ever changing the URL the message already references.
+export async function replaceDriveFileContent(
+  fileId: string,
+  buffer: Buffer,
+  mimeType: string,
+): Promise<void> {
+  const drive = getDrive();
+  await drive.files.update({
+    fileId,
+    media: {
+      mimeType,
+      body: Readable.from(buffer),
+    },
+    supportsAllDrives: true,
+  });
+}
+
 export async function streamFromDrive(
   driveFileId: string,
 ): Promise<NodeJS.ReadableStream> {

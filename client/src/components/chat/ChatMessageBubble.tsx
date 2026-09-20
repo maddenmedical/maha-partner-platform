@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
-import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X, MoreVertical, Reply, CornerUpLeft } from "lucide-react";
+import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X, MoreVertical, Reply, CornerUpLeft, Loader2 } from "lucide-react";
 import { useSwipeToReply } from "./useSwipeToReply";
 import { EmojiPicker, QUICK_EMOJIS } from "./EmojiPicker";
 import { Textarea } from "@/components/ui/textarea";
@@ -72,6 +72,13 @@ export interface ChatMessageWithMeta extends ChatMessage {
   // (undefined) everywhere else, so 1:1 patient/student chat is unaffected.
   senderTierKey?: string | null;
   senderTierLabel?: string | null;
+  // Video attachments only (1:1 partner/student <-> admin chat). Populated
+  // by the server from the uploadedFiles record behind attachmentUrl --
+  // see storage.enrichVideoAttachments. Both undefined for every non-video
+  // attachment and for callers (Community, Staff Room) that don't opt into
+  // this instant-send pipeline.
+  attachmentThumbnail?: string | null;
+  attachmentProcessing?: boolean;
 }
 
 export interface QuotedMessage {
@@ -302,9 +309,30 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               </button>
             </div>
           )}
-          {attachmentSrc && m.attachmentType === "video" && (
+          {attachmentSrc && m.attachmentType === "video" && m.attachmentProcessing && (
+            // Instant-send: the message is already visible while the real
+            // re-encode + thumbnail run server-side in the background. The
+            // 5s chat poll re-fetches this same message and will swap in
+            // the finished <video> below once attachmentProcessing flips
+            // to false -- no action needed here beyond waiting.
+            <div
+              className="flex items-center gap-2 max-w-[240px] rounded-md bg-black/5 dark:bg-white/5 px-3 py-4 text-sm text-muted-foreground"
+              data-testid={`video-processing-${m.id}`}
+            >
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              <span>Processing video...</span>
+            </div>
+          )}
+          {attachmentSrc && m.attachmentType === "video" && !m.attachmentProcessing && (
             <div className="relative">
-              <video controls src={attachmentSrc} className="max-w-[240px] max-h-64 rounded-md" data-testid={`video-attachment-${m.id}`} />
+              <video
+                controls
+                preload="metadata"
+                poster={m.attachmentThumbnail || undefined}
+                src={attachmentSrc}
+                className="max-w-[240px] max-h-64 rounded-md"
+                data-testid={`video-attachment-${m.id}`}
+              />
               <button
                 type="button"
                 onClick={handleDownloadAttachment}
