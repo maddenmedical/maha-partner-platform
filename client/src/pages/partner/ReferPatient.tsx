@@ -219,7 +219,6 @@ export default function ReferPatient() {
               </Button>
               <Button
                 type="button"
-                variant="outline"
                 onClick={() => { setOpenChatAfterSubmit(true); form.handleSubmit((v) => mutation.mutate(v))(); }}
                 disabled={mutation.isPending || uploading || !mandatoryFieldsFilled}
                 className="flex-1"
@@ -227,7 +226,7 @@ export default function ReferPatient() {
               >
                 {(mutation.isPending || uploading) && openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 <MessageSquare className="h-4 w-4 mr-2" />
-                Send referral &amp; open chat
+                Open chat
               </Button>
             </div>
           </form>

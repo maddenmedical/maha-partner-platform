@@ -13,7 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Upload } from "lucide-react";
+import { Loader2, Upload, MessageSquare } from "lucide-react";
 
 const formSchema = insertReferralSchema.omit({ partnerId: true }).extend({
   attachmentUrl: z.string().optional(),
@@ -187,14 +187,14 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
             </Button>
             <Button
               type="button"
-              variant="outline"
               onClick={() => { setOpenChatAfterSubmit(true); form.handleSubmit((v) => mutation.mutate(v))(); }}
               disabled={mutation.isPending || uploading || !mandatoryFieldsFilled}
               className="flex-1"
               data-testid="button-submit-chat-referral-open-chat"
             >
               {(mutation.isPending || uploading) && openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Send referral &amp; open chat
+              <MessageSquare className="h-4 w-4 mr-2" />
+              Open chat
             </Button>
           </div>
         </form>
