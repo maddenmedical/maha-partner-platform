@@ -24,7 +24,7 @@ interface ReferralFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   linkThreadId?: number;
-  onSuccess: (referral: Referral & { chatThreadId: number }) => void;
+  onSuccess: (referral: Referral & { chatThreadId: number }, openChat: boolean) => void;
 }
 
 // The same short referral form as the standalone "Refer a Patient" page,
@@ -40,6 +40,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [attested, setAttested] = useState(false);
+  const [openChatAfterSubmit, setOpenChatAfterSubmit] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -78,17 +79,28 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
       queryClient.invalidateQueries({ queryKey: ["/api/partner/home-summary"] });
+      const shouldOpenChat = openChatAfterSubmit;
       form.reset();
       setFile(null);
       setAttested(false);
+      setOpenChatAfterSubmit(false);
       onOpenChange(false);
       toast({ title: "Referral submitted", description: "The MAHA team has been notified." });
-      onSuccess(data);
+      onSuccess(data, shouldOpenChat);
     },
     onError: (err: any) => {
+      setOpenChatAfterSubmit(false);
       toast({ title: "Could not submit referral", description: err.message, variant: "destructive" });
     },
   });
+
+  const watched = form.watch();
+  const mandatoryFieldsFilled =
+    !!watched.patientFirstName?.trim() &&
+    !!watched.patientLastName?.trim() &&
+    !!watched.patientContact?.trim() &&
+    !!watched.caseDescription?.trim() &&
+    attested;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -110,6 +122,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="chat-ref-contact">Patient phone or email</Label>
             <Input id="chat-ref-contact" {...form.register("patientContact")} data-testid="input-chat-referral-contact" />
+            <p className="text-xs text-muted-foreground">Only if you want us to reach out to the patient.</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="chat-ref-description">Reason / case description</Label>
@@ -129,10 +142,6 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
             </RadioGroup>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="chat-ref-notes">Notes (optional)</Label>
-            <Textarea id="chat-ref-notes" rows={2} {...form.register("notes")} data-testid="textarea-chat-referral-notes" />
-          </div>
-          <div className="flex flex-col gap-1.5">
             <Label htmlFor="chat-ref-attachment">Attachment (optional)</Label>
             <label
               htmlFor="chat-ref-attachment"
@@ -149,6 +158,7 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
               onChange={(e) => setFile(e.target.files?.[0] || null)}
               data-testid="input-chat-referral-attachment"
             />
+            <p className="text-xs text-muted-foreground">Max. 50MB. For larger files send a link in the patient chat.</p>
           </div>
           <div className="flex items-start gap-2.5" data-testid="row-chat-referral-attestation">
             <Checkbox
@@ -164,10 +174,29 @@ export function ReferralFormDialog({ open, onOpenChange, linkThreadId, onSuccess
             </Label>
           </div>
 
-          <Button type="submit" disabled={mutation.isPending || uploading || !attested} data-testid="button-submit-chat-referral">
-            {(mutation.isPending || uploading) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Send referral
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              type="button"
+              onClick={() => { setOpenChatAfterSubmit(false); form.handleSubmit((v) => mutation.mutate(v))(); }}
+              disabled={mutation.isPending || uploading || !attested}
+              className="flex-1"
+              data-testid="button-submit-chat-referral"
+            >
+              {(mutation.isPending || uploading) && !openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Send referral
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { setOpenChatAfterSubmit(true); form.handleSubmit((v) => mutation.mutate(v))(); }}
+              disabled={mutation.isPending || uploading || !mandatoryFieldsFilled}
+              className="flex-1"
+              data-testid="button-submit-chat-referral-open-chat"
+            >
+              {(mutation.isPending || uploading) && openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Send referral &amp; open chat
+            </Button>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

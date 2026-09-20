@@ -209,7 +209,7 @@ export default function AdminChatInbox() {
                   <span className="flex items-center gap-1.5 min-w-0">
                     {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
                     {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                    <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
+                    <span className={cn("text-base truncate", t.unread ? "font-semibold" : "font-medium")}>{t.userName}</span>
                   </span>
                 </span>
                 <span className="flex items-center gap-1 shrink-0">
@@ -260,8 +260,8 @@ export default function AdminChatInbox() {
                   </DropdownMenu>
                 </span>
               </div>
-              {t.topic && <span className="text-xs text-primary font-medium truncate block mt-0.5 ml-8">{t.topic}</span>}
-              <p className={cn("text-xs truncate mt-0.5 ml-8", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
+              {t.topic && <span className="text-sm text-primary font-medium truncate block mt-0.5 ml-8">{t.topic}</span>}
+              <p className={cn("text-sm truncate mt-0.5 ml-8", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
               {t.archivedAt && t.reactivationRequestedAt && (
                 <span className="mt-1 ml-8 flex items-center gap-1 text-xs font-medium text-primary" data-testid={`badge-reactivation-requested-${t.id}`}>
                   <Undo2 className="h-3 w-3" /> Reopen requested
@@ -559,7 +559,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search messages..."
-              className="h-8 pl-7 text-xs"
+              className="h-8 pl-7 text-sm"
               data-testid="input-search-messages"
             />
           </div>
@@ -795,7 +795,7 @@ function StaffChatSidebar({ onSelect, selected }: { onSelect: (s: StaffSelection
         <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
           <Users className="h-4 w-4 text-primary" />
         </div>
-        <span className="text-sm font-medium">Staff Room</span>
+        <span className="text-base font-medium">Staff Room</span>
       </button>
 
       <Button
@@ -827,10 +827,10 @@ function StaffChatSidebar({ onSelect, selected }: { onSelect: (s: StaffSelection
               <UserAvatar photoUrl={t.otherAdminPhotoUrl} name={t.otherAdminName} size="sm" className="shrink-0" />
               <span className="flex items-center gap-1.5 min-w-0">
                 {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-dm-${t.id}`} />}
-                <span className={cn("text-sm truncate", t.unread ? "font-semibold" : "font-medium")}>{t.otherAdminName}</span>
+                <span className={cn("text-base truncate", t.unread ? "font-semibold" : "font-medium")}>{t.otherAdminName}</span>
               </span>
             </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5 ml-8">{t.lastMessagePreview || "No messages yet"}</p>
+            <p className="text-sm text-muted-foreground truncate mt-0.5 ml-8">{t.lastMessagePreview || "No messages yet"}</p>
           </button>
         ))
       )}

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import {
-  browserSupportsWebAuthn, registerPasskey, deletePasskey, type WebauthnCredentialSummary,
+  browserSupportsWebAuthn, registerPasskey, deletePasskey, platformAuthLabel, type WebauthnCredentialSummary,
 } from "@/lib/webauthn";
 
 type NotifyCategory = "community" | "chat" | "orders" | "offers" | "staff";
@@ -339,10 +339,10 @@ export default function Account() {
     try {
       await registerPasskey();
       await queryClient.invalidateQueries({ queryKey: ["/api/webauthn/credentials"] });
-      toast({ title: "Face ID / Fingerprint set up", description: "You can now use it to sign in on this device." });
+      toast({ title: "Passkey set up", description: `You can now sign in on this device with ${platformAuthLabel()}.` });
     } catch (err: any) {
       if (err?.name !== "NotAllowedError") {
-        toast({ title: "Could not set up Face ID / Fingerprint", description: err.message, variant: "destructive" });
+        toast({ title: "Could not set up passkey", description: err.message, variant: "destructive" });
       }
     } finally {
       setRegistering(false);
@@ -706,16 +706,16 @@ export default function Account() {
           <div className="flex items-start gap-3">
             <ScanFace className="h-5 w-5 text-primary mt-0.5 shrink-0" />
             <div>
-              <h2 className="text-sm font-semibold">Face ID / Fingerprint sign-in</h2>
+              <h2 className="text-sm font-semibold">Passkey sign-in</h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Sign in faster on this device using Face ID, Touch ID, or your fingerprint — no password needed.
+                Sign in faster on this device with {platformAuthLabel()} — no password needed.
               </p>
             </div>
           </div>
 
           {!passkeySupported ? (
             <p className="text-sm text-muted-foreground" data-testid="text-passkey-unsupported">
-              This browser or device doesn't support Face ID / Fingerprint sign-in.
+              This browser or device doesn't support passkey sign-in.
             </p>
           ) : (
             <>
@@ -773,7 +773,7 @@ export default function Account() {
                 data-testid="button-register-passkey"
               >
                 {registering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ScanFace className="h-4 w-4 mr-2" />}
-                Set up Face ID / Fingerprint on this device
+                Set up passkey ({platformAuthLabel()}) on this device
               </Button>
             </>
           )}

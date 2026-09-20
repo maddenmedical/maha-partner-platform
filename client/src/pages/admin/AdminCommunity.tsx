@@ -296,7 +296,7 @@ export default function AdminCommunity() {
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 min-w-0">
                       {!!t.pinnedAt && <Pin className="h-3 w-3 text-primary shrink-0" data-testid={`icon-pinned-topic-${t.id}`} />}
-                      <span className="text-sm font-medium truncate">{t.title}</span>
+                      <span className="text-base font-medium truncate">{t.title}</span>
                     </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -360,7 +360,7 @@ export default function AdminCommunity() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <p className="text-xs truncate mt-0.5 text-muted-foreground flex items-center gap-1">
+                  <p className="text-sm truncate mt-0.5 text-muted-foreground flex items-center gap-1">
                     <span className="truncate min-w-0">
                       {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
                       {t.lastMessagePreview || "No messages yet"}
@@ -562,7 +562,7 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search messages..."
-            className="h-8 pl-7 text-xs"
+            className="h-8 pl-7 text-sm"
             data-testid="input-search-community-messages"
           />
         </div>

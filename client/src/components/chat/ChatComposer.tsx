@@ -215,7 +215,11 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   const busy = uploading || sending || recording;
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t border-border pt-3">
+    <form
+      onSubmit={handleSubmit}
+      className="flex flex-col gap-2 border-t border-border pt-3"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
       {replyingTo && (
         <div
           className="flex items-center gap-2 rounded-md border-l-2 border-primary bg-muted/50 px-2.5 py-1.5 text-xs"
@@ -340,7 +344,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
           placeholder={placeholder ?? "Type a message... (@ to link another chat)"}
           rows={1}
-          className="resize-none min-h-9"
+          className="resize-none min-h-9 text-base md:text-base"
           onKeyDown={(e) => {
             if (mentionResolving) {
               e.preventDefault();

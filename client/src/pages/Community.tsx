@@ -307,9 +307,9 @@ export default function Community() {
                 <span className="flex items-center gap-1.5 min-w-0">
                   {!!t.pinnedAt && <Pin className="h-3 w-3 text-primary shrink-0" data-testid={`icon-pinned-topic-${t.id}`} />}
                   {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-topic-${t.id}`} />}
-                  <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.title}</span>
+                  <span className={cn("text-base truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.title}</span>
                 </span>
-                <p className={cn("text-xs truncate mt-0.5 flex items-center gap-1", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>
+                <p className={cn("text-sm truncate mt-0.5 flex items-center gap-1", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>
                   <span className="truncate min-w-0">
                     {t.lastMessageSenderName ? `${t.lastMessageSenderName}: ` : ""}
                     {t.lastMessagePreview || "No messages yet"}
@@ -408,7 +408,7 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search messages..."
-            className="h-8 pl-7 text-xs"
+            className="h-8 pl-7 text-sm"
             data-testid="input-search-community-messages"
           />
         </div>

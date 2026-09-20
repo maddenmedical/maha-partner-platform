@@ -209,16 +209,27 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
     );
   }
 
+  // Photos and videos must be explicitly downloadable, not just viewable
+  // inline -- forces a save-as download via the authenticated file proxy
+  // (?download=1 sets Content-Disposition: attachment on the server).
+  function handleDownloadAttachment() {
+    if (!m.attachmentUrl) return;
+    const sep = m.attachmentUrl.includes("?") ? "&" : "?";
+    downloadAuthedFile(`${m.attachmentUrl}${sep}download=1`, m.attachmentName || "attachment").catch((e) =>
+      toast({ title: "Could not download", description: e.message, variant: "destructive" })
+    );
+  }
+
   if (isDeleted) {
     return (
       <div
         className={cn("group flex flex-col max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
         data-testid={`message-${m.id}`}
       >
-        <div className="rounded-lg px-3 py-2 text-sm italic text-muted-foreground bg-muted/50 border border-dashed border-border">
+        <div className="rounded-lg px-3 py-2 text-base italic text-muted-foreground bg-muted/50 border border-dashed border-border">
           This message was deleted{isAdmin && m.deletedByName ? ` by ${m.deletedByName}` : ""}.
         </div>
-        <span className="text-xs text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
+        <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
           {isMe ? "You" : m.senderName}
           <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
           · {format(new Date(m.createdAt), "MMM d, HH:mm")}
@@ -248,7 +259,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         )}
         <div
           className={cn(
-            "rounded-lg px-3 py-2 text-sm flex flex-col gap-1.5 touch-manipulation",
+            "rounded-lg px-3 py-2 text-base flex flex-col gap-1.5 touch-manipulation",
             isMe ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
           )}
           onPointerDown={handleBubblePointerDownMerged}
@@ -261,7 +272,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           {quoted && (
             <div
               className={cn(
-                "flex flex-col gap-0.5 rounded-md border-l-2 px-2 py-1 text-xs",
+                "flex flex-col gap-0.5 rounded-md border-l-2 px-2 py-1 text-sm",
                 isMe ? "border-primary-foreground/40 bg-primary-foreground/10" : "border-primary bg-background/60"
               )}
               data-testid={`quoted-message-${m.id}`}
@@ -271,16 +282,40 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             </div>
           )}
           {attachmentSrc && m.attachmentType === "image" && (
-            <img
-              src={attachmentSrc}
-              alt={m.attachmentName || "attachment"}
-              className="max-w-[240px] max-h-64 rounded-md object-cover cursor-pointer"
-              onClick={handleOpenAttachment}
-              data-testid={`img-attachment-${m.id}`}
-            />
+            <div className="relative">
+              <img
+                src={attachmentSrc}
+                alt={m.attachmentName || "attachment"}
+                className="max-w-[240px] max-h-64 rounded-md object-cover cursor-pointer"
+                onClick={handleOpenAttachment}
+                data-testid={`img-attachment-${m.id}`}
+              />
+              <button
+                type="button"
+                onClick={handleDownloadAttachment}
+                title="Download photo"
+                aria-label="Download photo"
+                className="absolute bottom-1.5 right-1.5 rounded-md bg-black/50 p-1.5 text-white hover-elevate active-elevate-2"
+                data-testid={`button-download-image-${m.id}`}
+              >
+                <Download className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
           {attachmentSrc && m.attachmentType === "video" && (
-            <video controls src={attachmentSrc} className="max-w-[240px] max-h-64 rounded-md" data-testid={`video-attachment-${m.id}`} />
+            <div className="relative">
+              <video controls src={attachmentSrc} className="max-w-[240px] max-h-64 rounded-md" data-testid={`video-attachment-${m.id}`} />
+              <button
+                type="button"
+                onClick={handleDownloadAttachment}
+                title="Download video"
+                aria-label="Download video"
+                className="absolute top-1.5 right-1.5 rounded-md bg-black/50 p-1.5 text-white hover-elevate active-elevate-2"
+                data-testid={`button-download-video-${m.id}`}
+              >
+                <Download className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
           {attachmentSrc && m.attachmentType === "audio" && (
             <div className="flex items-center gap-1.5">
@@ -313,7 +348,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               data-testid={`document-attachment-${m.id}`}
             >
               <FileText className="h-4 w-4 shrink-0" />
-              <span className="truncate text-xs">{m.attachmentName || "Document"}</span>
+              <span className="truncate text-sm">{m.attachmentName || "Document"}</span>
             </button>
           )}
           {isEditing ? (
@@ -331,7 +366,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
                   }
                 }}
                 rows={2}
-                className={cn("text-sm resize-none", isMe ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/60" : "bg-background")}
+                className={cn("text-base resize-none", isMe ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/60" : "bg-background")}
                 data-testid={`textarea-edit-message-${m.id}`}
               />
               <div className="flex items-center gap-1.5 self-end">
@@ -579,7 +614,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         </div>
       )}
 
-      <span className="text-xs text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
+      <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
         {isMe ? "You" : m.senderName}
         <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
         · {format(new Date(m.createdAt), "MMM d, HH:mm")}

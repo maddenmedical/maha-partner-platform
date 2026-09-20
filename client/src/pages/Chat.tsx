@@ -284,10 +284,10 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
       <ReferralFormDialog
         open={newPatientDialogOpen}
         onOpenChange={setNewPatientDialogOpen}
-        onSuccess={async (data) => {
+        onSuccess={async (data, openChat) => {
           await queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
           await queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
-          setPendingSelectId(data.chatThreadId);
+          if (openChat) setPendingSelectId(data.chatThreadId);
         }}
       />
 
@@ -323,9 +323,9 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
                     {t.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-thread-${t.id}`} />}
                     {t.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
                     {!!t.archivedAt && <Archive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
-                    <span className={cn("text-sm truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.topic}</span>
+                    <span className={cn("text-base truncate block", t.unread ? "font-semibold" : "font-medium")}>{t.topic}</span>
                   </span>
-                  <p className={cn("text-xs truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
+                  <p className={cn("text-sm truncate mt-0.5", t.unread ? "text-foreground font-medium" : "text-muted-foreground")}>{t.lastMessage || "No messages yet"}</p>
                 </button>
               ))
           )}
@@ -517,7 +517,7 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search messages..."
-              className="h-8 pl-7 text-xs"
+              className="h-8 pl-7 text-sm"
               data-testid="input-search-messages"
             />
           </div>
@@ -588,6 +588,8 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
         onOpenChange={setReferralDialogOpen}
         linkThreadId={thread.id}
         onSuccess={() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] })}
+        // Already inside the linked thread (linkThreadId={thread.id}), so "open chat"
+        // has nothing extra to navigate to here -- the referral posts into this thread.
       />
     </div>
   );

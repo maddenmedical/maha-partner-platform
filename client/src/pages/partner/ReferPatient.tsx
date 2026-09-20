@@ -54,6 +54,7 @@ export default function ReferPatient() {
   const { data: referrals, isLoading } = useQuery<ReferralRow[]>({ queryKey: ["/api/referrals/mine"] });
   const [selected, setSelected] = useState<ReferralRow | null>(null);
   const [, navigate] = useLocation();
+  const [openChatAfterSubmit, setOpenChatAfterSubmit] = useState(false);
 
   function openReferralChat(threadId: number) {
     setPendingThreadId(threadId);
@@ -73,22 +74,37 @@ export default function ReferPatient() {
         attachmentUrl = data.url;
         setUploading(false);
       }
-      return apiRequest("POST", "/api/referrals", { ...values, attachmentUrl: attachmentUrl || undefined, patientConsentAttested: attested });
+      const res = await apiRequest("POST", "/api/referrals", { ...values, attachmentUrl: attachmentUrl || undefined, patientConsentAttested: attested });
+      return res.json() as Promise<Referral & { chatThreadId: number }>;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/referrals/mine"] });
       queryClient.invalidateQueries({ queryKey: ["/api/partner/home-summary"] });
+      const shouldOpenChat = openChatAfterSubmit;
       form.reset();
       setFile(null);
       setAttested(false);
+      setOpenChatAfterSubmit(false);
       setSubmitted(true);
       toast({ title: "Referral submitted", description: "The MAHA team has been notified." });
       setTimeout(() => setSubmitted(false), 3000);
+      if (shouldOpenChat && data.chatThreadId) {
+        openReferralChat(data.chatThreadId);
+      }
     },
     onError: (err: any) => {
+      setOpenChatAfterSubmit(false);
       toast({ title: "Could not submit referral", description: err.message, variant: "destructive" });
     },
   });
+
+  const watched = form.watch();
+  const mandatoryFieldsFilled =
+    !!watched.patientFirstName?.trim() &&
+    !!watched.patientLastName?.trim() &&
+    !!watched.patientContact?.trim() &&
+    !!watched.caseDescription?.trim() &&
+    attested;
 
   return (
     <div className="max-w-2xl mx-auto p-4 flex flex-col gap-8">
@@ -113,6 +129,7 @@ export default function ReferPatient() {
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="patientContact">Patient phone or email</Label>
               <Input id="patientContact" {...form.register("patientContact")} data-testid="input-patient-contact" />
+              <p className="text-xs text-muted-foreground">Only if you want us to reach out to the patient.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="caseDescription">Reason / case description</Label>
@@ -136,26 +153,6 @@ export default function ReferPatient() {
               </RadioGroup>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="notes">Notes (optional)</Label>
-              <Textarea id="notes" rows={2} {...form.register("notes")} data-testid="textarea-notes" />
-            </div>
-            <div className="rounded-lg border border-border bg-muted/40 p-3 flex gap-2.5" data-testid="note-cbct-info">
-              <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-              <div className="text-xs text-muted-foreground leading-relaxed">
-                <p>
-                  <span className="font-medium text-foreground">A CBCT (Cone Beam CT) scan</span> gives Dr. Perko a much
-                  clearer 3D view than a standard panoramic X-ray. If it would help this case, have it done at an
-                  imaging/radiology center in your own country — there's no need to send the patient to us for it.
-                </p>
-                <p className="mt-1.5">
-                  <span className="font-medium text-foreground">Sending the file:</span> under 50MB, attach it directly
-                  below. Larger files (e.g. from a USB or a Google Drive/Dropbox link) don't hold up this referral —
-                  once you submit it, we'll open a dedicated chat with you where you can paste the link whenever it's ready.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
               <Label htmlFor="attachment">Attachment (optional)</Label>
               <label
                 htmlFor="attachment"
@@ -172,6 +169,22 @@ export default function ReferPatient() {
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 data-testid="input-attachment"
               />
+              <p className="text-xs text-muted-foreground">Max. 50MB. For larger files send a link in the patient chat.</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 flex gap-2.5" data-testid="note-cbct-info">
+              <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <p>
+                  <span className="font-medium text-foreground">A CBCT (Cone Beam CT) scan</span> gives Dr. Perko a much
+                  clearer 3D view than a standard panoramic X-ray. If it would help this case, have it done at an
+                  imaging/radiology center in your own country — there's no need to send the patient to us for it.
+                </p>
+                <p className="mt-1.5">
+                  <span className="font-medium text-foreground">Sending the file:</span> under 50MB, attach it directly
+                  above. Larger files (e.g. from a USB or a Google Drive/Dropbox link) don't hold up this referral —
+                  once you submit it, we'll open a dedicated chat with you where you can paste the link whenever it's ready.
+                </p>
+              </div>
             </div>
 
             <div className="flex items-start gap-2.5" data-testid="row-referral-attestation">
@@ -192,11 +205,31 @@ export default function ReferPatient() {
               </Label>
             </div>
 
-            <Button type="submit" disabled={mutation.isPending || uploading || !attested} data-testid="button-submit-referral">
-              {(mutation.isPending || uploading) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {submitted ? <CheckCircle2 className="h-4 w-4 mr-2" /> : null}
-              Send referral
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                onClick={() => { setOpenChatAfterSubmit(false); form.handleSubmit((v) => mutation.mutate(v))(); }}
+                disabled={mutation.isPending || uploading || !attested}
+                className="flex-1"
+                data-testid="button-submit-referral"
+              >
+                {(mutation.isPending || uploading) && !openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {submitted ? <CheckCircle2 className="h-4 w-4 mr-2" /> : null}
+                Send referral
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => { setOpenChatAfterSubmit(true); form.handleSubmit((v) => mutation.mutate(v))(); }}
+                disabled={mutation.isPending || uploading || !mandatoryFieldsFilled}
+                className="flex-1"
+                data-testid="button-submit-referral-open-chat"
+              >
+                {(mutation.isPending || uploading) && openChatAfterSubmit && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Send referral &amp; open chat
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

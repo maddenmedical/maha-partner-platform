@@ -8,8 +8,9 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
 import { storage, sqliteDb, DB_FILE_PATH } from "./storage";
-import { uploadToDrive, streamFromDrive, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
+import { uploadToDrive, streamFromDrive, streamFromDriveRanged, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { convertDriveAudioToMp3, cleanupTempFiles } from "./audioConvert";
+import { normalizeVideoForUpload } from "./videoConvert";
 import { backupDatabaseToDrive } from "./backup";
 import { getLastBackupStatus, setLastBackupStatus } from "./backupScheduler";
 import {
@@ -508,11 +509,32 @@ export async function registerRoutes(
     if (!allowed) return res.status(403).json({ message: "Forbidden" });
 
     try {
-      const stream = await streamFromDrive(rec.driveFileId);
-      res.setHeader("Content-Type", rec.mimeType);
+      // Video/audio elements (iOS Safari in particular) probe the resource
+      // with a Range header and refuse to play unless the server honors it
+      // with a real 206 Partial Content response -- this, not the file
+      // format, is why videos previously wouldn't open/play on some phones.
+      const { stream, status, headers } = await streamFromDriveRanged(rec.driveFileId, req.headers.range);
+      res.status(status === 206 ? 206 : 200);
+      res.setHeader("Accept-Ranges", "bytes");
+      // .mov files uploaded from an iPhone are stored with their real
+      // "video/quicktime" mime type, but Chrome/Firefox/Edge refuse to play
+      // that container label even though the underlying H.264/AAC codec is
+      // one they support -- only Safari recognizes "video/quicktime" as
+      // playable. Relabeling the served Content-Type as video/mp4 (same
+      // codec family, ISO base media container lineage) lets non-Safari
+      // browsers play it too, without needing a transcoding pipeline.
+      const servedMimeType = rec.mimeType === "video/quicktime" ? "video/mp4" : rec.mimeType;
+      res.setHeader("Content-Type", servedMimeType);
+      if (headers["content-range"]) res.setHeader("Content-Range", headers["content-range"]);
+      if (headers["content-length"]) res.setHeader("Content-Length", headers["content-length"]);
+      else if (rec.size) res.setHeader("Content-Length", String(rec.size));
+      // "attachment" forces a save dialog (used by the explicit download
+      // button); everything else stays "inline" so it plays/previews within
+      // the chat bubble as before.
+      const disposition = req.query.download === "1" ? "attachment" : "inline";
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${rec.filename.replace(/"/g, "")}"`,
+        `${disposition}; filename="${rec.filename.replace(/"/g, "")}"`,
       );
       stream.on("error", () => {
         if (!res.headersSent) res.status(502).json({ message: "Failed to fetch file" });
@@ -1108,12 +1130,13 @@ export async function registerRoutes(
 
     try {
       if (req.file) {
-        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
         await storage.createUploadedFile({
           driveFileId,
-          filename: req.file.originalname,
-          mimeType: req.file.mimetype,
-          size: req.file.size,
+          filename: normalized.filename,
+          mimeType: normalized.mimeType,
+          size: normalized.buffer.length,
           category: "product",
           ownerId: null,
           uploadedAt: Date.now(),
@@ -1267,6 +1290,10 @@ export async function registerRoutes(
         hasAccess: courseHasAccess(req.user!.role, c, completed, granted),
       };
     });
+    // Symposium courses are the most time-sensitive/promoted content, so they're
+    // shown first regardless of insertion order. Stable sort keeps everything
+    // else in its existing relative order.
+    result.sort((a, b) => Number(!/symposium/i.test(a.name)) - Number(!/symposium/i.test(b.name)));
     res.json(result);
   });
 
@@ -2331,19 +2358,20 @@ export async function registerRoutes(
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
       await storage.createUploadedFile({
         driveFileId,
-        filename: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        filename: normalized.filename,
+        mimeType: normalized.mimeType,
+        size: normalized.buffer.length,
         category: "chat",
         ownerId: req.user!.id,
         threadId,
         uploadedAt: Date.now(),
       });
-      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
@@ -2526,19 +2554,20 @@ export async function registerRoutes(
     if (!thread) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
       await storage.createUploadedFile({
         driveFileId,
-        filename: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        filename: normalized.filename,
+        mimeType: normalized.mimeType,
+        size: normalized.buffer.length,
         category: "chat",
         ownerId: req.user!.id,
         threadId,
         uploadedAt: Date.now(),
       });
-      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
@@ -2734,18 +2763,19 @@ export async function registerRoutes(
   app.post("/api/admin/staff-chat/upload", requireAuth, requireRole("admin"), upload.single("file"), async (req: AuthedRequest, res) => {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
       await storage.createUploadedFile({
         driveFileId,
-        filename: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        filename: normalized.filename,
+        mimeType: normalized.mimeType,
+        size: normalized.buffer.length,
         category: "chat",
         ownerId: req.user!.id,
         uploadedAt: Date.now(),
       });
-      const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
+      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
@@ -3172,18 +3202,19 @@ export async function registerRoutes(
       if (!topic) return res.status(404).json({ message: "Not found" });
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
       try {
-        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
         await storage.createUploadedFile({
           driveFileId,
-          filename: req.file.originalname,
-          mimeType: req.file.mimetype,
-          size: req.file.size,
+          filename: normalized.filename,
+          mimeType: normalized.mimeType,
+          size: normalized.buffer.length,
           category: "community",
           ownerId: req.user!.id,
           uploadedAt: Date.now(),
         });
-        const type = req.file.mimetype.startsWith("image/") ? "image" : req.file.mimetype.startsWith("video/") ? "video" : req.file.mimetype.startsWith("audio/") ? "audio" : "document";
-        res.json({ url: `/api/files/${driveFileId}`, name: req.file.originalname, mimeType: req.file.mimetype, type });
+        const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
+        res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
       } catch {
         res.status(502).json({ message: "File storage upload failed" });
       }
@@ -3257,12 +3288,13 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Please upload a video file" });
       }
       try {
-        const { driveFileId } = await uploadToDrive(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
         await storage.createUploadedFile({
           driveFileId,
-          filename: req.file.originalname,
-          mimeType: req.file.mimetype,
-          size: req.file.size,
+          filename: normalized.filename,
+          mimeType: normalized.mimeType,
+          size: normalized.buffer.length,
           category: "community",
           ownerId: req.user!.id,
           uploadedAt: Date.now(),

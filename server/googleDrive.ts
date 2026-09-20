@@ -63,6 +63,36 @@ export async function streamFromDrive(
   return res.data as unknown as NodeJS.ReadableStream;
 }
 
+// Range-aware variant used for video/audio playback. Browsers' <video>/<audio>
+// elements probe with a Range request and expect a matching 206 Partial
+// Content response -- without that they often refuse to play at all, which is
+// the actual cause of "videos won't open or play", not the file format.
+// Forwards the client's Range header straight through to Drive's media
+// endpoint and mirrors back whatever status/headers Drive returns.
+export async function streamFromDriveRanged(
+  driveFileId: string,
+  range?: string,
+): Promise<{ stream: NodeJS.ReadableStream; status: number; headers: Record<string, string> }> {
+  const drive = getDrive();
+  const res = await drive.files.get(
+    { fileId: driveFileId, alt: "media", supportsAllDrives: true },
+    {
+      responseType: "stream",
+      headers: range ? { Range: range } : undefined,
+    },
+  );
+  const rawHeaders = (res.headers || {}) as Record<string, unknown>;
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawHeaders)) {
+    if (typeof value === "string") headers[key.toLowerCase()] = value;
+  }
+  return {
+    stream: res.data as unknown as NodeJS.ReadableStream,
+    status: res.status,
+    headers,
+  };
+}
+
 // Used by tests/verification to confirm a file actually landed in the folder.
 // Defaults to the main uploads folder, but accepts an explicit folder id so the
 // backup routine can list/prune the dedicated "App Backups" subfolder.

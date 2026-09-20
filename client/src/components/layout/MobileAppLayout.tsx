@@ -134,7 +134,10 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
           "fixed bottom-0 left-0 right-0 z-10 border-t border-border bg-card md:hidden",
           tabs.length > 5 ? "flex overflow-x-auto no-scrollbar" : "grid"
         )}
-        style={tabs.length > 5 ? undefined : { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+        style={{
+          paddingBottom: "env(safe-area-inset-bottom)",
+          ...(tabs.length > 5 ? {} : { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }),
+        }}
         aria-label="Primary"
       >
         {tabs.map((tab) => {

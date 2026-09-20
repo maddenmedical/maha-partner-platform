@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { AlertCircle, Loader2, ScanFace } from "lucide-react";
-import { browserSupportsWebAuthn, loginWithPasskey } from "@/lib/webauthn";
+import { browserSupportsWebAuthn, loginWithPasskey, platformAuthLabel } from "@/lib/webauthn";
 // Client-provided brand photography: a MAHA clinician greeting a partner-clinic
 // patient. Chosen over the wide stats/lecture image because its two upright
 // figures read cleanly in the tall login side panel without cropping heads.
@@ -52,7 +52,7 @@ export default function Login() {
       // The browser throws its own error (e.g. "NotAllowedError") when the
       // user cancels the biometric prompt — don't show that as a scary error.
       if (err?.name !== "NotAllowedError") {
-        setError(err.message || "Face ID / Fingerprint sign-in failed");
+        setError(err.message || "Passkey sign-in failed");
       }
     } finally {
       setPasskeySubmitting(false);
@@ -195,7 +195,7 @@ export default function Login() {
                 ) : (
                   <ScanFace className="h-4 w-4 mr-2" />
                 )}
-                Sign in with Face ID / Fingerprint
+                Sign in with {platformAuthLabel()}
               </Button>
             </>
           )}
