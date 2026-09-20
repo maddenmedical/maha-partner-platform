@@ -60,13 +60,34 @@ export async function normalizeVideoForUpload(
   }
 }
 
-function runFfmpeg(args: string[]): Promise<void> {
+// `timeoutMs` guards against a hung/pathologically slow ffmpeg process on a
+// CPU-constrained host (e.g. Render's starter plan) -- without this, a stuck
+// process leaves the caller's promise unresolved forever, which is exactly
+// what leaves a chat message stuck at "Processing video..." indefinitely.
+function runFfmpeg(args: string[], timeoutMs = 180_000): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const proc = spawn(ffmpegInstaller.path, args);
     let stderr = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill("SIGKILL");
+      reject(new Error(`ffmpeg timed out after ${timeoutMs}ms (args: ${args.join(" ")})`));
+    }, timeoutMs);
+
     proc.stderr.on("data", (d) => { stderr += d.toString(); });
-    proc.on("error", reject);
+    proc.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
     proc.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-500)}`));
     });
@@ -94,6 +115,9 @@ export async function reencodeVideoForUpload(
   const outputPath = path.join(tmpDir, `vid-out-${token}.mp4`);
   const thumbPath = path.join(tmpDir, `vid-thumb-${token}.jpg`);
 
+  const startedAt = Date.now();
+  console.log(`[videoConvert] re-encode start: ${originalname} (${buffer.length} bytes)`);
+
   try {
     fs.writeFileSync(inputPath, buffer);
 
@@ -107,7 +131,11 @@ export async function reencodeVideoForUpload(
       // Keeps huge phone videos from ballooning re-encode time on a small
       // CPU -- 720p is plenty for chat playback and still looks sharp.
       "-vf", "scale='min(1280,iw)':-2",
-      "-preset", "veryfast",
+      // "ultrafast" trades a bit of compression efficiency for a large cut
+      // in CPU time -- important on Render's starter-plan 0.5 vCPU, where
+      // "veryfast" on a real phone-length video could run long enough to
+      // hit the ffmpeg timeout above.
+      "-preset", "ultrafast",
       "-crf", "26",
       "-c:a", "aac",
       "-b:a", "128k",
@@ -127,15 +155,20 @@ export async function reencodeVideoForUpload(
         "-vframes", "1",
         "-vf", "scale=320:-2",
         thumbPath,
-      ]);
+      ], 30_000);
       const thumbBuffer = fs.readFileSync(thumbPath);
       thumbnailDataUrl = `data:image/jpeg;base64,${thumbBuffer.toString("base64")}`;
-    } catch {
+    } catch (thumbErr) {
       // Thumbnail is a nice-to-have -- a missing poster still leaves a
       // playable video, so don't fail the whole upload over it.
+      console.error(`[videoConvert] thumbnail generation failed for ${originalname}:`, thumbErr);
     }
 
+    console.log(`[videoConvert] re-encode done: ${originalname} in ${Date.now() - startedAt}ms, output ${outBuffer.length} bytes`);
     return { buffer: outBuffer, filename: newName, mimeType: "video/mp4", thumbnailDataUrl };
+  } catch (err) {
+    console.error(`[videoConvert] re-encode FAILED: ${originalname} after ${Date.now() - startedAt}ms:`, err);
+    throw err;
   } finally {
     fs.unlink(inputPath, () => { /* best-effort cleanup */ });
     fs.unlink(outputPath, () => { /* best-effort cleanup */ });

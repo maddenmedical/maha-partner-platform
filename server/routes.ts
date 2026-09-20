@@ -251,6 +251,7 @@ async function handleChatUpload(
   });
 
   // Not awaited -- runs after the response is sent.
+  console.log(`[chatUpload] queued re-encode, driveFileId=${driveFileId}, size=${file.buffer.length}`);
   reencodeVideoForUpload(file.buffer, file.originalname)
     .then(async (result) => {
       await replaceDriveFileContent(driveFileId, result.buffer, result.mimeType);
@@ -260,13 +261,17 @@ async function handleChatUpload(
         size: result.buffer.length,
         thumbnailDataUrl: result.thumbnailDataUrl,
       });
+      console.log(`[chatUpload] processing complete, driveFileId=${driveFileId}`);
     })
-    .catch(async () => {
+    .catch(async (err) => {
       // Re-encode failed -- leave the original upload in place (the
       // serving route's video/quicktime relabel fallback still covers some
       // playback cases) and just clear "processing" so it doesn't spin
       // forever in the UI.
-      await storage.updateUploadedFileProcessing(driveFileId, { status: "failed" }).catch(() => {});
+      console.error(`[chatUpload] processing FAILED, driveFileId=${driveFileId}:`, err);
+      await storage.updateUploadedFileProcessing(driveFileId, { status: "failed" }).catch((updateErr) => {
+        console.error(`[chatUpload] failed to mark driveFileId=${driveFileId} as failed:`, updateErr);
+      });
     });
 
   return { url: `/api/files/${driveFileId}`, name: file.originalname, mimeType: file.mimetype, type: "video", processing: true };
