@@ -31,15 +31,19 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
     activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [location]);
 
-  // Unread marker: a small dot on the merged Chat tab when either the
-  // private Inbox (MAHA team) or the public Community has something the
-  // partner/student hasn't opened yet. Shares the same query/cache the
-  // Chat and Community pages themselves use, so this adds no extra load.
+  // Unread marker: a numeric badge on the merged Chat tab combining the
+  // private Inbox (MAHA team) and the public Community. `/api/chat/threads`
+  // only exposes a boolean unread flag per thread, so we count how many
+  // threads have unread admin messages and add the Community unread count.
+  // Shares the same query/cache the Chat and Community pages themselves
+  // use, so this adds no extra load. Display is capped at "9+" to keep the
+  // badge small on the bottom-nav icon.
   const { data: chatThreads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/chat/threads"], refetchInterval: 15000 });
-  const hasUnreadChat = !!chatThreads?.some((t) => t.unread);
+  const unreadChatCount = chatThreads?.filter((t) => t.unread).length ?? 0;
   const { data: communityUnread } = useQuery<{ count: number }>({ queryKey: ["/api/community/unread-count"], refetchInterval: 15000 });
-  const hasUnreadCommunity = !!communityUnread?.count;
-  const hasUnreadChatTab = hasUnreadChat || hasUnreadCommunity;
+  const unreadCommunityCount = communityUnread?.count ?? 0;
+  const unreadChatTabCount = unreadChatCount + unreadCommunityCount;
+  const unreadChatTabLabel = unreadChatTabCount > 9 ? "9+" : String(unreadChatTabCount);
 
   // Track an in-app navigation stack (not just sub-pages) so the back arrow
   // shows whenever there's a real "previous page" to return to — including
@@ -156,8 +160,14 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
             >
               <span className="relative">
                 <tab.icon className="h-5 w-5" />
-                {tab.href === "/chat" && hasUnreadChatTab && (
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab" />
+                {tab.href === "/chat" && unreadChatTabCount > 0 && (
+                  <span
+                    className="absolute -top-1.5 -right-2 min-w-[1rem] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 font-semibold text-center"
+                    aria-label={`${unreadChatTabCount} unread`}
+                    data-testid="indicator-unread-chat-tab"
+                  >
+                    {unreadChatTabLabel}
+                  </span>
                 )}
               </span>
               <span>{tab.label}</span>
@@ -182,8 +192,14 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
               >
                 <span className="relative">
                   <tab.icon className="h-5 w-5" />
-                  {tab.href === "/chat" && hasUnreadChatTab && (
-                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" data-testid="indicator-unread-chat-tab-desktop" />
+                  {tab.href === "/chat" && unreadChatTabCount > 0 && (
+                    <span
+                      className="absolute -top-1.5 -right-2 min-w-[1rem] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 font-semibold text-center"
+                      aria-label={`${unreadChatTabCount} unread`}
+                      data-testid="indicator-unread-chat-tab-desktop"
+                    >
+                      {unreadChatTabLabel}
+                    </span>
                   )}
                 </span>
                 <span>{tab.label}</span>
