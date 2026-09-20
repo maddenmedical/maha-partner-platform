@@ -103,10 +103,28 @@ export async function streamFromDriveRanged(
       headers: range ? { Range: range } : undefined,
     },
   );
-  const rawHeaders = (res.headers || {}) as Record<string, unknown>;
+  // NOTE: with the current googleapis version, `res.headers` is a WHATWG
+  // Fetch `Headers` instance, not a plain object -- `Object.entries()` /
+  // `Object.keys()` silently return nothing for it (its data lives in an
+  // internal slot, not as enumerable own properties). That previously made
+  // this function always return an empty `headers` object, so the route
+  // below could never forward a real `Content-Range` and instead sent the
+  // *full* file size as `Content-Length` even for a small Range request --
+  // a 206 response like that is malformed HTTP, which some engines (esp.
+  // WebKit/iOS) reject as a broken/corrupt resource, even though the
+  // underlying video file and Drive's own response were perfectly fine.
+  // Iterate the Headers instance itself instead of trying to enumerate it.
   const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(rawHeaders)) {
-    if (typeof value === "string") headers[key.toLowerCase()] = value;
+  const rawHeaders: unknown = res.headers;
+  if (rawHeaders && typeof (rawHeaders as Headers).forEach === "function") {
+    (rawHeaders as Headers).forEach((value, key) => {
+      headers[key.toLowerCase()] = value;
+    });
+  } else if (rawHeaders && typeof rawHeaders === "object") {
+    // Fallback for older googleapis versions that return a plain object.
+    for (const [key, value] of Object.entries(rawHeaders as Record<string, unknown>)) {
+      if (typeof value === "string") headers[key.toLowerCase()] = value;
+    }
   }
   return {
     stream: res.data as unknown as NodeJS.ReadableStream,
