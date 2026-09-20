@@ -105,7 +105,29 @@ function backfillNullDefault(sqlite: Database.Database, tableName: string, col: 
   }
 }
 
+// One-off, narrowly-targeted, idempotent fix for a single stuck upload row
+// (chat thread 22, message 50) whose background re-encode job hung under
+// the pre-timeout version of reencodeVideoForUpload (see videoConvert.ts --
+// runFfmpeg now has a 3-minute timeout that prevents this going forward).
+// WHERE-clauses on both the exact driveFileId AND status="processing" make
+// this safe to leave in permanently: it does nothing once the row is fixed,
+// and does nothing on any database that never had this row stuck.
+function fixStuckUpload50(sqlite: Database.Database) {
+  const STUCK_DRIVE_FILE_ID = "1wfq7tjgFrOpworITPWZeqlDRj2fwPBHe";
+  try {
+    const result = sqlite
+      .prepare(`UPDATE "uploaded_files" SET "status" = 'failed' WHERE "drive_file_id" = ? AND "status" = 'processing'`)
+      .run(STUCK_DRIVE_FILE_ID);
+    if (result.changes > 0) {
+      console.log(`[auto-migrate] marked stuck upload ${STUCK_DRIVE_FILE_ID} as failed (${result.changes} row)`);
+    }
+  } catch (e: any) {
+    console.error(`[auto-migrate] FAILED to fix stuck upload ${STUCK_DRIVE_FILE_ID}:`, e?.message || e);
+  }
+}
+
 export function autoMigrate(sqlite: Database.Database) {
+  fixStuckUpload50(sqlite);
   const existingTables = new Set(
     (sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
       (r) => r.name
