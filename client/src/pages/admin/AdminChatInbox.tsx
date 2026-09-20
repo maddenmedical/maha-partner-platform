@@ -739,7 +739,7 @@ interface StaffDmThreadRow {
 // shared ChatMessageBubble (typed against the partner/student ChatMessage
 // shape) renders them unmodified. `threadId` is never read by the bubble
 // itself, only carried on the type, so a sentinel is safe.
-function toStaffBubbleMessage(m: { id: number; senderId: number; senderName: string; body: string; attachmentUrl: string | null; attachmentType: string | null; attachmentName: string | null; replyToMessageId: number | null; createdAt: number; deletedAt: number | null; deletedByName: string | null; editedAt?: number | null }, threadId: number): ChatMessageWithMeta {
+function toStaffBubbleMessage(m: { id: number; senderId: number; senderName: string; body: string; attachmentUrl: string | null; attachmentType: string | null; attachmentName: string | null; attachmentThumbnail?: string | null; attachmentProcessing?: boolean; replyToMessageId: number | null; createdAt: number; deletedAt: number | null; deletedByName: string | null; editedAt?: number | null }, threadId: number): ChatMessageWithMeta {
   return { ...m, threadId, senderRole: "admin" } as ChatMessageWithMeta;
 }
 

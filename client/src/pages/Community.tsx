@@ -31,7 +31,9 @@ import type { CommunityTopic, CommunityMessage } from "@shared/schema";
 // shape. communityMessages and chatMessages are identical except the
 // community table calls its parent-thread column "topicId" instead of
 // "threadId" -- everything else lines up field-for-field.
-function toBubbleMessage(m: CommunityMessage): ChatMessageWithMeta {
+type EnrichedCommunityMessage = CommunityMessage & { attachmentThumbnail?: string | null; attachmentProcessing?: boolean };
+
+function toBubbleMessage(m: EnrichedCommunityMessage): ChatMessageWithMeta {
   return { ...m, threadId: m.topicId };
 }
 
@@ -366,7 +368,7 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
   const [search, setSearch] = useState("");
 
   const messagesKey = ["/api/community/topics", topic.id, "messages"];
-  const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: CommunityMessage[] }>({
+  const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: EnrichedCommunityMessage[] }>({
     queryKey: messagesKey,
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/community/topics/${topic.id}/messages`);

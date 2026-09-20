@@ -42,7 +42,9 @@ interface TopicRow extends CommunityTopic {
 
 // Same field-name adapter used on the member-facing Community page -- see
 // that file's comment for why "topicId" needs to become "threadId" here.
-function toBubbleMessage(m: CommunityMessage): ChatMessageWithMeta {
+type EnrichedCommunityMessage = CommunityMessage & { attachmentThumbnail?: string | null; attachmentProcessing?: boolean };
+
+function toBubbleMessage(m: EnrichedCommunityMessage): ChatMessageWithMeta {
   return { ...m, threadId: m.topicId };
 }
 
@@ -426,7 +428,7 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
   const [search, setSearch] = useState("");
 
   const messagesKey = ["/api/community/topics", topic.id, "messages"];
-  const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: CommunityMessage[] }>({
+  const { data, isLoading } = useQuery<{ topic: CommunityTopic; messages: EnrichedCommunityMessage[] }>({
     queryKey: messagesKey,
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/community/topics/${topic.id}/messages`);

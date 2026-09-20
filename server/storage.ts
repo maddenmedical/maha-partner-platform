@@ -358,7 +358,7 @@ export interface IStorage {
   // senderTierKey/senderTierLabel: the sender's current MAHA Standing tier
   // (see shared/schema.ts) -- null for admin senders, since the reward
   // program is partner/student-facing only. Never includes raw points.
-  listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null; senderTierKey: string | null; senderTierLabel: string | null })[]>;
+  listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null; senderTierKey: string | null; senderTierLabel: string | null; attachmentThumbnail: string | null; attachmentProcessing: boolean })[]>;
   getCommunityMessage(id: number): Promise<CommunityMessage | undefined>;
   deleteCommunityMessage(id: number, deletedByName: string): Promise<CommunityMessage>;
   countCommunityMessagesForTopic(topicId: number): Promise<number>;
@@ -370,7 +370,7 @@ export interface IStorage {
   countUnreadCommunityTopicsForUser(userId: number): Promise<number>;
 
   // ---------- staff chat (admin-to-admin, internal only) ----------
-  listStaffRoomMessages(): Promise<StaffRoomMessage[]>;
+  listStaffRoomMessages(): Promise<(StaffRoomMessage & { attachmentThumbnail: string | null; attachmentProcessing: boolean })[]>;
   createStaffRoomMessage(m: { senderId: number; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<StaffRoomMessage>;
   getStaffRoomMessage(id: number): Promise<StaffRoomMessage | undefined>;
   editStaffRoomMessage(id: number, body: string): Promise<StaffRoomMessage>;
@@ -381,7 +381,7 @@ export interface IStorage {
   getOrCreateStaffDmThread(adminAId: number, adminBId: number): Promise<StaffDmThread>;
   listStaffDmThreadsForAdmin(adminId: number): Promise<StaffDmThread[]>;
   getStaffDmThread(id: number): Promise<StaffDmThread | undefined>;
-  listStaffDmMessages(threadId: number): Promise<StaffDmMessage[]>;
+  listStaffDmMessages(threadId: number): Promise<(StaffDmMessage & { attachmentThumbnail: string | null; attachmentProcessing: boolean })[]>;
   createStaffDmMessage(m: { threadId: number; senderId: number; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<StaffDmMessage>;
   getStaffDmMessage(id: number): Promise<StaffDmMessage | undefined>;
   editStaffDmMessage(id: number, body: string): Promise<StaffDmMessage>;
@@ -1522,7 +1522,7 @@ export class DatabaseStorage implements IStorage {
     for (const clinicId of clinicIds) {
       clinicPoints.set(clinicId, await this.getClinicAggregatePoints(clinicId));
     }
-    return rows.map((r) => {
+    const withTiers = rows.map((r) => {
       const { senderStandingPoints, senderClinicId, ...rest } = r;
       const effectivePoints = senderClinicId != null ? (clinicPoints.get(senderClinicId) ?? 0) : (senderStandingPoints ?? 0);
       // Reward program is partner/student-facing only -- admins never get a
@@ -1530,6 +1530,7 @@ export class DatabaseStorage implements IStorage {
       const tier = rest.senderRole === "admin" ? null : standingTierForPoints(effectivePoints);
       return { ...rest, senderTierKey: tier?.key ?? null, senderTierLabel: tier?.label ?? null };
     });
+    return this.enrichVideoAttachments(withTiers);
   }
   async getCommunityMessage(id: number) {
     return db.select().from(communityMessages).where(eq(communityMessages.id, id)).get();
@@ -1591,7 +1592,8 @@ export class DatabaseStorage implements IStorage {
 
   // ---------- staff chat (admin-to-admin, internal only) ----------
   async listStaffRoomMessages() {
-    return db.select().from(staffRoomMessages).orderBy(staffRoomMessages.createdAt).all();
+    const rows = db.select().from(staffRoomMessages).orderBy(staffRoomMessages.createdAt).all();
+    return this.enrichVideoAttachments(rows);
   }
   async createStaffRoomMessage(m: any) {
     return db.insert(staffRoomMessages).values({
@@ -1648,7 +1650,8 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(staffDmThreads).where(eq(staffDmThreads.id, id)).get();
   }
   async listStaffDmMessages(threadId: number) {
-    return db.select().from(staffDmMessages).where(eq(staffDmMessages.threadId, threadId)).orderBy(staffDmMessages.createdAt).all();
+    const rows = db.select().from(staffDmMessages).where(eq(staffDmMessages.threadId, threadId)).orderBy(staffDmMessages.createdAt).all();
+    return this.enrichVideoAttachments(rows);
   }
   async createStaffDmMessage(m: any) {
     return db.insert(staffDmMessages).values({

@@ -195,9 +195,12 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-// Chat file/photo/video upload -- shared by the partner/student and admin
-// chat endpoints (both write into the same chatMessages/uploadedFiles
-// tables via storage.listMessagesForThread's enrichment).
+// Chat file/photo/video upload -- shared by every chat-like surface:
+// partner/student chat, admin chat, staff room, staff DMs, and Community.
+// Each writes into its own messages table, but they all resolve attachment
+// state through the same uploadedFiles row (via storage.enrichVideoAttachments,
+// wired into each surface's list-messages function) and serve files through
+// the shared /api/files/:driveFileId proxy.
 //
 // Videos get "instant send": the raw file goes to Drive immediately (fast --
 // pure network I/O, no ffmpeg) so the sender's message can go out right
@@ -208,8 +211,9 @@ const upload = multer({
 // endpoint or client-side retry needed.
 async function handleChatUpload(
   file: Express.Multer.File,
-  threadId: number,
+  category: "chat" | "community",
   ownerId: number,
+  threadId?: number,
 ): Promise<{ url: string; name: string; mimeType: string; type: string; processing: boolean }> {
   const isVideo = file.mimetype.startsWith("video/");
 
@@ -221,7 +225,7 @@ async function handleChatUpload(
       filename: normalized.filename,
       mimeType: normalized.mimeType,
       size: normalized.buffer.length,
-      category: "chat",
+      category,
       ownerId,
       threadId,
       uploadedAt: Date.now(),
@@ -238,7 +242,7 @@ async function handleChatUpload(
     filename: file.originalname,
     mimeType: file.mimetype,
     size: file.buffer.length,
-    category: "chat",
+    category,
     ownerId,
     threadId,
     uploadedAt: Date.now(),
@@ -2449,7 +2453,7 @@ export async function registerRoutes(
     if (!thread || thread.userId !== req.user!.id) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const result = await handleChatUpload(req.file, threadId, req.user!.id);
+      const result = await handleChatUpload(req.file, "chat", req.user!.id, threadId);
       res.json(result);
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
@@ -2633,7 +2637,7 @@ export async function registerRoutes(
     if (!thread) return res.status(404).json({ message: "Not found" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const result = await handleChatUpload(req.file, threadId, req.user!.id);
+      const result = await handleChatUpload(req.file, "chat", req.user!.id, threadId);
       res.json(result);
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
@@ -2830,19 +2834,8 @@ export async function registerRoutes(
   app.post("/api/admin/staff-chat/upload", requireAuth, requireRole("admin"), upload.single("file"), async (req: AuthedRequest, res) => {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
-      const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
-      await storage.createUploadedFile({
-        driveFileId,
-        filename: normalized.filename,
-        mimeType: normalized.mimeType,
-        size: normalized.buffer.length,
-        category: "chat",
-        ownerId: req.user!.id,
-        uploadedAt: Date.now(),
-      });
-      const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
-      res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
+      const result = await handleChatUpload(req.file, "chat", req.user!.id);
+      res.json(result);
     } catch {
       res.status(502).json({ message: "File storage upload failed" });
     }
@@ -3269,19 +3262,8 @@ export async function registerRoutes(
       if (!topic) return res.status(404).json({ message: "Not found" });
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
       try {
-        const normalized = await normalizeVideoForUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
-        const { driveFileId } = await uploadToDrive(normalized.buffer, normalized.filename, normalized.mimeType);
-        await storage.createUploadedFile({
-          driveFileId,
-          filename: normalized.filename,
-          mimeType: normalized.mimeType,
-          size: normalized.buffer.length,
-          category: "community",
-          ownerId: req.user!.id,
-          uploadedAt: Date.now(),
-        });
-        const type = normalized.mimeType.startsWith("image/") ? "image" : normalized.mimeType.startsWith("video/") ? "video" : normalized.mimeType.startsWith("audio/") ? "audio" : "document";
-        res.json({ url: `/api/files/${driveFileId}`, name: normalized.filename, mimeType: normalized.mimeType, type });
+        const result = await handleChatUpload(req.file, "community", req.user!.id, topicId);
+        res.json(result);
       } catch {
         res.status(502).json({ message: "File storage upload failed" });
       }
