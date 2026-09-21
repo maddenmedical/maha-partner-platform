@@ -726,8 +726,13 @@ export const coursePurchases = sqliteTable("course_purchases", {
   stripeSessionId: text("stripe_session_id").unique(),
   status: text("status").notNull().default("pending"), // 'pending' | 'completed' | 'refunded'
   createdAt: integer("created_at").notNull(),
+  // Set when an admin has viewed this purchase in the admin console (via
+  // the dashboard's "New enrollments" card or the Videos > Purchases tab).
+  // Same pattern as referrals/orders adminSeenAt -- distinct from `status`,
+  // and drives the admin home dashboard's unseen-enrollments count.
+  adminSeenAt: integer("admin_seen_at"),
 });
-export const insertCoursePurchaseSchema = createInsertSchema(coursePurchases).omit({ id: true });
+export const insertCoursePurchaseSchema = createInsertSchema(coursePurchases).omit({ id: true, adminSeenAt: true });
 export type InsertCoursePurchase = z.infer<typeof insertCoursePurchaseSchema>;
 export type CoursePurchase = typeof coursePurchases.$inferSelect;
 

@@ -33,6 +33,7 @@ import Chat from "@/pages/Chat";
 import Community from "@/pages/Community";
 import Account from "@/pages/Account";
 
+import AdminHome from "@/pages/admin/AdminHome";
 import PendingApprovals from "@/pages/admin/PendingApprovals";
 import AdminReferrals from "@/pages/admin/AdminReferrals";
 import AdminOrders from "@/pages/admin/AdminOrders";
@@ -78,6 +79,7 @@ const studentTabs: TabItem[] = [
 ];
 
 const ADMIN_TITLES: Record<string, string> = {
+  "/admin/home": "Home",
   "/admin/approvals": "Pending Approvals",
   "/admin/referrals": "Referrals",
   "/admin/orders": "Orders",
@@ -152,6 +154,9 @@ function StudentApp() {
 function AdminApp() {
   return (
     <Switch>
+      <Route path="/admin/home">
+        <AdminLayout title={ADMIN_TITLES["/admin/home"]}><AdminHome /></AdminLayout>
+      </Route>
       <Route path="/admin/approvals">
         <AdminLayout title={ADMIN_TITLES["/admin/approvals"]}><PendingApprovals /></AdminLayout>
       </Route>
@@ -201,7 +206,7 @@ function AdminApp() {
         <AdminLayout title="Account"><Account /></AdminLayout>
       </Route>
       <Route path="/">
-        <Redirect to="/admin/approvals" />
+        <Redirect to="/admin/home" />
       </Route>
       <Route>
         <AdminLayout title="Not Found"><NotFound /></AdminLayout>

@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ShoppingCart, Truck, Globe } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, joinNonEmpty } from "@/lib/utils";
 import { format } from "date-fns";
 import { COUNTRIES, isEuCountry } from "@shared/schema";
 
@@ -51,9 +51,9 @@ export default function AdminOrders() {
                   <div>
                     <p className="text-sm font-medium flex items-center gap-2">
                       {o.status === "Requested" && <span className="h-2 w-2 rounded-full bg-primary shrink-0" data-testid={`indicator-unread-order-${o.id}`} />}
-                      Order #{o.id} · {o.partnerName}
+                      {joinNonEmpty([`Order #${o.id}`, o.partnerName])}
                     </p>
-                    <p className="text-xs text-muted-foreground">{o.partnerEmail} · {format(new Date(o.createdAt), "MMM d, yyyy")}</p>
+                    <p className="text-xs text-muted-foreground">{joinNonEmpty([o.partnerEmail, format(new Date(o.createdAt), "MMM d, yyyy")])}</p>
                   </div>
                   <Select value={o.status} onValueChange={(v) => mutation.mutate({ id: o.id, status: v })}>
                     <SelectTrigger className="w-36 h-8" data-testid={`select-order-status-${o.id}`}>

@@ -135,8 +135,8 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
 
   return (
     <div className="p-4 flex flex-col h-[calc(100dvh-8.5rem)] md:h-[calc(100dvh-9.5rem)] max-w-5xl mx-auto">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
+      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold" data-testid="text-chat-title">{label}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Start a new chat for each topic, and jump back into past conversations any time.

@@ -23,6 +23,15 @@ export function platformAuthLabel(): string {
   return "your device's screen lock (Face ID, Touch ID, fingerprint, or PIN)";
 }
 
+// Short label safe to inline into a single-line, non-wrapping button --
+// platformAuthLabel() above can run to 60+ characters on some devices
+// (notably the generic fallback), which was blowing buttons -- and with
+// them the whole flex layout around them -- wider than the viewport on
+// narrow phones. "Passkey" is universally understood and never long.
+export function platformAuthLabelShort(): string {
+  return "passkey";
+}
+
 // Registers a new passkey for the CURRENTLY authenticated user (requires an
 // existing session — used from account settings, never from the login
 // page).

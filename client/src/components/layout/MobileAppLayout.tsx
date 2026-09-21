@@ -101,7 +101,12 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
             <MahaLogo size={26} className="text-primary shrink-0" />
           )}
           <div className="min-w-0">
-            <p className="text-sm font-semibold leading-tight truncate">{title}</p>
+            {/* The brand name is fixed and short enough to always read cleanly
+                wrapped onto two lines -- never truncate it with an ellipsis,
+                which on narrow phones was clipping it mid-word. The name
+                below it stays single-line since partner/clinic names vary
+                a lot in length and a clean truncation reads better there. */}
+            <p className="text-sm font-semibold leading-tight line-clamp-2">{title}</p>
             <p className="text-xs text-muted-foreground leading-tight truncate" data-testid="text-current-user">
               {user?.name}
             </p>

@@ -205,6 +205,8 @@ export interface IStorage {
   getCompletedPurchase(userId: number, courseId: number): Promise<CoursePurchase | undefined>;
   listCompletedPurchasesForUser(userId: number): Promise<CoursePurchase[]>;
   listAllCoursePurchases(): Promise<CoursePurchase[]>;
+  countUnseenCompletedCoursePurchases(): Promise<number>;
+  markCoursePurchasesSeen(): Promise<void>;
 
   // modules
   listModules(): Promise<Module[]>;
@@ -888,6 +890,21 @@ export class DatabaseStorage implements IStorage {
   }
   async listAllCoursePurchases() {
     return db.select().from(coursePurchases).orderBy(desc(coursePurchases.createdAt)).all();
+  }
+  async countUnseenCompletedCoursePurchases() {
+    const rows = db.select().from(coursePurchases)
+      .where(and(eq(coursePurchases.status, "completed"), isNull(coursePurchases.adminSeenAt)))
+      .all();
+    return rows.length;
+  }
+  // Called right after the admin dashboard reports the unseen count above,
+  // so the NEXT dashboard load only shows enrollments completed since this
+  // visit -- same "seen on open" semantics as a notification inbox.
+  async markCoursePurchasesSeen() {
+    db.update(coursePurchases)
+      .set({ adminSeenAt: Date.now() })
+      .where(and(eq(coursePurchases.status, "completed"), isNull(coursePurchases.adminSeenAt)))
+      .run();
   }
 
   async listModules() {

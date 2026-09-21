@@ -246,14 +246,15 @@ export default function Videos() {
                           onClick={() => buyMutation.mutate(course.id)}
                           disabled={buyMutation.isPending}
                           data-testid={`button-buy-${course.id}`}
+                          className="h-auto whitespace-normal text-center py-2.5 leading-snug"
                         >
-                          {buyMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          {buyMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />}
                           Buy access — {priceLabel} — unlock all {course.lessonCount} lectures
                         </Button>
                         <div className="flex items-center gap-2">
                           <Ticket className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           <Input
-                            placeholder="Have a code? Enter it here"
+                            placeholder="Have a code?"
                             value={redeemCode[course.id] || ""}
                             onChange={(e) => setRedeemCode((prev) => ({ ...prev, [course.id]: e.target.value }))}
                             className="h-8 text-sm"

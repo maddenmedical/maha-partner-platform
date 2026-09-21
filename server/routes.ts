@@ -1872,6 +1872,52 @@ export async function registerRoutes(
     res.json(rows);
   });
 
+  // ---------- ADMIN: HOME DASHBOARD SUMMARY ----------
+  // Aggregates the "needs attention" count each admin nav item already
+  // tracks on its own (referrals/orders by status, chat/community by their
+  // existing unread logic) plus new course enrollments (its own
+  // adminSeenAt, since purchases have no status that stays "new" the way
+  // referrals/orders do) into one glanceable summary for the admin landing
+  // page. Intentionally reuses each existing signal rather than inventing a
+  // parallel "since last dashboard visit" timestamp, so a count here always
+  // matches what that section's own badge/list already shows.
+  app.get("/api/admin/dashboard-summary", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const [pendingUsers, referrals, orders, threads, communityUnreadCount, newEnrollments] = await Promise.all([
+      storage.listUsersByRoleStatus(undefined, "pending"),
+      storage.listAllReferrals(),
+      storage.listAllOrders(),
+      storage.listThreads(),
+      storage.countUnreadCommunityTopicsForUser(req.user!.id),
+      storage.countUnseenCompletedCoursePurchases(),
+    ]);
+
+    let unreadChatThreads = 0;
+    for (const t of threads) {
+      const messages = await storage.listMessagesForThread(t.id);
+      const last = messages[messages.length - 1];
+      if (last && last.senderRole !== "admin" && last.createdAt > (t.adminLastReadAt ?? 0)) {
+        unreadChatThreads++;
+      }
+    }
+
+    res.json({
+      pendingApprovals: pendingUsers.length,
+      newReferrals: referrals.filter((r) => r.status === "New").length,
+      requestedOrders: orders.filter((o) => o.status === "Requested").length,
+      unreadChatThreads,
+      communityUnread: communityUnreadCount,
+      newEnrollments,
+    });
+  });
+
+  // Marks all completed course purchases as seen -- called when the admin
+  // opens the dashboard's "New enrollments" card (or the Videos > Purchases
+  // tab), same "seen on open" behavior as chat/community elsewhere.
+  app.post("/api/admin/course-purchases/mark-seen", requireAuth, requireRole("admin"), async (_req, res) => {
+    await storage.markCoursePurchasesSeen();
+    res.json({ ok: true });
+  });
+
   app.patch("/api/admin/users/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
     const { status } = req.body;
     if (!["approved", "rejected", "pending"].includes(status)) {

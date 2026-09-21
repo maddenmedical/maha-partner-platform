@@ -21,7 +21,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Inbox, FileText, MessageSquare, MoreVertical, Archive, ArchiveRestore, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, joinNonEmpty } from "@/lib/utils";
 import { openAuthedFile } from "@/lib/fileAccess";
 import { setPendingThreadId } from "@/lib/chatNav";
 import { useLocation } from "wouter";
@@ -102,9 +102,9 @@ export default function AdminReferrals() {
     <div className="flex flex-col gap-4 max-w-5xl">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">All patient referrals submitted by partner clinics.</p>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Select value={scope} onValueChange={(v) => setScope(v as Scope)}>
-            <SelectTrigger className="w-40" data-testid="select-filter-scope">
+            <SelectTrigger className="w-36 sm:w-40" data-testid="select-filter-scope">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -114,7 +114,7 @@ export default function AdminReferrals() {
             </SelectContent>
           </Select>
           <Select value={filter} onValueChange={setFilter}>
-            <SelectTrigger className="w-40" data-testid="select-filter-status">
+            <SelectTrigger className="w-36 sm:w-40" data-testid="select-filter-status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -283,7 +283,7 @@ export default function AdminReferrals() {
               <div className="flex flex-col gap-3 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Partner</p>
-                  <p>{selected.partnerName} · {selected.partnerEmail} · {selected.partnerPhone}</p>
+                  <p>{joinNonEmpty([selected.partnerName, selected.partnerEmail, selected.partnerPhone])}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Patient contact</p>

@@ -773,7 +773,7 @@ export default function Account() {
                 data-testid="button-register-passkey"
               >
                 {registering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ScanFace className="h-4 w-4 mr-2" />}
-                Set up passkey ({platformAuthLabel()}) on this device
+                Set up passkey on this device
               </Button>
             </>
           )}

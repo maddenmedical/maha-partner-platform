@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { AlertCircle, Loader2, ScanFace } from "lucide-react";
-import { browserSupportsWebAuthn, loginWithPasskey, platformAuthLabel } from "@/lib/webauthn";
+import { browserSupportsWebAuthn, loginWithPasskey, platformAuthLabelShort } from "@/lib/webauthn";
 // Client-provided brand photography: a MAHA clinician greeting a partner-clinic
 // patient. Chosen over the wide stats/lecture image because its two upright
 // figures read cleanly in the tall login side panel without cropping heads.
@@ -87,7 +87,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-dvh flex bg-background relative overflow-y-auto">
+    <div className="min-h-dvh flex bg-background relative overflow-y-auto overflow-x-hidden">
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
         <InstallAppButton variant="full" />
         <button
@@ -127,8 +127,8 @@ export default function Login() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-lg md:max-w-xl lg:max-w-2xl xl:max-w-3xl shadow-lg">
+      <div className="flex-1 min-w-0 flex flex-col items-center justify-center px-4 py-12">
+      <Card className="w-full min-w-0 max-w-lg md:max-w-xl lg:max-w-2xl xl:max-w-3xl shadow-lg">
         <CardHeader className="flex flex-col items-center gap-3 lg:gap-4 pb-2 pt-8 lg:pt-10">
           <MahaWordmark width={280} />
           <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Platform — sign in to your account</p>
@@ -195,7 +195,7 @@ export default function Login() {
                 ) : (
                   <ScanFace className="h-4 w-4 mr-2" />
                 )}
-                Sign in with {platformAuthLabel()}
+                Sign in with {platformAuthLabelShort()}
               </Button>
             </>
           )}

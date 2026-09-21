@@ -217,7 +217,7 @@ export default function AdminVideos() {
                   <div className="flex-1">
                     <p className="text-base font-semibold">{c.name}</p>
                     {c.description && <p className="text-xs text-muted-foreground mt-1">{c.description}</p>}
-                    <div className="flex items-center gap-2 mt-2">
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
                       <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate">
                         {ACCESS_LABELS[c.accessType] || c.accessType}
                       </Badge>
@@ -290,7 +290,7 @@ export default function AdminVideos() {
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">Purchase history</h2>
         <Card>
-          <CardContent className="p-0">
+          <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-sm" data-testid="table-purchases">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">

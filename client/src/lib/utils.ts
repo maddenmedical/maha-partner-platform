@@ -47,3 +47,11 @@ export function shortenNameForFit(name: string, maxLen = 22): string {
   if (base.length <= maxLen) return base;
   return base.slice(0, maxLen).trimEnd() + "\u2026";
 }
+
+// Joins display fragments with a separator (default " \u00b7 "), skipping any
+// that are empty/null/undefined -- so a record missing one field (e.g. an
+// order whose partner account was since removed) never renders a stray lone
+// separator like "\u00b7 \u00b7" or a leading/trailing "\u00b7".
+export function joinNonEmpty(parts: Array<string | null | undefined>, sep = " \u00b7 "): string {
+  return parts.map((p) => p?.trim()).filter((p): p is string => !!p).join(sep);
+}

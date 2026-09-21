@@ -33,10 +33,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2,
+  Home, UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2,
 } from "lucide-react";
 
 const navItems = [
+  { href: "/admin/home", label: "Home", icon: Home, testId: "link-admin-home" },
   { href: "/admin/approvals", label: "Pending Approvals", icon: UserCheck, testId: "link-admin-approvals" },
   { href: "/admin/referrals", label: "Referrals", icon: Inbox, testId: "link-admin-referrals" },
   { href: "/admin/orders", label: "Orders", icon: ShoppingCart, testId: "link-admin-orders" },

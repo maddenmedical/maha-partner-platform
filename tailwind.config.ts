@@ -5,6 +5,15 @@ export default {
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      // Global readability nudge: bump the two smallest steps of the type
+      // scale slightly (xs 12->13px, sm 14->15px) so body copy and labels
+      // across the whole app read a bit more comfortably, without touching
+      // every individual `text-xs`/`text-sm` call site (500+ occurrences).
+      // Line-heights scale with them to keep the same relative leading.
+      fontSize: {
+        xs: ["0.8125rem", { lineHeight: "1.125rem" }],
+        sm: ["0.9375rem", { lineHeight: "1.375rem" }],
+      },
       borderRadius: {
         lg: ".5625rem", /* 9px */
         md: ".375rem", /* 6px */
