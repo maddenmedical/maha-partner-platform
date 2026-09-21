@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { LogOut, Settings, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useCanGoBack } from "@/hooks/use-can-go-back";
 import type { LucideIcon } from "lucide-react";
 
 export interface TabItem {
@@ -45,24 +46,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
   const unreadChatTabCount = unreadChatCount + unreadCommunityCount;
   const unreadChatTabLabel = unreadChatTabCount > 9 ? "9+" : String(unreadChatTabCount);
 
-  // Track an in-app navigation stack (not just sub-pages) so the back arrow
-  // shows whenever there's a real "previous page" to return to — including
-  // between tab pages (e.g. Refer -> Shop) — and hides only when the current
-  // page is the first one visited this session (nothing to go back to).
-  const [stack, setStack] = useState<string[]>([location]);
-  useEffect(() => {
-    setStack((prev) => {
-      const current = prev[prev.length - 1];
-      if (location === current) return prev;
-      const previous = prev[prev.length - 2];
-      if (previous !== undefined && previous === location) {
-        // Back navigation (browser back or our own button) — pop the stack.
-        return prev.slice(0, -1);
-      }
-      return [...prev, location];
-    });
-  }, [location]);
-  const canGoBack = stack.length > 1;
+  const canGoBack = useCanGoBack(location);
 
   return (
     <div className="h-dvh flex flex-col bg-background overflow-hidden">

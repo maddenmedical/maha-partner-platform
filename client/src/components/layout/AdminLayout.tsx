@@ -7,6 +7,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import type { Referral, Order, User } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { useCanGoBack } from "@/hooks/use-can-go-back";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
@@ -33,7 +34,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import {
-  Home, UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2,
+  Home, UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2, ArrowLeft,
 } from "lucide-react";
 
 const navItems = [
@@ -254,6 +255,8 @@ function AdminSidebar() {
 export function AdminLayout({ children, title }: { children: ReactNode; title: string }) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const [location] = useLocation();
+  const canGoBack = useCanGoBack(location);
   const style = { "--sidebar-width": "16rem" } as React.CSSProperties;
 
   return (
@@ -263,6 +266,17 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
             <div className="flex items-center gap-2 min-w-0">
+              {canGoBack && (
+                <button
+                  type="button"
+                  onClick={() => window.history.back()}
+                  aria-label="Go back"
+                  data-testid="button-admin-back"
+                  className="h-9 w-9 -ml-1 flex items-center justify-center rounded-md hover-elevate active-elevate-2 text-foreground shrink-0"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+              )}
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <h1 className="text-lg font-semibold truncate" data-testid="text-page-title">{title}</h1>
             </div>
