@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MessageSquare, Stethoscope, Search, Star, MoreVertical, Archive, ArchiveRestore, Trash2, Undo2, Users, Plus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, shortenNameForFit } from "@/lib/utils";
 import { consumePendingThreadId } from "@/lib/chatNav";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -981,7 +981,7 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
         onSend={(payload) => sendMutation.mutateAsync(payload)}
         sending={sendMutation.isPending}
         testIdPrefix="staff-chat"
-        placeholder={isDm ? `Message ${selection.otherAdminName}...` : "Message the team..."}
+        placeholder={isDm ? `Message ${shortenNameForFit(selection.otherAdminName)}...` : "Message the team..."}
         replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
         onCancelReply={() => setReplyingToId(null)}
       />
