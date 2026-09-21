@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, API_BASE } from "@/lib/queryClient";
 import { EmojiPicker } from "./EmojiPicker";
-import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, Stethoscope, MessageSquare, Plus, Reply } from "lucide-react";
+import { Send, Loader2, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, Stethoscope, MessageSquare, Plus, Reply, Smile } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { type MentionCandidate, findActiveMention, formatMentionToken, newChatMentionLabel } from "@/lib/chatMentions";
@@ -258,10 +258,10 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           Recording voice note... tap the mic again to stop.
         </p>
       )}
-      <div className="flex items-end gap-1 relative">
+      <div className="flex items-end gap-2 relative">
         {mention && (
           <div
-            className="absolute bottom-full left-24 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-card-border bg-popover shadow-md py-1 z-30"
+            className="absolute bottom-full left-11 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-card-border bg-popover shadow-md py-1 z-30"
             data-testid={`${testIdPrefix}-mention-list`}
           >
             {mentionResolving ? (
@@ -315,78 +315,118 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             type="button"
             variant="ghost"
             size="icon"
-            className="shrink-0"
+            className="shrink-0 h-11 w-11 rounded-full"
             disabled={busy}
             onClick={() => fileInputRef.current?.click()}
             data-testid={`button-${testIdPrefix}-attach`}
           >
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+            {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
           </Button>
         )}
-        <EmojiPicker onSelect={(e) => setBody((b) => b + e)} testId={`button-${testIdPrefix}-emoji`} />
-        {!disableAttachments && (
+        {/* WhatsApp-style pill: emoji trigger and the growing text field share
+            one rounded, bordered surface instead of each being its own boxy
+            control crammed against its neighbors. */}
+        <div className="flex flex-1 items-end gap-1 rounded-3xl border border-input bg-background pl-1.5 pr-2 min-h-11">
+          <EmojiPicker
+            onSelect={(e) => setBody((b) => b + e)}
+            testId={`button-${testIdPrefix}-emoji`}
+            trigger={
+              <Button type="button" variant="ghost" size="icon" className="shrink-0 h-9 w-9 rounded-full self-end mb-0.5" data-testid={`button-${testIdPrefix}-emoji`}>
+                <Smile className="h-5 w-5" />
+              </Button>
+            }
+          />
+          <Textarea
+            ref={textareaRef}
+            value={body}
+            disabled={mentionResolving}
+            onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            placeholder={placeholder ?? "Type a message..."}
+            rows={1}
+            className="resize-none min-h-9 py-2 text-base md:text-base border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 px-0"
+            onKeyDown={(e) => {
+              if (mentionResolving) {
+                e.preventDefault();
+                return;
+              }
+              if (mention && mentionMatches.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionActiveIndex((i) => (i + 1) % mentionMatches.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionActiveIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  selectMention(mentionMatches[mentionActiveIndex]);
+                  return;
+                }
+              }
+              if (e.key === "Escape" && mention) {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e as unknown as React.FormEvent);
+              }
+            }}
+            data-testid={`textarea-${testIdPrefix}-message`}
+          />
+        </div>
+        {/* Single circular action button that swaps roles like WhatsApp/Signal:
+            mic when the composer is empty, send once there's something to
+            send, stop while actively recording -- instead of two separate
+            small icon buttons always competing for the same cramped row. */}
+        {recording ? (
           <Button
             type="button"
-            variant={recording ? "destructive" : "ghost"}
+            variant="destructive"
             size="icon"
-            className="shrink-0"
+            className="shrink-0 h-11 w-11 rounded-full"
+            onClick={handleMicClick}
+            data-testid={`button-${testIdPrefix}-mic`}
+          >
+            <Square className="h-5 w-5" />
+          </Button>
+        ) : body.trim() || pendingAttachment ? (
+          <Button
+            type="submit"
+            size="icon"
+            className="shrink-0 h-11 w-11 rounded-full"
+            disabled={sending || uploading}
+            data-testid={`button-${testIdPrefix}-send`}
+          >
+            {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+          </Button>
+        ) : !disableAttachments ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            className="shrink-0 h-11 w-11 rounded-full"
             disabled={uploading || sending}
             onClick={handleMicClick}
             data-testid={`button-${testIdPrefix}-mic`}
           >
-            {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            <Mic className="h-5 w-5" />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            className="shrink-0 h-11 w-11 rounded-full"
+            disabled
+            data-testid={`button-${testIdPrefix}-send`}
+          >
+            <Send className="h-5 w-5" />
           </Button>
         )}
-        <Textarea
-          ref={textareaRef}
-          value={body}
-          disabled={mentionResolving}
-          onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
-          placeholder={placeholder ?? "Type a message... (@ to link another chat)"}
-          rows={1}
-          className="resize-none min-h-9 text-base md:text-base"
-          onKeyDown={(e) => {
-            if (mentionResolving) {
-              e.preventDefault();
-              return;
-            }
-            if (mention && mentionMatches.length > 0) {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setMentionActiveIndex((i) => (i + 1) % mentionMatches.length);
-                return;
-              }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setMentionActiveIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
-                return;
-              }
-              if (e.key === "Enter" || e.key === "Tab") {
-                e.preventDefault();
-                selectMention(mentionMatches[mentionActiveIndex]);
-                return;
-              }
-            }
-            if (e.key === "Escape" && mention) {
-              e.preventDefault();
-              setMention(null);
-              return;
-            }
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e as unknown as React.FormEvent);
-            }
-          }}
-          data-testid={`textarea-${testIdPrefix}-message`}
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={sending || uploading || (!body.trim() && !pendingAttachment)}
-          data-testid={`button-${testIdPrefix}-send`}
-        >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
       </div>
     </form>
   );
