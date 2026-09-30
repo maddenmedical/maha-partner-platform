@@ -178,17 +178,29 @@ export const insertClinicSchema = createInsertSchema(clinics).omit({
 export type InsertClinic = z.infer<typeof insertClinicSchema>;
 export type Clinic = typeof clinics.$inferSelect;
 
+// Administrative record operations. Metadata only, no copied clinical text.
+export const adminRecordAudit = sqliteTable("admin_record_audit", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actorId: integer("actor_id").notNull(),
+  actorName: text("actor_name").notNull(),
+  kind: text("kind").notNull(),
+  recordId: integer("record_id").notNull(),
+  action: text("action").notNull(),
+  fields: text("fields"),
+  createdAt: integer("created_at").notNull(),
+});
+
 // Public-facing registration schema (subset, with plain password)
 export const registerSchema = z.object({
   role: z.enum(["partner", "student"]),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: z.string().trim().min(1),
+  lastName: z.string().trim().min(1),
   prefix: z.string().optional(),
   suffix: z.string().optional(),
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(6),
-  phone: z.string().min(3),
-  username: z.string().min(3),
+  phone: z.string().trim().min(3),
+  username: z.string().trim().min(3),
   businessName: z.string().optional(),
   vatNumber: z.string().optional(),
   city: z.string().optional(),
@@ -209,7 +221,7 @@ export const registerSchema = z.object({
 export type RegisterInput = z.infer<typeof registerSchema>;
 
 export const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -223,7 +235,7 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 // Self-service "forgot password" flow -- request an emailed reset link, then
 // submit the token + new password from that link.
 export const forgotPasswordSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
 });
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 
@@ -241,8 +253,8 @@ export const updateProfileSchema = z.object({
   lastName: z.string().min(1).optional(),
   prefix: z.string().optional(),
   suffix: z.string().optional(),
-  email: z.string().email().optional(),
-  username: z.string().min(3).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  username: z.string().trim().min(3).optional(),
   phone: z.string().min(3).optional(),
   businessName: z.string().optional(),
   vatNumber: z.string().optional(),
@@ -493,12 +505,13 @@ export type InsertLegacyOrder = z.infer<typeof insertLegacyOrderSchema>;
 export type LegacyOrder = typeof legacyOrders.$inferSelect;
 
 export const cartItemSchema = z.object({
-  productId: z.number(),
-  quantity: z.number().min(1),
+  productId: z.number().int().positive(),
+  quantity: z.number().int().min(1).max(100000),
 });
 export const createOrderSchema = z.object({
-  items: z.array(cartItemSchema).min(1),
-  destinationCountry: z.string().length(2, "Select a destination country"),
+  items: z.array(cartItemSchema).min(1).max(100),
+  destinationCountry: z.string().trim().toUpperCase().length(2, "Select a destination country")
+    .refine(code => COUNTRIES.some(country => country.code === code), "Select a valid destination country"),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 

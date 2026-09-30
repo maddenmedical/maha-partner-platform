@@ -1,9 +1,32 @@
 import type { IStorage } from "./storage";
-import { sendEmail } from "./email";
+import { sendEmail, buildRegistrationEmailHtml } from "./email";
 
 // Guard against duplicate intervals (e.g. tsx hot reload in dev). Clearing any
 // existing interval before creating a new one keeps exactly one running.
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let running = false;
+
+// Retry a failed registration alert. A failed mail service must never lose
+// an applicant or falsely mark their notification as delivered.
+export async function retryRegistrationAlerts(storage: IStorage) {
+  const origin = process.env.APP_BASE_URL || "https://maha-partner-portal.pplx.app";
+  const api = `${origin}${process.env.APP_API_PATH_PREFIX ?? "/port/5001"}`;
+  const pending = await storage.listUsersByRoleStatus(undefined, "pending");
+  for (const user of pending.filter(user => user.approvalToken && !user.approvalEmailNotified && (user.role === "partner" || user.role === "student")).slice(0, 20)) {
+    const html = buildRegistrationEmailHtml({
+      fullName: user.name, role: user.role, email: user.email, phone: user.phone || "", username: user.username || "",
+      businessName: user.businessName, vatNumber: user.vatNumber, profession: user.profession,
+      homepageUrl: user.homepageUrl, city: user.city, address: user.address, country: user.country,
+      additionalInfo: user.additionalInfo,
+      degreeFileUrl: user.degreeFileUrl ? `${api}/api/admin/registration-document?token=${user.approvalToken}` : null,
+      approveUrl: `${api}/api/admin/registration-action?token=${user.approvalToken}&action=approve`,
+      declineUrl: `${api}/api/admin/registration-action?token=${user.approvalToken}&action=decline`,
+    });
+    const results = await sendEmail(["partner@maha.clinic"], `New ${user.role} registration: ${user.name}`, html);
+    if (results.some(result => result.ok)) await storage.setUserApprovalEmailNotified(user.id, true);
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+}
 
 const CHECK_INTERVAL_MS = 2 * 60_000; // every 2 minutes
 
@@ -46,7 +69,10 @@ export function startNotificationScheduler(storage: IStorage) {
   if (intervalHandle) clearInterval(intervalHandle);
 
   const run = async () => {
+    if (running) return;
+    running = true;
     try {
+      await retryRegistrationAlerts(storage);
       const adminEmails = await getAdminEmails(storage);
       const REFERRAL_RECIPIENTS = mergeRecipients(REFERRAL_BASE_RECIPIENTS, adminEmails);
       const ORDER_RECIPIENTS = mergeRecipients(ORDER_BASE_RECIPIENTS, adminEmails);
@@ -148,6 +174,8 @@ export function startNotificationScheduler(storage: IStorage) {
       }
     } catch (err) {
       console.error("[notification-scheduler] error:", err);
+    } finally {
+      running = false;
     }
   };
 

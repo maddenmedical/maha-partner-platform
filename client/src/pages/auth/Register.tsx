@@ -127,7 +127,7 @@ export default function Register() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>I am registering as</Label>
-              <RadioGroup value={role} onValueChange={(v) => setRole(v as "partner" | "student")} className="flex gap-4">
+              <RadioGroup value={role} onValueChange={(v) => setRole(v as "partner" | "student")} className="flex flex-wrap gap-4">
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="partner" id="role-partner" data-testid="radio-role-partner" />
                   <Label htmlFor="role-partner" className="font-normal">Clinic Partner</Label>

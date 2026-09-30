@@ -30,6 +30,7 @@ import {
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
+import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
@@ -536,6 +537,15 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  app.get("/api/health", (_req, res) => {
+    try {
+      sqliteDb.prepare("SELECT 1").get();
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ status: "ok" });
+    } catch {
+      res.status(503).json({ status: "unavailable" });
+    }
+  });
   // ---------- legacy local uploads (pre-Drive records only) ----------
   // New uploads go to Google Drive and are served via /api/files/:driveFileId.
   // This route is kept only so any pre-existing local-path records still resolve.
@@ -685,11 +695,14 @@ export async function registerRoutes(
     const data = parsed.data;
     const existing = await storage.getUserByEmail(data.email);
     if (existing) return res.status(400).json({ message: "An account with this email already exists" });
+    if (await storage.getUserByUsername(data.username)) return res.status(400).json({ message: "That username is already in use. Please choose another." });
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const fullName = [data.prefix, data.firstName, data.lastName, data.suffix].filter(Boolean).join(" ");
     const approvalToken = crypto.randomBytes(24).toString("hex");
-    const user = await storage.createUser({
+    let user;
+    try {
+      user = await storage.createRegistration({
       role: data.role,
       name: fullName,
       email: data.email,
@@ -713,7 +726,10 @@ export async function registerRoutes(
       additionalInfo: data.additionalInfo,
       legalAcceptedVersion: CURRENT_LEGAL_VERSION,
       legalAcceptedAt: Date.now(),
-    } as any);
+      } as any);
+    } catch (err: any) {
+      return res.status(err.status || 500).json({ message: err.status ? err.message : "Could not create your account. Please try again." });
+    }
 
     // Clinic status pooling: reuse the businessName they already entered as
     // the clinic-matching key. Exact normalized match auto-joins an existing
@@ -750,8 +766,8 @@ export async function registerRoutes(
         approveUrl: `${APP_BASE_URL}/api/admin/registration-action?token=${approvalToken}&action=approve`,
         declineUrl: `${APP_BASE_URL}/api/admin/registration-action?token=${approvalToken}&action=decline`,
       });
-      await sendEmail(["partner@maha.clinic"], `New ${data.role} registration: ${fullName}`, html);
-      await storage.setUserApprovalEmailNotified(user.id, true);
+      const results = await sendEmail(["partner@maha.clinic"], `New ${data.role} registration: ${fullName}`, html);
+      await storage.setUserApprovalEmailNotified(user.id, results.some(result => result.ok));
     } catch (err) {
       console.error("[register] failed to send approval email:", err);
     }
@@ -1078,38 +1094,22 @@ export async function registerRoutes(
     }
     const parsed = insertReferralSchema.safeParse({ ...rest, partnerId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const referral = await storage.createReferral({ ...parsed.data, createdAt: Date.now(), patientConsentAttestedAt: Date.now() });
+    if (linkThreadId !== undefined && (!Number.isSafeInteger(Number(linkThreadId)) || Number(linkThreadId) <= 0)) return res.status(400).json({ message: "Invalid chat" });
+    for (const value of [parsed.data.patientFirstName, parsed.data.patientLastName, parsed.data.patientContact, parsed.data.caseDescription]) {
+      if (!value.trim()) return res.status(400).json({ message: "Please complete the required patient and case details." });
+    }
+    let referral: Awaited<ReturnType<typeof storage.createReferralWithThread>>;
+    try {
+      referral = await storage.createReferralWithThread({ ...parsed.data, createdAt: Date.now(), patientConsentAttestedAt: Date.now() }, req.user!.role,
+        linkThreadId === undefined ? undefined : Number(linkThreadId));
+    } catch (err: any) {
+      return res.status(err.status || 500).json({ message: err.status ? err.message : "Could not save referral. Please try again." });
+    }
     // Logged as generic "app_activity" with no sourceId back to this
     // referral -- flat, one-time credit for using the feature, not tied to
     // referral outcome. See shared/schema.ts STANDING note for why.
     awardStanding(req.user!.id, "referral_submitted", "app_activity").catch(console.error);
-    const patientTopic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
-
-    let chatThreadId: number;
-    if (linkThreadId) {
-      const thread = await storage.getThread(Number(linkThreadId));
-      if (!thread || thread.userId !== req.user!.id) {
-        return res.status(403).json({ message: "You don't have access to that chat." });
-      }
-      if (thread.referralId) {
-        return res.status(400).json({ message: "That chat is already linked to a different referral." });
-      }
-      const updated = await storage.updateThread(thread.id, {
-        kind: "referral",
-        referralId: referral.id,
-        topic: patientTopic,
-        pendingReferralRequestedAt: null,
-        pendingReferralRequestedByRole: null,
-      });
-      chatThreadId = updated!.id;
-    } else {
-      const newThread = await storage.createThread(req.user!.id, req.user!.role, patientTopic, {
-        kind: "referral",
-        referralId: referral.id,
-      });
-      chatThreadId = newThread.id;
-    }
-    res.json({ ...referral, chatThreadId });
+    res.json(referral);
   });
 
   app.get("/api/referrals/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
@@ -1148,6 +1148,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/referrals/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
     const { status } = req.body;
+    if (!["New", "Contacted", "Scheduled", "Closed"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const updated = await storage.updateReferralStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
     res.json(updated);
@@ -1263,39 +1264,11 @@ export async function registerRoutes(
     const parsed = createOrderSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid order" });
 
-    // Compute total weight across cart items for the shipping estimate.
-    let totalWeightGrams = 0;
-    for (const item of parsed.data.items) {
-      const product = await storage.getProduct(item.productId);
-      if (!product) continue;
-      totalWeightGrams += (product.weightGrams || 0) * item.quantity;
+    try {
+      res.json(await storage.createOrderWithItems(req.user!.id, parsed.data));
+    } catch (err: any) {
+      res.status(err.status || 500).json({ message: err.status ? err.message : "Could not save order. Please try again." });
     }
-    const estimatedShippingCost = estimateShippingCostCents(totalWeightGrams, parsed.data.destinationCountry);
-
-    const order = await storage.createOrder({
-      partnerId: req.user!.id,
-      destinationCountry: parsed.data.destinationCountry.toUpperCase(),
-      estimatedShippingCost,
-      createdAt: Date.now(),
-    } as any);
-    for (const item of parsed.data.items) {
-      const product = await storage.getProduct(item.productId);
-      if (!product) continue;
-      const tiers = await storage.listTiersForProduct(item.productId);
-      let unitPrice = product.unitPrice;
-      for (const tier of tiers) {
-        if (item.quantity >= tier.minQty && (tier.maxQty == null || item.quantity <= tier.maxQty)) {
-          unitPrice = tier.pricePerUnit;
-        }
-      }
-      await storage.createOrderItem({
-        orderId: order.id,
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPriceAtOrder: unitPrice,
-      });
-    }
-    res.json(order);
   });
 
   app.get("/api/orders/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
@@ -1321,6 +1294,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/orders/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
     const { status } = req.body;
+    if (!["Requested", "Confirmed", "Fulfilled", "Cancelled"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const previous = await storage.getOrder(Number(req.params.id));
     const updated = await storage.updateOrderStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
@@ -1730,6 +1704,19 @@ export async function registerRoutes(
     res.json(withDetails);
   });
 
+  async function handleRecordControl(req: AuthedRequest, res: Response, kind: AdminRecordKind, method: "get" | "patch" | "delete") {
+    const id = Number(req.params.id);
+    if (!adminRecordKinds.includes(kind) || !Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid record" });
+    try {
+      if (method === "get") return res.json(await storage.getAdminRecordPreview(kind, id, req.user!.id));
+      if (method === "patch") await storage.editAdminRecord(kind, id, req.user!.id, req.body);
+      else await storage.deleteAdminRecord(kind, id, req.user!.id, req.body?.confirmation);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(err.status || 500).json({ message: err.status ? err.message : "Could not change record" });
+    }
+  }
+
   // ---------- INSTITUTE: MODULES / COHORTS / SESSIONS ----------
   app.get("/api/modules", requireAuth, async (_req, res) => {
     res.json(await storage.listModules());
@@ -1740,13 +1727,10 @@ export async function registerRoutes(
     res.json(await storage.createModule(parsed.data));
   });
   app.patch("/api/admin/modules/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    const updated = await storage.updateModule(Number(req.params.id), req.body);
-    if (!updated) return res.status(404).json({ message: "Not found" });
-    res.json(updated);
+    await handleRecordControl(req, res, "module", "patch");
   });
   app.delete("/api/admin/modules/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    await storage.deleteModule(Number(req.params.id));
-    res.json({ ok: true });
+    await handleRecordControl(req, res, "module", "delete");
   });
 
   app.get("/api/cohorts", requireAuth, async (_req, res) => {
@@ -1758,8 +1742,7 @@ export async function registerRoutes(
     res.json(await storage.createCohort(parsed.data));
   });
   app.delete("/api/admin/cohorts/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    await storage.deleteCohort(Number(req.params.id));
-    res.json({ ok: true });
+    await handleRecordControl(req, res, "cohort", "delete");
   });
 
   app.get("/api/admin/enrollments", requireAuth, requireRole("admin"), async (_req, res) => {
@@ -1780,11 +1763,10 @@ export async function registerRoutes(
     res.json(await storage.createEnrollment(parsed.data));
   });
   app.delete("/api/admin/enrollments/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    await storage.deleteEnrollment(Number(req.params.id));
-    res.json({ ok: true });
+    await handleRecordControl(req, res, "enrollment", "delete");
   });
 
-  app.get("/api/class-sessions", requireAuth, async (_req, res) => {
+  app.get("/api/class-sessions", requireAuth, requireRole("admin"), async (_req, res) => {
     res.json(await storage.listClassSessions());
   });
 
@@ -1809,13 +1791,10 @@ export async function registerRoutes(
     res.json(await storage.createClassSession(parsed.data));
   });
   app.patch("/api/admin/class-sessions/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    const updated = await storage.updateClassSession(Number(req.params.id), req.body);
-    if (!updated) return res.status(404).json({ message: "Not found" });
-    res.json(updated);
+    await handleRecordControl(req, res, "class-session", "patch");
   });
   app.delete("/api/admin/class-sessions/:id", requireAuth, requireRole("admin"), async (req, res) => {
-    await storage.deleteClassSession(Number(req.params.id));
-    res.json({ ok: true });
+    await handleRecordControl(req, res, "class-session", "delete");
   });
 
   // ---------- HOMEWORK ----------
@@ -1841,6 +1820,11 @@ export async function registerRoutes(
   app.post("/api/homework", requireAuth, requireRole("student"), async (req: AuthedRequest, res) => {
     const parsed = insertHomeworkSubmissionSchema.safeParse({ ...req.body, studentId: req.user!.id });
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const classSession = await storage.getClassSession(parsed.data.classSessionId);
+    const enrollments = await storage.listEnrollmentsForStudent(req.user!.id);
+    if (!classSession || !enrollments.some(e => e.cohortId === classSession.cohortId)) {
+      return res.status(403).json({ message: "You can only submit homework for a class you are enrolled in." });
+    }
     const hw = await storage.createHomework({ ...parsed.data, createdAt: Date.now() });
     awardStanding(req.user!.id, "homework_submitted", "education", { sourceType: "homework", sourceId: hw.id }).catch(console.error);
     res.json(hw);
@@ -1924,6 +1908,7 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Invalid status" });
     }
     const previousUser = await storage.getUser(Number(req.params.id));
+    if (previousUser?.role === "admin") return res.status(400).json({ message: "Use Team account controls for admins" });
     const updated = await storage.updateUserStatus(Number(req.params.id), status);
     if (!updated) return res.status(404).json({ message: "Not found" });
     // Mirror the one-click email link's notification behavior here too, so
@@ -2181,9 +2166,18 @@ export async function registerRoutes(
     res.json(await storage.listLegacyOrdersForUser(Number(req.params.userId)));
   });
 
+  // Explicit whitelist; never exposes arbitrary tables or user credentials.
+  for (const method of ["get", "patch", "delete"] as const) {
+    app[method]("/api/admin/record-controls/:kind/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+      const kind = String(req.params.kind) as AdminRecordKind;
+      await handleRecordControl(req, res, kind, method);
+    });
+  }
+
   // ---------- ADMIN: TEAM ----------
   app.get("/api/admin/team", requireAuth, requireRole("admin"), async (_req, res) => {
-    res.json(await storage.listAdmins());
+    const team = await storage.listUsersByRoleStatus("admin", undefined, true);
+    res.json(team.map(({ passwordHash, passwordResetToken, passwordResetExpiresAt, approvalToken, migratedPasswordPlain, ...safe }) => safe));
   });
   app.post("/api/admin/team", requireAuth, requireRole("admin"), async (req, res) => {
     const parsed = insertUserSchema.safeParse({
@@ -2803,9 +2797,9 @@ export async function registerRoutes(
         ]);
         return {
           ...t,
-          createdByName: createdBy?.name ?? "Unknown",
-          assignedToName: assignedTo?.name ?? "Unknown",
-          messageSnippet: message?.body?.slice(0, 200) ?? null,
+          createdByName: createdBy?.name ?? "Deleted admin",
+          assignedToName: assignedTo?.name ?? "Deleted admin",
+          messageSnippet: message?.deletedAt ? "Message deleted" : message?.body?.slice(0, 200) ?? null,
           threadTopic: thread?.topic ?? null,
         };
       })
@@ -2873,7 +2867,6 @@ export async function registerRoutes(
   app.delete("/api/admin/staff-chat/room/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
     const message = await storage.getStaffRoomMessage(Number(req.params.id));
     if (!message) return res.status(404).json({ message: "Not found" });
-    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only delete your own messages" });
     const updated = message.deletedAt ? message : await storage.deleteStaffRoomMessage(message.id, req.user!.name);
     res.json(redactDeletedMessage(updated));
   });
@@ -2982,7 +2975,8 @@ export async function registerRoutes(
   app.delete("/api/admin/staff-chat/dm/messages/:id", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
     const message = await storage.getStaffDmMessage(Number(req.params.id));
     if (!message) return res.status(404).json({ message: "Not found" });
-    if (message.senderId !== req.user!.id) return res.status(403).json({ message: "You can only delete your own messages" });
+    const thread = await storage.getStaffDmThread(message.threadId);
+    if (!thread || (thread.adminAId !== req.user!.id && thread.adminBId !== req.user!.id)) return res.status(403).json({ message: "Not your conversation" });
     const updated = message.deletedAt ? message : await storage.deleteStaffDmMessage(message.id, req.user!.name);
     res.json(redactDeletedMessage(updated));
   });
@@ -3582,6 +3576,35 @@ export async function registerRoutes(
     if (!name) return res.status(400).json({ message: "Clinic name is required" });
     const clinic = await storage.findOrCreateClinicByName(name);
     res.json(clinic);
+  });
+
+  app.patch("/api/admin/clinics/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ message: "Invalid clinic ID" });
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name || name.length > 120) return res.status(400).json({ message: "Enter a clinic name between 1 and 120 characters" });
+    try {
+      const clinic = await storage.renameClinic(id, name);
+      if (!clinic) return res.status(404).json({ message: "Clinic not found" });
+      res.json(clinic);
+    } catch (err: any) {
+      if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return res.status(409).json({ message: "A clinic with this name already exists. Move members to that clinic instead." });
+      }
+      throw err;
+    }
+  });
+
+  app.delete("/api/admin/clinics/:id", requireAuth, requireRole("admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ message: "Invalid clinic ID" });
+    if (typeof req.body?.confirmName !== "string" || !req.body.confirmName.trim()) {
+      return res.status(400).json({ message: "Type the clinic name to confirm deletion" });
+    }
+    const result = await storage.deleteClinic(id, req.body.confirmName);
+    if (result.conflict) return res.status(409).json({ message: "Clinic name changed or confirmation does not match. Refresh and try again." });
+    if (!result.deleted) return res.status(404).json({ message: "Clinic not found" });
+    res.json(result);
   });
 
   // Assign, move, or remove (clinicId: null) a single account's clinic

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import type { Module, Cohort, ClassSession, User } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,10 +60,6 @@ function ModulesTab() {
       toast({ title: "Module created" });
     },
   });
-  const deleteModule = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/modules/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/modules"] }),
-  });
   const createCohort = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/cohorts", { moduleId: cohortDialogOpen, name: cohortName }),
     onSuccess: () => {
@@ -71,10 +68,6 @@ function ModulesTab() {
       setCohortName("");
       toast({ title: "Cohort created" });
     },
-  });
-  const deleteCohort = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/cohorts/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/cohorts"] }),
   });
 
   return (
@@ -92,22 +85,18 @@ function ModulesTab() {
           {modules.map((m) => (
             <Card key={m.id} data-testid={`card-module-${m.id}`}>
               <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium">{m.name}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{m.description}</p>
                   </div>
-                  <Button size="icon" variant="ghost" onClick={() => deleteModule.mutate(m.id)} data-testid={`button-delete-module-${m.id}`}>
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </Button>
+                  <AdminRecordActions kind="module" id={m.id} />
                 </div>
                 <div className="border-t border-border pt-2 flex flex-col gap-1.5">
                   {cohorts?.filter((c) => c.moduleId === m.id).map((c) => (
-                    <div key={c.id} className="flex items-center justify-between text-sm bg-muted rounded-md px-3 py-1.5" data-testid={`row-cohort-${c.id}`}>
+                    <div key={c.id} className="flex flex-wrap gap-2 items-center justify-between text-sm bg-muted rounded-md px-3 py-1.5" data-testid={`row-cohort-${c.id}`}>
                       <span>{c.name}</span>
-                      <Button size="icon" variant="ghost" onClick={() => deleteCohort.mutate(c.id)} data-testid={`button-delete-cohort-${c.id}`}>
-                        <Trash2 className="h-3 w-3 text-destructive" />
-                      </Button>
+                      <AdminRecordActions kind="cohort" id={c.id} />
                     </div>
                   ))}
                   <Button size="sm" variant="outline" className="self-start mt-1" onClick={() => setCohortDialogOpen(m.id)} data-testid={`button-add-cohort-${m.id}`}>
@@ -183,10 +172,6 @@ function SessionsTab() {
       toast({ title: "Class session created" });
     },
   });
-  const deleteSession = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/class-sessions/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/class-sessions"] }),
-  });
 
   const sorted = [...(sessions || [])].sort((a, b) => a.datetime - b.datetime);
 
@@ -225,9 +210,7 @@ function SessionsTab() {
                       </a>
                     </td>
                     <td className="px-4 py-3">
-                      <Button size="icon" variant="ghost" onClick={() => deleteSession.mutate(s.id)} data-testid={`button-delete-session-${s.id}`}>
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
+                      <AdminRecordActions kind="class-session" id={s.id} />
                     </td>
                   </tr>
                 ))}
@@ -296,10 +279,6 @@ function EnrollmentsTab() {
       toast({ title: "Student enrolled" });
     },
   });
-  const deleteEnrollment = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/enrollments/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/admin/enrollments"] }),
-  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -336,11 +315,9 @@ function EnrollmentsTab() {
       ) : (
         <div className="flex flex-col gap-2">
           {enrollments.map((e) => (
-            <div key={e.id} className="flex items-center justify-between text-sm bg-card border border-card-border rounded-md px-4 py-2.5" data-testid={`row-enrollment-${e.id}`}>
+            <div key={e.id} className="flex flex-wrap gap-2 items-center justify-between text-sm bg-card border border-card-border rounded-md px-4 py-2.5" data-testid={`row-enrollment-${e.id}`}>
               <span>{e.studentName} → {e.cohortName}</span>
-              <Button size="icon" variant="ghost" onClick={() => deleteEnrollment.mutate(e.id)} data-testid={`button-delete-enrollment-${e.id}`}>
-                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-              </Button>
+              <AdminRecordActions kind="enrollment" id={e.id} />
             </div>
           ))}
         </div>
@@ -370,6 +347,7 @@ function HomeworkTab() {
                   <th className="px-4 py-3 font-medium">Comment</th>
                   <th className="px-4 py-3 font-medium">Date</th>
                   <th className="px-4 py-3 font-medium">File</th>
+                  <th className="px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -389,6 +367,7 @@ function HomeworkTab() {
                         <FileText className="h-3.5 w-3.5" /> Download
                       </button>
                     </td>
+                    <td className="px-4 py-3"><AdminRecordActions kind="homework" id={h.id} deleteOnly /></td>
                   </tr>
                 ))}
               </tbody>

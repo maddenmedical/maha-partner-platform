@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import type { Order, OrderItem } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -65,6 +66,7 @@ export default function AdminOrders() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <AdminRecordActions kind="order" id={o.id} deleteOnly />
                 </div>
                 <div className="border-t border-border pt-3 flex flex-col gap-1.5">
                   {o.items.map((it) => (

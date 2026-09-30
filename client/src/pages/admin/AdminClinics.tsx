@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { TierBadge } from "@/components/TierBadge";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -20,7 +20,7 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Building2, Plus, Search, UserPlus, X, Loader2, ChevronsUpDown } from "lucide-react";
+import { Building2, Plus, Search, UserPlus, X, Loader2, ChevronsUpDown, Pencil, Trash2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +39,39 @@ export default function AdminClinics() {
   const [addMemberClinic, setAddMemberClinic] = useState<ClinicWithStats | null>(null);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ clinic: ClinicWithStats; member: ClinicMember } | null>(null);
+  const [editTarget, setEditTarget] = useState<ClinicWithStats | null>(null);
+  const [editedName, setEditedName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ClinicWithStats | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+
+  function invalidateClinicData() {
+    const prefixes = ["/api/admin/clinics", "/api/admin/all-partners", "/api/admin/standing",
+      "/api/standing", "/api/community", "/api/admin/community"];
+    queryClient.invalidateQueries({
+      predicate: (query) => prefixes.some((prefix) => String(query.queryKey[0]).startsWith(prefix)),
+    });
+  }
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => apiRequest("PATCH", `/api/admin/clinics/${id}`, { name }),
+    onSuccess: () => {
+      setEditTarget(null);
+      invalidateClinicData();
+      toast({ title: "Clinic updated" });
+    },
+    onError: (err: Error) => toast({ title: "Could not update clinic", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ id, confirmName }: { id: number; confirmName: string }) => apiRequest("DELETE", `/api/admin/clinics/${id}`, { confirmName }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      setDeleteConfirmation("");
+      invalidateClinicData();
+      toast({ title: "Clinic deleted", description: "Member accounts and their records have been kept." });
+    },
+    onError: (err: Error) => toast({ title: "Could not delete clinic", description: err.message, variant: "destructive" }),
+  });
 
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -121,16 +154,17 @@ export default function AdminClinics() {
           {filtered.map((c) => (
             <Card key={c.id} data-testid={`card-clinic-${c.id}`}>
               <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-medium" data-testid={`text-clinic-name-${c.id}`}>{c.name}</p>
+                      <p className="text-sm font-medium break-words [overflow-wrap:anywhere]" data-testid={`text-clinic-name-${c.id}`}>{c.name}</p>
                       <TierBadge tierKey={c.tierKey} tierLabel={c.tierLabel} />
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-clinic-member-count-${c.id}`}>
                       {c.members.length} {c.members.length === 1 ? "member" : "members"}
                     </p>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -140,6 +174,16 @@ export default function AdminClinics() {
                   >
                     <UserPlus className="h-3.5 w-3.5 mr-1.5" /> Add member
                   </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setEditTarget(c); setEditedName(c.name); }}
+                    data-testid={`button-edit-clinic-${c.id}`} aria-label={`Edit ${c.name}`}>
+                    <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-destructive"
+                    onClick={() => { setDeleteTarget(c); setDeleteConfirmation(""); }}
+                    data-testid={`button-delete-clinic-${c.id}`} aria-label={`Delete ${c.name}`}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
+                  </Button>
+                  </div>
                 </div>
                 {c.members.length > 0 && (
                   <div className="flex flex-col gap-1.5 border-t border-border pt-3">
@@ -167,6 +211,56 @@ export default function AdminClinics() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open && !renameMutation.isPending) setEditTarget(null); }}>
+        <DialogContent data-testid="dialog-edit-clinic" className="w-[calc(100%-2rem)] max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit clinic</DialogTitle>
+            <DialogDescription>Rename this clinic without changing its members or their records. Individual profile business names are not changed.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); if (editTarget && editedName.trim() && !renameMutation.isPending) renameMutation.mutate({ id: editTarget.id, name: editedName.trim() }); }}
+            className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-clinic-name">Clinic name</Label>
+              <Input id="edit-clinic-name" value={editedName} onChange={(e) => setEditedName(e.target.value)}
+                maxLength={120} required disabled={renameMutation.isPending} data-testid="input-edit-clinic-name" />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={renameMutation.isPending} onClick={() => setEditTarget(null)} data-testid="button-cancel-edit-clinic">Cancel</Button>
+              <Button type="submit" disabled={renameMutation.isPending || !editedName.trim()} data-testid="button-save-clinic">
+                {renameMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) setDeleteTarget(null); }}>
+        <AlertDialogContent data-testid="dialog-delete-clinic" className="w-[calc(100%-2rem)] max-h-[90dvh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="break-words [overflow-wrap:anywhere]">Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the clinic grouping. Its members will be unassigned from the clinic and will use their individual Partner Levels.
+              Accounts, individual points, referrals, orders, chats and reward history will be kept. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="text-sm" data-testid="text-delete-clinic-members">{deleteTarget?.members.length ?? 0} currently linked members. No member accounts will be deleted.</p>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="confirm-clinic-name">Type the clinic name to confirm</Label>
+            <Input id="confirm-clinic-name" value={deleteConfirmation} disabled={deleteMutation.isPending}
+              onChange={(e) => setDeleteConfirmation(e.target.value)} autoComplete="off" data-testid="input-confirm-delete-clinic" />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending} data-testid="button-cancel-delete-clinic">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); if (deleteTarget) deleteMutation.mutate({ id: deleteTarget.id, confirmName: deleteConfirmation }); }}
+              disabled={deleteMutation.isPending || deleteConfirmation !== deleteTarget?.name}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-confirm-delete-clinic">
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Delete clinic
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setNewClinicName(""); }}>
         <DialogContent data-testid="dialog-create-clinic">

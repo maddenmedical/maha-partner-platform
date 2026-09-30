@@ -125,7 +125,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ email, password }),
         }
       );
-      const data = await res.json();
+      const data = await res.json().catch(() => {
+        throw new Error("The server is temporarily unavailable. Please try signing in again in a moment.");
+      });
       if (!res.ok) {
         if (res.status === 403 && data.status) {
           setPendingState({ pending: true, status: data.status });

@@ -28,6 +28,7 @@ async function sendOne(to: string, subject: string, html: string): Promise<Email
     if (RESEND_TOKEN) headers.Authorization = `Bearer ${RESEND_TOKEN}`;
     const res = await fetch(`${RESEND_BASE_URL}/emails`, {
       method: "POST",
+      signal: AbortSignal.timeout(10_000),
       headers,
       body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html }),
     });

@@ -412,7 +412,7 @@ export default function Shop() {
             </div>
             <Button
               className="w-full"
-              disabled={submitMutation.isPending}
+              disabled={submitMutation.isPending || cartCount === 0}
               onClick={() => submitMutation.mutate()}
               data-testid="button-submit-order"
             >

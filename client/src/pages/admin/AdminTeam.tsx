@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import type { User } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -125,11 +126,11 @@ export default function AdminTeam() {
         <div className="flex flex-col gap-2">
           {team?.map((t) => (
             <Card key={t.id} data-testid={`card-admin-${t.id}`}>
-              <CardContent className="p-4 flex items-center gap-3">
+              <CardContent className="p-4 flex flex-wrap items-center gap-3">
                 <UserAvatar photoUrl={t.photoUrl} name={t.name} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{t.name}</p>
-                  <p className="text-xs text-muted-foreground">{t.email}{t.phone ? ` · ${t.phone}` : ""}</p>
+                  <p className="text-sm font-medium break-words">{t.name}{t.archivedAt ? " (deactivated)" : ""}</p>
+                  <p className="text-xs text-muted-foreground break-all">{t.email}{t.phone ? ` · ${t.phone}` : ""}</p>
                 </div>
                 <Button
                   size="sm"
@@ -140,6 +141,7 @@ export default function AdminTeam() {
                 >
                   <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
                 </Button>
+                <AdminRecordActions kind="admin-account" id={t.id} />
               </CardContent>
             </Card>
           ))}

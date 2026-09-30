@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Announcement, Product } from "@shared/schema";
@@ -228,6 +229,7 @@ export default function AdminAnnouncements() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {format(new Date(a.sentAt), "MMM d, yyyy 'at' HH:mm")} · {a.recipientCount} recipient{a.recipientCount !== 1 ? "s" : ""}
                   </p>
+                  <AdminRecordActions kind="announcement" id={a.id} />
                 </CardContent>
               </Card>
             ))}

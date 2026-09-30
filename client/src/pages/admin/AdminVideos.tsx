@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import type { Course, Video, User } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -299,12 +300,13 @@ export default function AdminVideos() {
                   <th className="p-3 font-medium">Amount</th>
                   <th className="p-3 font-medium">Status</th>
                   <th className="p-3 font-medium">Date</th>
+                  <th className="p-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {!purchases || purchases.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-4 text-center text-muted-foreground" data-testid="text-no-purchases">
+                    <td colSpan={6} className="p-4 text-center text-muted-foreground" data-testid="text-no-purchases">
                       No purchases yet.
                     </td>
                   </tr>
@@ -323,6 +325,7 @@ export default function AdminVideos() {
                       <td className="p-3 text-xs text-muted-foreground">
                         {new Date(p.createdAt).toLocaleDateString()}
                       </td>
+                      <td className="p-3"><AdminRecordActions kind="course-purchase" id={p.id} deleteOnly /></td>
                     </tr>
                   ))
                 )}

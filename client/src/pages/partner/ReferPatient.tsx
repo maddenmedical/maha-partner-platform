@@ -93,6 +93,7 @@ export default function ReferPatient() {
       }
     },
     onError: (err: any) => {
+      setUploading(false);
       setOpenChatAfterSubmit(false);
       toast({ title: "Could not submit referral", description: err.message, variant: "destructive" });
     },

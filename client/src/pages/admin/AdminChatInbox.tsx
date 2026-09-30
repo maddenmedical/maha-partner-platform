@@ -868,6 +868,8 @@ function StaffChatSidebar({ onSelect, selected }: { onSelect: (s: StaffSelection
 function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Exclude<StaffSelection, null>; onClose: () => void; showBackButton?: boolean }) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [deletingStaffId, setDeletingStaffId] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isDm = selection.kind === "dm";
   const sentinelThreadId = isDm ? selection.threadId : 0;
@@ -912,9 +914,11 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `${patchBase}/${id}`),
     onSuccess: () => {
+      setDeletingStaffId(null);
       queryClient.invalidateQueries({ queryKey: messagesKey });
       if (isDm) queryClient.invalidateQueries({ queryKey: ["/api/admin/staff-chat/dm/threads"] });
     },
+    onError: (err: Error) => toast({ title: "Could not delete message", description: err.message, variant: "destructive" }),
   });
 
   useEffect(() => {
@@ -965,7 +969,7 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
                 onReact={() => {}}
                 onReply={(id) => setReplyingToId(id)}
                 quoted={quotedSource ? { senderName: quotedSource.senderName, snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
-                onDelete={m.senderId === user?.id ? (id) => deleteMutation.mutate(id) : undefined}
+                onDelete={(id) => setDeletingStaffId(id)}
                 onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
               />
             );
@@ -985,6 +989,16 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
         replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
         onCancelReply={() => setReplyingToId(null)}
       />
+      <Dialog open={deletingStaffId !== null} onOpenChange={open => { if (!open && !deleteMutation.isPending) setDeletingStaffId(null); }}>
+        <DialogContent className="w-[calc(100%-2rem)]">
+          <DialogHeader><DialogTitle>Delete team message?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">The message will be marked as deleted for everyone in this conversation. Its original author is preserved; you are not changing their words.</p>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" disabled={deleteMutation.isPending} onClick={() => setDeletingStaffId(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={deleteMutation.isPending} onClick={() => deletingStaffId !== null && deleteMutation.mutate(deletingStaffId)} data-testid="confirm-delete-staff-message">Delete message</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

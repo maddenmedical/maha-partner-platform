@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminRecordActions } from "@/components/AdminRecordActions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -113,12 +114,13 @@ function TodoCard({
       {t.messageSnippet && (
         <p className="text-xs text-muted-foreground italic border-l-2 border-border pl-2 line-clamp-2">"{t.messageSnippet}"</p>
       )}
-      <div className="flex items-center justify-between gap-2 mt-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
         <span className="text-xs text-muted-foreground">
           {format(new Date(t.createdAt), "MMM d, HH:mm")}
           {t.completedAt ? ` · done ${format(new Date(t.completedAt), "MMM d, HH:mm")}` : ""}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AdminRecordActions kind="todo" id={t.id} />
           <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => onOpenThread(t.threadId)} data-testid={`button-open-thread-${t.id}`}>
             Open chat <ArrowUpRight className="h-3 w-3" />
           </Button>

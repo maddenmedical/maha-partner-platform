@@ -5,7 +5,7 @@ import {
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
-  standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog,
+  standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog, adminRecordAudit,
   staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages,
 } from "@shared/schema";
 import type {
@@ -24,11 +24,21 @@ import type {
   StandingEntry, StandingReward, Clinic, AdminPinnedMember, ImpersonationLogEntry,
   StaffRoomMessage, StaffDmThread, StaffDmMessage,
 } from "@shared/schema";
-import { STANDING_TIERS, standingTierForPoints } from "@shared/schema";
+import { STANDING_TIERS, standingTierForPoints, estimateShippingCostCents, type CreateOrderInput } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, or, desc, asc, gte, gt, lte, isNull, inArray, like } from "drizzle-orm";
+import { eq, and, or, desc, asc, gte, gt, lte, isNull, inArray, like, sql } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
+import { adminRecordEditSchemas, type AdminRecordKind, type AdminRecordPreview } from "@shared/adminRecordControls";
+
+const adminRecordTables = {
+  order: orders, todo: adminTodos, announcement: announcements, module: modules, cohort: cohorts,
+  "class-session": classSessions, enrollment: cohortEnrollments, homework: homeworkSubmissions,
+  "admin-account": users, "price-tier": priceTiers, "course-purchase": coursePurchases,
+};
+function recordError(status: number, message: string): never {
+  throw Object.assign(new Error(message), { status });
+}
 
 // Opening the database, setting WAL mode, and self-healing the schema all
 // run at module load time (before Express even exists), so any throw here
@@ -80,6 +90,9 @@ export const db = drizzle(sqlite);
 export const sqliteDb = sqlite;
 
 export interface IStorage {
+  getAdminRecordPreview(kind: AdminRecordKind, id: number, actorId: number): Promise<AdminRecordPreview>;
+  editAdminRecord(kind: AdminRecordKind, id: number, actorId: number, patch: unknown): Promise<void>;
+  deleteAdminRecord(kind: AdminRecordKind, id: number, actorId: number, confirmation: string): Promise<void>;
   // users
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
@@ -166,6 +179,9 @@ export interface IStorage {
 
   // referrals
   createReferral(r: InsertReferral & { createdAt: number; patientConsentAttestedAt?: number | null }): Promise<Referral>;
+  createReferralWithThread(r: InsertReferral & { createdAt: number; patientConsentAttestedAt: number }, role: string, linkThreadId?: number): Promise<Referral & { chatThreadId: number }>;
+  createOrderWithItems(partnerId: number, input: CreateOrderInput): Promise<Order>;
+  createRegistration(user: InsertUser): Promise<User>;
   listReferralsForPartner(partnerId: number): Promise<Referral[]>;
   listAllReferrals(): Promise<Referral[]>;
   getReferral(id: number): Promise<Referral | undefined>;
@@ -406,6 +422,8 @@ export interface IStorage {
   // ---------- Clinics (shared standing pooling) ----------
   findOrCreateClinicByName(name: string): Promise<Clinic>;
   getClinic(id: number): Promise<Clinic | undefined>;
+  renameClinic(id: number, name: string): Promise<Clinic | undefined>;
+  deleteClinic(id: number, confirmName: string): Promise<{ deleted: boolean; conflict?: boolean; detachedMembers?: number }>;
   listClinics(): Promise<Clinic[]>;
   getClinicAggregatePoints(clinicId: number): Promise<number>;
   setUserClinic(userId: number, clinicId: number | null): Promise<User | undefined>;
@@ -425,14 +443,160 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  private adminRecord(kind: AdminRecordKind, id: number) {
+    const table = adminRecordTables[kind];
+    const row = db.select().from(table).where(eq(table.id, id)).get() as any;
+    if (!row || (kind === "admin-account" && row.role !== "admin")) recordError(404, "Record not found");
+    return row;
+  }
+
+  private recordPreview(kind: AdminRecordKind, id: number, actorId: number): AdminRecordPreview {
+    const actor = db.select().from(users).where(eq(users.id, actorId)).get();
+    if (!actor || actor.role !== "admin" || actor.status !== "approved" || actor.archivedAt) recordError(403, "Active admin access required");
+    const row = this.adminRecord(kind, id);
+    let impact = "Only this record will be deleted. This cannot be undone.";
+    let blockedReason: string | undefined;
+    const ownText = kind === "todo" ? row.createdByAdminId === actorId
+      : kind === "announcement" ? row.sentByUserId === actorId : true;
+    if (kind === "order") {
+      const count = db.select().from(orderItems).where(eq(orderItems.orderId, id)).all().length;
+      impact = `Deletes this order and its ${count} line items from admin and partner order history. Does not issue a refund, cancel a shipment or alter points.`;
+    }
+    if (kind === "todo") impact = "Deletes this to-do for all admins. The original chat message is kept.";
+    if (kind === "announcement") impact = "Deletes the stored announcement history. Notifications already delivered cannot be recalled.";
+    if (kind === "homework") impact = "Deletes the student's submission record from the app. The original stored file and backups are not erased.";
+    if (kind === "enrollment") impact = "Removes this cohort enrollment and the student's access through it. The student account and submitted homework are kept.";
+    if (["module", "cohort", "class-session"].includes(kind)) {
+      const cohortIds = kind === "module" ? db.select().from(cohorts).where(eq(cohorts.moduleId, id)).all().map(c => c.id)
+        : kind === "cohort" ? [id] : [];
+      const sessionIds = kind === "class-session" ? [id] : cohortIds.length
+        ? db.select().from(classSessions).where(inArray(classSessions.cohortId, cohortIds)).all().map(s => s.id) : [];
+      const enrollments = cohortIds.length ? db.select().from(cohortEnrollments).where(inArray(cohortEnrollments.cohortId, cohortIds)).all().length : 0;
+      const homework = sessionIds.length ? db.select().from(homeworkSubmissions).where(inArray(homeworkSubmissions.classSessionId, sessionIds)).all().length : 0;
+      impact = `Deletes this record${kind === "module" ? `, ${cohortIds.length} cohorts` : ""}${kind !== "class-session" ? `, ${sessionIds.length} class sessions and ${enrollments} enrollments` : ""}, plus ${homework} homework submission records. Student accounts and stored files are kept.`;
+    }
+    if (kind === "course-purchase") impact = "Deletes this local enrollment/purchase record and access provided by it. Other access grants remain. This does not issue a Stripe refund or change external payment records.";
+    if (kind === "price-tier") impact = "Removes this price tier for future orders. Existing order prices remain unchanged.";
+    if (kind === "admin-account") {
+      impact = "Permanently removes this admin's login, passkeys, push subscriptions and sessions. Authored messages and historical activity remain. Unfinished assigned to-dos must be reassigned or completed first.";
+      if (id === actorId) blockedReason = "You cannot delete or deactivate your own account.";
+      const activeAdmins = db.select().from(users).where(and(eq(users.role, "admin"), eq(users.status, "approved"), isNull(users.archivedAt))).all();
+      if (!row.archivedAt && row.status === "approved" && activeAdmins.length <= 1) blockedReason = "The last active admin must be kept.";
+      if (db.select().from(adminTodos).where(and(eq(adminTodos.assignedToAdminId, id), eq(adminTodos.status, "open"))).all().length) {
+        blockedReason ||= "Reassign or complete this admin's open to-dos before deleting the account.";
+      }
+    }
+    const editableKeys: Partial<Record<AdminRecordKind, string[]>> = {
+      order: ["status"], todo: ownText ? ["status", "assignedToAdminId", "note"] : ["status", "assignedToAdminId"],
+      announcement: ownText ? ["title", "body", "url"] : [], module: ["name", "description"],
+      cohort: ["name", "moduleId"], "class-session": ["title", "cohortId", "datetime", "zoomLink", "notes"],
+      enrollment: ["cohortId"], "price-tier": ["minQty", "maxQty", "pricePerUnit"],
+    };
+    const values = Object.fromEntries((editableKeys[kind] || []).map(key => [key, row[key]]));
+    if (kind === "admin-account") values.archived = !!row.archivedAt;
+    return {
+      label: row.name || row.title || `${kind} #${id}`, impact, canEditText: ownText,
+      canEdit: kind in adminRecordEditSchemas && (kind !== "announcement" || ownText) && (kind !== "admin-account" || id !== actorId),
+      canDelete: !blockedReason, blockedReason, values,
+    };
+  }
+
+  async getAdminRecordPreview(kind: AdminRecordKind, id: number, actorId: number) {
+    return this.recordPreview(kind, id, actorId);
+  }
+
+  async editAdminRecord(kind: AdminRecordKind, id: number, actorId: number, patch: unknown) {
+    db.transaction(() => {
+      const row = this.adminRecord(kind, id);
+      const preview = this.recordPreview(kind, id, actorId);
+      if (!preview.canEdit) recordError(403, "This content cannot be edited by this admin");
+      const schema = adminRecordEditSchemas[kind as keyof typeof adminRecordEditSchemas];
+      const parsed = schema.safeParse(patch);
+      if (!parsed.success) recordError(400, parsed.error.errors[0]?.message || "Invalid input");
+      const values: any = { ...parsed.data };
+      if (kind === "todo") {
+        if (!preview.canEditText && "note" in values) recordError(403, "You cannot rewrite another admin's note");
+        const assignee = db.select().from(users).where(eq(users.id, values.assignedToAdminId)).get();
+        if (!assignee || assignee.role !== "admin" || assignee.status !== "approved" || assignee.archivedAt) recordError(400, "Choose an active admin");
+        values.completedAt = values.status === "done" ? row.completedAt || Date.now() : null;
+      }
+      if (kind === "cohort" && !db.select().from(modules).where(eq(modules.id, values.moduleId)).get()) recordError(400, "Module not found");
+      if (kind === "class-session" || kind === "enrollment") {
+        if (!db.select().from(cohorts).where(eq(cohorts.id, values.cohortId)).get()) recordError(400, "Cohort not found");
+        if (kind === "enrollment") {
+          const duplicate = db.select().from(cohortEnrollments).where(and(eq(cohortEnrollments.cohortId, values.cohortId), eq(cohortEnrollments.studentId, row.studentId))).all().find(e => e.id !== id);
+          if (duplicate) recordError(409, "Student is already enrolled in this cohort");
+        }
+      }
+      if (kind === "admin-account") {
+        if (values.archived && preview.blockedReason) recordError(409, preview.blockedReason);
+        values.archivedAt = values.archived ? Date.now() : null;
+        delete values.archived;
+        if (values.archivedAt) {
+          db.delete(sessions).where(eq(sessions.userId, id)).run();
+          db.update(users).set({ passwordResetToken: null, passwordResetExpiresAt: null }).where(eq(users.id, id)).run();
+        }
+      }
+      const table = adminRecordTables[kind];
+      db.update(table).set(values).where(eq(table.id, id)).run();
+      const actor = db.select().from(users).where(eq(users.id, actorId)).get()!;
+      db.insert(adminRecordAudit).values({ actorId, actorName: actor.name, kind, recordId: id, action: "edit",
+        fields: Object.keys(parsed.data).join(","), createdAt: Date.now() }).run();
+    });
+  }
+
+  async deleteAdminRecord(kind: AdminRecordKind, id: number, actorId: number, confirmation: string) {
+    db.transaction(() => {
+      const preview = this.recordPreview(kind, id, actorId);
+      if (confirmation !== `DELETE ${id}`) recordError(400, `Type DELETE ${id} to confirm`);
+      if (!preview.canDelete) recordError(409, preview.blockedReason!);
+      if (kind === "order") db.delete(orderItems).where(eq(orderItems.orderId, id)).run();
+      if (["module", "cohort", "class-session"].includes(kind)) {
+        const cohortIds = kind === "module" ? db.select().from(cohorts).where(eq(cohorts.moduleId, id)).all().map(c => c.id)
+          : kind === "cohort" ? [id] : [];
+        const sessionIds = kind === "class-session" ? [id] : cohortIds.length
+          ? db.select().from(classSessions).where(inArray(classSessions.cohortId, cohortIds)).all().map(s => s.id) : [];
+        if (sessionIds.length) db.delete(homeworkSubmissions).where(inArray(homeworkSubmissions.classSessionId, sessionIds)).run();
+        if (cohortIds.length) {
+          db.delete(classSessions).where(inArray(classSessions.cohortId, cohortIds)).run();
+          db.delete(cohortEnrollments).where(inArray(cohortEnrollments.cohortId, cohortIds)).run();
+        }
+        if (kind === "module") db.delete(cohorts).where(eq(cohorts.moduleId, id)).run();
+      }
+      if (kind === "admin-account") {
+        db.delete(sessions).where(eq(sessions.userId, id)).run();
+        db.delete(webauthnCredentials).where(eq(webauthnCredentials.userId, id)).run();
+        db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, id)).run();
+        db.delete(adminPinnedMembers).where(or(eq(adminPinnedMembers.adminUserId, id), eq(adminPinnedMembers.memberUserId, id))).run();
+        db.delete(staffRoomReads).where(eq(staffRoomReads.adminId, id)).run();
+        db.delete(communityMessageReads).where(eq(communityMessageReads.userId, id)).run();
+        db.delete(chatMessageFlags).where(eq(chatMessageFlags.userId, id)).run();
+        db.delete(chatMessageReactions).where(eq(chatMessageReactions.userId, id)).run();
+      }
+      const table = adminRecordTables[kind];
+      db.delete(table).where(eq(table.id, id)).run();
+      const actor = db.select().from(users).where(eq(users.id, actorId)).get()!;
+      db.insert(adminRecordAudit).values({ actorId, actorName: actor.name, kind, recordId: id, action: "delete", createdAt: Date.now() }).run();
+    });
+  }
+
   async getUser(id: number) {
     return db.select().from(users).where(eq(users.id, id)).get();
   }
   async getUserByEmail(email: string) {
-    return db.select().from(users).where(eq(users.email, email)).get();
+    return db.select().from(users).where(sql`lower(trim(${users.email})) = ${email.trim().toLowerCase()}`).get();
   }
   async createUser(user: InsertUser) {
     return db.insert(users).values({ ...user, createdAt: Date.now() }).returning().get();
+  }
+  async createRegistration(user: InsertUser) {
+    return db.transaction(() => {
+      const email = user.email.trim().toLowerCase();
+      const username = user.username?.trim() || "";
+      if (db.select().from(users).where(sql`lower(trim(${users.email})) = ${email}`).get()) recordError(409, "An account with this email already exists");
+      if (username && db.select().from(users).where(sql`lower(trim(${users.username})) = ${username.toLowerCase()}`).get()) recordError(409, "That username is already in use. Please choose another.");
+      return db.insert(users).values({ ...user, email, username, createdAt: Date.now() }).returning().get();
+    });
   }
   async updateUserStatus(id: number, status: string) {
     return db.update(users).set({ status }).where(eq(users.id, id)).returning().get();
@@ -536,7 +700,7 @@ export class DatabaseStorage implements IStorage {
     run(id);
   }
   async getUserByUsername(username: string) {
-    return db.select().from(users).where(eq(users.username, username)).get();
+    return db.select().from(users).where(sql`lower(trim(${users.username})) = ${username.trim().toLowerCase()}`).get();
   }
   // Self-service profile edits (name parts, contact info, email, username,
   // degree file, etc). Caller has already checked email/username
@@ -590,7 +754,7 @@ export class DatabaseStorage implements IStorage {
     return rows;
   }
   async listAdmins() {
-    return db.select().from(users).where(eq(users.role, "admin")).all();
+    return db.select().from(users).where(and(eq(users.role, "admin"), eq(users.status, "approved"), isNull(users.archivedAt))).all();
   }
   async getUserByWpUserId(wpUserId: number) {
     return db.select().from(users).where(eq(users.wpUserId, wpUserId)).get();
@@ -754,7 +918,51 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).all();
   }
 
+  async createOrderWithItems(partnerId: number, input: CreateOrderInput) {
+    return db.transaction(() => {
+      // Merge duplicate cart entries before calculating quantity pricing.
+      const quantities = new Map<number, number>();
+      for (const item of input.items) quantities.set(item.productId, (quantities.get(item.productId) || 0) + item.quantity);
+      const lines = Array.from(quantities).map(([productId, quantity]) => {
+        const product = db.select().from(products).where(eq(products.id, productId)).get();
+        if (!product) recordError(400, "A product in your cart is no longer available. Refresh the shop and try again.");
+        const tiers = db.select().from(priceTiers).where(eq(priceTiers.productId, productId)).orderBy(asc(priceTiers.minQty)).all();
+        let unitPriceAtOrder = product.unitPrice;
+        for (const tier of tiers) if (quantity >= tier.minQty && (tier.maxQty === null || quantity <= tier.maxQty)) unitPriceAtOrder = tier.pricePerUnit;
+        return { productId, quantity, unitPriceAtOrder, weight: (product.weightGrams || 0) * quantity };
+      });
+      const order = db.insert(orders).values({ partnerId, destinationCountry: input.destinationCountry.toUpperCase(),
+        estimatedShippingCost: estimateShippingCostCents(lines.reduce((sum, line) => sum + line.weight, 0), input.destinationCountry),
+        createdAt: Date.now() }).returning().get();
+      for (const { weight, ...line } of lines) db.insert(orderItems).values({ ...line, orderId: order.id }).run();
+      return order;
+    });
+  }
+  async createReferralWithThread(r: InsertReferral & { createdAt: number; patientConsentAttestedAt: number }, role: string, linkThreadId?: number) {
+    return db.transaction(() => {
+      if (linkThreadId !== undefined) {
+        const thread = db.select().from(chatThreads).where(eq(chatThreads.id, linkThreadId)).get();
+        if (!thread || thread.userId !== r.partnerId) recordError(403, "You don't have access to that chat.");
+        if (thread.referralId) recordError(400, "That chat is already linked to a different referral.");
+        if (thread.archivedAt) recordError(400, "This chat is archived. Ask the team to reopen it first.");
+      }
+      const referral = this.insertReferral(r);
+      const topic = `Patient: ${referral.patientFirstName} ${referral.patientLastName}`;
+      let chatThreadId = linkThreadId;
+      if (chatThreadId !== undefined) {
+        db.update(chatThreads).set({ kind: "referral", referralId: referral.id, topic,
+          pendingReferralRequestedAt: null, pendingReferralRequestedByRole: null }).where(eq(chatThreads.id, chatThreadId)).run();
+      } else {
+        chatThreadId = db.insert(chatThreads).values({ userId: r.partnerId, userRole: role, topic,
+          kind: "referral", referralId: referral.id, createdAt: Date.now() }).returning().get().id;
+      }
+      return { ...referral, chatThreadId };
+    });
+  }
   async createReferral(r: any) {
+    return this.insertReferral(r);
+  }
+  private insertReferral(r: any) {
     return db.insert(referrals).values({
       partnerId: r.partnerId,
       patientFirstName: r.patientFirstName,
@@ -1783,6 +1991,34 @@ export class DatabaseStorage implements IStorage {
 
   async getClinic(id: number) {
     return db.select().from(clinics).where(eq(clinics.id, id)).get();
+  }
+
+  async renameClinic(id: number, name: string) {
+    return db.update(clinics).set({
+      name: name.trim(), normalizedName: this.normalizeClinicName(name),
+    }).where(eq(clinics.id, id)).returning().get();
+  }
+
+  async deleteClinic(id: number, confirmName: string) {
+    // Remove the grouping, never its members or their clinical/business data.
+    // Keep reward history readable without leaving dangling clinic references.
+    return db.transaction((tx) => {
+      const clinic = tx.select().from(clinics).where(eq(clinics.id, id)).get();
+      if (!clinic) return { deleted: false };
+      if (clinic.name !== confirmName) return { deleted: false, conflict: true };
+      const detached = tx.update(users).set({ clinicId: null })
+        .where(eq(users.clinicId, id)).run();
+      const rewards = tx.select().from(standingRewards).where(eq(standingRewards.clinicId, id)).all();
+      for (const reward of rewards) {
+        const historyNote = `Former clinic: ${clinic.name} (ID ${id}; clinic grouping deleted).`;
+        tx.update(standingRewards).set({
+          clinicId: null,
+          fulfillmentNote: [reward.fulfillmentNote, historyNote].filter(Boolean).join("\n"),
+        }).where(eq(standingRewards.id, reward.id)).run();
+      }
+      tx.delete(clinics).where(eq(clinics.id, id)).run();
+      return { deleted: true, detachedMembers: detached.changes };
+    });
   }
 
   async listClinics() {
