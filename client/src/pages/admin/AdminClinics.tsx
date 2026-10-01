@@ -241,7 +241,7 @@ export default function AdminClinics() {
             <AlertDialogTitle className="break-words [overflow-wrap:anywhere]">Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently removes the clinic grouping. Its members will be unassigned from the clinic and will use their individual Partner Levels.
-              Accounts, individual points, referrals, orders, chats and reward history will be kept. This cannot be undone.
+              Accounts, individual points, referrals, orders, chats and historical records will be kept. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <p className="text-sm" data-testid="text-delete-clinic-members">{deleteTarget?.members.length ?? 0} currently linked members. No member accounts will be deleted.</p>

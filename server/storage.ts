@@ -21,7 +21,7 @@ import type {
   WebauthnCredential, InsertWebauthnCredential, ProductResource, InsertProductResource,
   AdminTodo, InsertAdminTodo,
   AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
-  StandingEntry, StandingReward, Clinic, AdminPinnedMember, ImpersonationLogEntry,
+  StandingEntry, Clinic, AdminPinnedMember, ImpersonationLogEntry,
   StaffRoomMessage, StaffDmThread, StaffDmMessage,
 } from "@shared/schema";
 import { STANDING_TIERS, standingTierForPoints, estimateShippingCostCents, type CreateOrderInput } from "@shared/schema";
@@ -374,8 +374,8 @@ export interface IStorage {
   // ---------- community messages ----------
   createCommunityMessage(m: { topicId: number; senderId: number; senderRole: string; senderName: string; body: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; replyToMessageId?: number | null; createdAt: number }): Promise<CommunityMessage>;
   // senderTierKey/senderTierLabel: the sender's current MAHA Standing tier
-  // (see shared/schema.ts) -- null for admin senders, since the reward
-  // program is partner/student-facing only. Never includes raw points.
+  // (see shared/schema.ts) -- null for admin senders, since activity levels
+  // are partner/student-facing only. Never includes raw points.
   listCommunityMessagesForTopic(topicId: number): Promise<(CommunityMessage & { senderPhotoUrl: string | null; senderTierKey: string | null; senderTierLabel: string | null; attachmentThumbnail: string | null; attachmentProcessing: boolean })[]>;
   getCommunityMessage(id: number): Promise<CommunityMessage | undefined>;
   deleteCommunityMessage(id: number, deletedByName: string): Promise<CommunityMessage>;
@@ -409,8 +409,8 @@ export interface IStorage {
   // ---------- MAHA Standing (internal engagement scoring) ----------
   // Awards points, appends a ledger row, and keeps users.standingPoints in
   // sync -- the one place point totals ever change. Returns the ledger row
-  // and whether this award crossed the user into a new tier (so the caller
-  // can enqueue a reward). category='app_activity' entries must never carry
+  // and whether this activity crossed the user into a new tier (for a
+  // neutral admin activity alert). category='app_activity' entries never carry
   // a sourceId tied to a specific referral -- see shared/schema.ts note.
   awardStandingPoints(args: { userId: number; category: string; points: number; sourceType?: string; sourceId?: number }): Promise<{ entry: StandingEntry; newTierKey: string | null; clinicId: number | null }>;
   countStandingEntriesToday(userId: number, sourceType: string): Promise<number>;
@@ -437,9 +437,6 @@ export interface IStorage {
       members: { id: number; name: string; role: string; email: string; standingPoints: number }[];
     }[]
   >;
-  createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number; clinicId?: number | null }): Promise<StandingReward>;
-  listStandingRewards(status?: string): Promise<(StandingReward & { userName: string })[]>;
-  fulfillStandingReward(id: number, fulfilledByName: string, note?: string): Promise<StandingReward | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1750,7 +1747,7 @@ export class DatabaseStorage implements IStorage {
     const withTiers = rows.map((r) => {
       const { senderStandingPoints, senderClinicId, ...rest } = r;
       const effectivePoints = senderClinicId != null ? (clinicPoints.get(senderClinicId) ?? 0) : (senderStandingPoints ?? 0);
-      // Reward program is partner/student-facing only -- admins never get a
+      // Activity levels are partner/student-facing only -- admins never get a
       // tier badge, regardless of any points their account has accrued.
       const tier = rest.senderRole === "admin" ? null : standingTierForPoints(effectivePoints);
       return { ...rest, senderTierKey: tier?.key ?? null, senderTierLabel: tier?.label ?? null };
@@ -2072,26 +2069,6 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(standingEntries).where(eq(standingEntries.userId, userId)).orderBy(desc(standingEntries.createdAt)).all();
   }
 
-  async createStandingReward(r: { userId: number; tierKey: string; rewardDescription: string; createdAt: number; clinicId?: number | null }) {
-    return db.insert(standingRewards).values({ ...r, clinicId: r.clinicId ?? null, status: "pending" }).returning().get();
-  }
-
-  async listStandingRewards(status?: string) {
-    const rows = status
-      ? db.select().from(standingRewards).where(eq(standingRewards.status, status)).orderBy(desc(standingRewards.createdAt)).all()
-      : db.select().from(standingRewards).orderBy(desc(standingRewards.createdAt)).all();
-    return rows.map((r) => {
-      const user = db.select().from(users).where(eq(users.id, r.userId)).get();
-      return { ...r, userName: user?.name ?? "Unknown" };
-    });
-  }
-
-  async fulfillStandingReward(id: number, fulfilledByName: string, note?: string) {
-    return db.update(standingRewards)
-      .set({ status: "fulfilled", fulfilledAt: Date.now(), fulfilledByName, fulfillmentNote: note ?? null })
-      .where(eq(standingRewards.id, id))
-      .returning().get();
-  }
 }
 
 export const storage = new DatabaseStorage();

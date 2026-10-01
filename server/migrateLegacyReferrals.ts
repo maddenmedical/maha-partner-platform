@@ -10,9 +10,9 @@
 // For each row: create the referral, open its dedicated chat thread (kind
 // "referral", same as the normal /api/referrals flow), and award the
 // standard flat referral credit (see shared/schema.ts STANDING_POINTS.
-// referral_submitted = 50, category "app_activity", no sourceId — matches
-// the compliance rule that referral points never carry a per-referral
-// pointer). Every row is marked emailNotified=true on both the referral and
+// referral_submitted = 50, category "app_activity", no sourceId).
+// This is activity tracking only, with no associated rewards.
+// Every row is marked emailNotified=true on both the referral and
 // its chat thread so the background notification scheduler never emails
 // anyone about these — historical data must never trigger a live partner
 // email, full stop.
@@ -23,7 +23,7 @@
 import { db, storage } from "./storage";
 import { users, referrals, chatThreads } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { STANDING_POINTS, STANDING_TIERS } from "@shared/schema";
+import { STANDING_POINTS } from "@shared/schema";
 
 type LegacyReferralRow = {
   // Email of the WP account that submitted the form. Used to find the
@@ -280,7 +280,7 @@ export async function runLegacyReferralImport(): Promise<LegacyReferralImportSum
     if (!row.skipPoints) {
       const points = STANDING_POINTS.referral_submitted;
       try {
-        const { newTierKey, clinicId } = await storage.awardStandingPoints({
+        await storage.awardStandingPoints({
           userId: partner.id,
           category: "app_activity",
           points,
@@ -288,18 +288,6 @@ export async function runLegacyReferralImport(): Promise<LegacyReferralImportSum
           // not tied back to this specific referral. Matches the exact
           // same call shape as the live /api/referrals route.
         });
-        if (newTierKey) {
-          const tier = STANDING_TIERS.find((t) => t.key === newTierKey);
-          if (tier?.reward) {
-            await storage.createStandingReward({
-              userId: partner.id,
-              tierKey: tier.key,
-              rewardDescription: tier.reward,
-              createdAt: Date.now(),
-              clinicId,
-            });
-          }
-        }
       } catch (e) {
         // Standing is a side-effect, never a reason to fail the import.
         console.error("awardStandingPoints failed during legacy referral import", e);

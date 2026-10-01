@@ -121,7 +121,7 @@ export default function AdminAnnouncements() {
                 id="ann-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="New spring discount on OMNI EM Ferment"
+                placeholder="Your announcement title"
                 data-testid="input-announcement-title"
               />
             </div>
@@ -131,7 +131,7 @@ export default function AdminAnnouncements() {
                 id="ann-body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                placeholder="Order before the end of the month to get 15% off…"
+                placeholder="Write the information you want to share with partners…"
                 rows={4}
                 data-testid="input-announcement-body"
               />

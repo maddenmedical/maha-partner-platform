@@ -1234,17 +1234,11 @@ export const communityMessageReads = sqliteTable("community_message_reads", {
 export type CommunityMessageRead = typeof communityMessageReads.$inferSelect;
 
 // ---------- MAHA STANDING (internal engagement scoring, admin-only) ----------
-// Recognizes and rewards genuine app activity -- referrals, purchases,
-// education, community participation. Two hard rules drive the design:
-//   1. Members only ever see their tier name (e.g. "Connector") and a vague
-//      progress indicator -- never the raw point total, never a breakdown
-//      of what earns points. This is internal-only, for admin visibility.
-//   2. Patient-referral activity is logged under the generic "app_activity"
-//      category with NO link back to a specific referral record (sourceId
-//      stays null) and NO bonus tied to referral outcome/completion. This
-//      keeps the ledger from ever attributing a reward to a specific
-//      patient referral -- avoiding anything that could look like a
-//      referral commission/kickback for a healthcare professional.
+// Activity tracking and descriptive levels only. No automatic, predefined,
+// or suggested rewards: the programme and any future benefits are undecided.
+// These scores must not create reward entitlements or fulfillment tasks.
+// Keeping referral identifiers out of this ledger is data minimization,
+// not a legal safeguard for any future referral-linked incentive.
 export const STANDING_CATEGORIES = ["app_activity", "shop", "education", "learning", "community"] as const;
 export type StandingCategory = (typeof STANDING_CATEGORIES)[number];
 
@@ -1263,16 +1257,13 @@ export const standingEntries = sqliteTable("standing_entries", {
 });
 export type StandingEntry = typeof standingEntries.$inferSelect;
 
-// Cumulative lifetime points (never decays). Reward is what's granted the
-// moment a member crosses into that tier -- fulfilled by an admin via the
-// standingRewards queue below, not automated at checkout (no discount/coupon
-// infrastructure exists yet).
+// Cumulative lifetime points (never decays). Levels carry no rewards.
 export const STANDING_TIERS = [
-  { key: "newcomer", label: "Newcomer", minPoints: 0, reward: null as string | null },
-  { key: "active_member", label: "Active Member", minPoints: 100, reward: "5% shop discount code" },
-  { key: "connector", label: "Connector", minPoints: 350, reward: "10% shop discount code" },
-  { key: "mentor", label: "Mentor", minPoints: 800, reward: "\u20ac25 shop credit" },
-  { key: "maha_fellow", label: "MAHA Fellow", minPoints: 1500, reward: "Personal outreach from MAHA -- no automated reward" },
+  { key: "newcomer", label: "Newcomer", minPoints: 0 },
+  { key: "active_member", label: "Active Member", minPoints: 100 },
+  { key: "connector", label: "Connector", minPoints: 350 },
+  { key: "mentor", label: "Mentor", minPoints: 800 },
+  { key: "maha_fellow", label: "MAHA Fellow", minPoints: 1500 },
 ] as const;
 export type StandingTierKey = (typeof STANDING_TIERS)[number]["key"];
 
@@ -1300,9 +1291,8 @@ export const STANDING_POINTS: Record<string, number> = {
   community_welcome_posted: 20, // category: community, one-time
 };
 
-// Pending reward fulfillment queue (Phase 1: manual). An admin marks a
-// reward fulfilled once the discount code/credit has actually been issued
-// by hand -- see fulfillmentNote for what was sent.
+// Retired legacy table, retained solely to preserve historical records.
+// No application writer, listing, or fulfillment workflow is enabled.
 export const standingRewards = sqliteTable("standing_rewards", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),

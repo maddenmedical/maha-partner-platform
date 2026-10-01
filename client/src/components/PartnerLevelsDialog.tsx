@@ -9,11 +9,8 @@ import type { ReactNode } from "react";
 
 type LevelRow = { key: string; label: string; minPoints: number };
 
-// Names + point thresholds ONLY. This dialog fetches from a sanitized
-// backend endpoint (/api/standing/tiers) rather than importing STANDING_TIERS
-// client-side, so the reward field can never end up in this bundle -- see
-// "We don't want any rewards at all" in project rules. Do not add reward
-// text here under any circumstance.
+// Activity levels only, with no associated rewards or suggested benefits.
+// Reward arrangements are undecided and must not be inferred from levels.
 export function PartnerLevelsDialog({
   currentTierKey,
   trigger,

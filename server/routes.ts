@@ -44,9 +44,7 @@ import {
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 // ---------- MAHA Standing (internal engagement scoring) ----------
-// Thin wrapper around storage.awardStandingPoints: also enqueues a pending
-// reward the moment a user crosses into a new tier. Never surfaced to the
-// user beyond their own tier name elsewhere -- this only logs internally.
+// Activity tracking only. Level changes never create or suggest rewards.
 async function awardStanding(userId: number, activityKey: keyof typeof STANDING_POINTS, category: string, opts?: { sourceType?: string; sourceId?: number; points?: number }) {
   try {
     const points = opts?.points ?? STANDING_POINTS[activityKey];
@@ -59,18 +57,6 @@ async function awardStanding(userId: number, activityKey: keyof typeof STANDING_
     });
     if (newTierKey) {
       const tier = STANDING_TIERS.find((t) => t.key === newTierKey);
-      if (tier?.reward) {
-        // Pooled clinics: one reward record for the practice as a whole
-        // (clinicId set), so admins reach out to the clinic rather than
-        // crediting whichever individual member's action tipped it over.
-        await storage.createStandingReward({
-          userId,
-          tierKey: tier.key,
-          rewardDescription: tier.reward,
-          createdAt: Date.now(),
-          clinicId,
-        });
-      }
       if (tier) {
         // Admin-only alert -- never surfaced to the member. Email always
         // fires; push respects each admin's own "offers" preference (see
@@ -3531,9 +3517,7 @@ export async function registerRoutes(
   });
 
   // Member-facing: the full tier ladder so members can see what levels exist
-  // and are called. Names + point thresholds only -- reward field is
-  // deliberately stripped before this ever leaves the server (rewards stay
-  // fully internal; see standingRewards queue and project rules).
+  // and are called. Levels have no associated rewards or benefits.
   app.get("/api/standing/tiers", requireAuth, requireRole("partner", "student", "admin"), async (_req, res) => {
     res.json(STANDING_TIERS.map((t) => ({ key: t.key, label: t.label, minPoints: t.minPoints })));
   });
@@ -3549,17 +3533,14 @@ export async function registerRoutes(
     res.json(entries);
   });
 
-  app.get("/api/admin/standing/rewards", requireAuth, requireRole("admin"), async (req, res) => {
-    const status = typeof req.query.status === "string" ? req.query.status : undefined;
-    const rewards = await storage.listStandingRewards(status);
-    res.json(rewards);
+  // Retire old clients explicitly rather than returning the SPA for these
+  // URLs. Historical records remain untouched, inaccessible as suggestions.
+  app.get("/api/admin/standing/rewards", requireAuth, requireRole("admin"), (_req, res) => {
+    res.status(410).json({ message: "Reward workflows are not enabled." });
   });
 
-  app.patch("/api/admin/standing/rewards/:id/fulfill", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
-    const note = typeof req.body?.note === "string" ? req.body.note : undefined;
-    const updated = await storage.fulfillStandingReward(Number(req.params.id), req.user!.name, note);
-    if (!updated) return res.status(404).json({ message: "Not found" });
-    res.json(updated);
+  app.patch("/api/admin/standing/rewards/:id/fulfill", requireAuth, requireRole("admin"), (_req, res) => {
+    res.status(410).json({ message: "Reward workflows are not enabled." });
   });
 
   // ---------- CLINICS (shared MAHA Standing pooling, admin-managed) ----------

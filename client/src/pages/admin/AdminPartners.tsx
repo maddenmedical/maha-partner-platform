@@ -30,7 +30,7 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 const ROLE_FILTERS = ["all", "partner", "student"] as const;
 type RoleFilter = (typeof ROLE_FILTERS)[number];
 
-// Rank only -- no labels or rewards duplicated here, those come from the
+// Rank only -- labels come from the
 // /api/admin/standing response already loaded into standingByUserId. Used
 // solely to sort the list by tier.
 const TIER_RANK = ["newcomer", "active_member", "connector", "mentor", "maha_fellow"];
