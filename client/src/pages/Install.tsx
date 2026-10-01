@@ -1,186 +1,35 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "wouter";
 import { MahaWordmark } from "@/components/MahaLogo";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
-import { isIos, isAndroid, isMacOs, isWindows, isStandalone } from "@/lib/push";
-import { Smartphone, Monitor, Apple, Share, SquarePlus, MoreVertical, PlusSquare, CheckCircle2, Download, Loader2 } from "lucide-react";
+import { isIos, isAndroid, isMacOs } from "@/lib/push";
+import { CheckCircle2, Download, Loader2, ArrowRight, ChevronDown } from "lucide-react";
 
 type Platform = "android" | "iphone" | "windows" | "mac";
-
 const PLATFORM_LABELS: Record<Platform, string> = {
-  android: "Android",
-  iphone: "iPhone",
-  windows: "Windows",
-  mac: "Mac",
-};
-
-const PLATFORM_ICONS: Record<Platform, typeof Smartphone> = {
-  android: Smartphone,
-  iphone: Apple,
-  windows: Monitor,
-  mac: Monitor,
+  android: "Android", iphone: "iPhone/iPad", windows: "Windows", mac: "Mac",
 };
 
 function detectPlatform(): Platform {
-  if (isAndroid()) return "android";
   if (isIos()) return "iphone";
+  if (isAndroid()) return "android";
   if (isMacOs()) return "mac";
-  if (isWindows()) return "windows";
-  return "android";
+  return "windows";
 }
 
-function Step({ n, children }: { n: number; children: React.ReactNode }) {
+function Steps({ items }: { items: string[] }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-        <span className="text-sm font-semibold text-primary">{n}</span>
-      </div>
-      <div className="flex items-center gap-2 text-sm flex-wrap">{children}</div>
-    </div>
-  );
-}
-
-const IconChip = ({ icon: Icon }: { icon: typeof Share }) => (
-  <span className="inline-flex items-center justify-center h-7 w-7 rounded-md border border-border bg-muted shrink-0">
-    <Icon className="h-3.5 w-3.5" />
-  </span>
-);
-
-function AndroidGuide() {
-  const { canInstallNative, promptInstall } = useInstallPrompt();
-  const [installing, setInstalling] = useState(false);
-  const [done, setDone] = useState(false);
-
-  async function handleInstall() {
-    setInstalling(true);
-    try {
-      const accepted = await promptInstall();
-      if (accepted) setDone(true);
-    } finally {
-      setInstalling(false);
-    }
-  }
-
-  if (done) {
-    return (
-      <div className="flex flex-col items-center gap-3 text-center py-6" data-testid="text-install-done-android">
-        <CheckCircle2 className="h-10 w-10 text-green-600 dark:text-green-500" />
-        <p className="text-sm font-medium">Installed — look for MAHA on your home screen.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <p className="text-sm text-muted-foreground">Open this page in Chrome on your Android phone or tablet, then tap Install.</p>
-      {canInstallNative ? (
-        <Button onClick={handleInstall} disabled={installing} className="w-full h-12 text-base" data-testid="button-install-android">
-          {installing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-          Install MAHA app
-        </Button>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <Step n={1}>
-            <span>Open this link in Chrome, then tap</span>
-            <IconChip icon={MoreVertical} />
-            <span>in the top right</span>
-          </Step>
-          <Step n={2}>
-            <span>Tap</span>
-            <span className="font-medium">Install app</span>
-            <span>or</span>
-            <span className="font-medium">Add to Home screen</span>
-          </Step>
-          <Step n={3}>
-            <span>Confirm — the MAHA icon appears on your home screen.</span>
-          </Step>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function IosGuide() {
-  return (
-    <div className="flex flex-col gap-5">
-      <p className="text-sm text-muted-foreground">For iPhone and iPad. Only Safari can install to your home screen — open this link in Safari first, even if you tapped it from another app.</p>
-      <div className="flex flex-col gap-4">
-        <Step n={1}>
-          <span>Tap the</span>
-          <IconChip icon={Share} />
-          <span>Share button in Safari's toolbar</span>
-        </Step>
-        <Step n={2}>
-          <span>Scroll down and tap</span>
-          <IconChip icon={SquarePlus} />
-          <span>"Add to Home Screen"</span>
-        </Step>
-        <Step n={3}>
-          <span>Tap <span className="font-medium">Add</span> in the top right — done.</span>
-        </Step>
-      </div>
-    </div>
-  );
-}
-
-function DesktopGuide({ platform }: { platform: "windows" | "mac" }) {
-  const { canInstallNative, promptInstall } = useInstallPrompt();
-  const [installing, setInstalling] = useState(false);
-  const [done, setDone] = useState(false);
-
-  async function handleInstall() {
-    setInstalling(true);
-    try {
-      const accepted = await promptInstall();
-      if (accepted) setDone(true);
-    } finally {
-      setInstalling(false);
-    }
-  }
-
-  if (done) {
-    return (
-      <div className="flex flex-col items-center gap-3 text-center py-6" data-testid={`text-install-done-${platform}`}>
-        <CheckCircle2 className="h-10 w-10 text-green-600 dark:text-green-500" />
-        <p className="text-sm font-medium">Installed — MAHA now opens like a desktop app.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <p className="text-sm text-muted-foreground">Open this link in Chrome or Edge on your {platform === "windows" ? "Windows PC" : "Mac"} to install it as a standalone app.</p>
-      {canInstallNative ? (
-        <Button onClick={handleInstall} disabled={installing} className="w-full h-12 text-base" data-testid={`button-install-${platform}`}>
-          {installing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-          Install MAHA app
-        </Button>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <Step n={1}>
-            <span>In the address bar, click the</span>
-            <IconChip icon={PlusSquare} />
-            <span>install icon (Chrome/Edge)</span>
-          </Step>
-          <Step n={2}>
-            <span>Or open the</span>
-            <IconChip icon={MoreVertical} />
-            <span>menu and choose "Install MAHA Partner Platform" / "Apps &rarr; Install this site as an app"</span>
-          </Step>
-          <Step n={3}>
-            <span>Confirm — MAHA opens in its own window and pins to your {platform === "windows" ? "taskbar" : "Dock"}.</span>
-          </Step>
-        </div>
-      )}
-      {platform === "mac" && (
-        <p className="text-xs text-muted-foreground border-t border-border pt-3">
-          Using Safari on macOS Sonoma or later? Open the <span className="font-medium">File</span> menu and choose <span className="font-medium">Add to Dock</span> instead.
-        </p>
-      )}
-    </div>
+    <ol className="flex flex-col gap-4">
+      {items.map((text, index) => (
+        <li key={text} className="flex items-start gap-3 text-sm leading-relaxed">
+          <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold">{index + 1}</span>
+          <span>{text}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -188,55 +37,135 @@ export default function Install() {
   const params = useParams<{ platform?: string }>();
   const requested = params.platform as Platform | undefined;
   const [platform, setPlatform] = useState<Platform>(() =>
-    requested && requested in PLATFORM_LABELS ? requested : detectPlatform()
+    requested && Object.prototype.hasOwnProperty.call(PLATFORM_LABELS, requested) ? requested : detectPlatform()
   );
-  const [alreadyInstalled, setAlreadyInstalled] = useState(false);
+  const { canInstallNative, promptInstall, isInstalled, isInstalling } = useInstallPrompt();
+  const [showHelp, setShowHelp] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    setAlreadyInstalled(isStandalone());
-  }, []);
+  async function handleInstall() {
+    setNotice("");
+    if (canInstallNative) {
+      const confirmed = await promptInstall();
+      setAccepted(confirmed);
+      if (!confirmed) {
+        setNotice("Installation was not completed. You can use the browser version or follow the steps below.");
+        setShowHelp(true);
+      }
+    } else {
+      setPlatform(detectPlatform());
+      setShowHelp(true);
+      setNotice(isIos()
+        ? "Use your browser's Share menu to add MAHA to your Home Screen."
+        : "This browser has not made an install prompt available. Follow the steps below, or open MAHA in your browser.");
+    }
+  }
 
   return (
-    <div className="min-h-dvh flex flex-col items-center bg-background px-4 py-12">
-      <div className="flex flex-col items-center gap-2 mb-8">
-        <MahaWordmark width={220} />
-        <p className="text-base text-muted-foreground text-center">Install the MAHA Partner Platform app</p>
+    <main className="min-h-dvh flex flex-col items-center bg-background px-4 py-8 sm:py-12">
+      <div className="flex flex-col items-center mb-6 sm:mb-8">
+        <MahaWordmark width={200} />
       </div>
-
       <Card className="w-full max-w-lg shadow-lg" data-testid="card-install-guide">
-        <CardContent className="p-6 sm:p-8 flex flex-col gap-6">
-          {alreadyInstalled ? (
-            <div className="flex flex-col items-center gap-3 text-center py-6" data-testid="text-already-installed">
-              <CheckCircle2 className="h-10 w-10 text-green-600 dark:text-green-500" />
-              <p className="text-sm font-medium">MAHA is already installed on this device.</p>
+        <CardContent className="p-5 sm:p-8 flex flex-col gap-5">
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-semibold">{isInstalled ? "MAHA is installed" : "Install MAHA"}</h1>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Your partner platform, ready to open from your device.
+            </p>
+          </div>
+
+          {isInstalled ? (
+            <div className="flex flex-col items-center gap-3 text-center" role="status" data-testid="text-already-installed">
+              <CheckCircle2 className="h-9 w-9 text-green-600 dark:text-green-500" aria-hidden="true" />
+              <p className="text-sm">You are ready to use MAHA.</p>
             </div>
+          ) : accepted ? (
+            <p role="status" className="text-sm text-center" data-testid="text-install-requested">
+              Installation requested. Follow any remaining browser prompts, then open MAHA.
+            </p>
           ) : (
-            <Tabs value={platform} onValueChange={(v) => setPlatform(v as Platform)}>
-              <TabsList className="grid grid-cols-4 w-full">
-                {(Object.keys(PLATFORM_LABELS) as Platform[]).map((p) => {
-                  const Icon = PLATFORM_ICONS[p];
-                  return (
-                    <TabsTrigger key={p} value={p} data-testid={`tab-platform-${p}`} className="px-1.5 sm:px-3">
-                      <Icon className="h-3.5 w-3.5 shrink-0 sm:mr-1.5" />
-                      <span className="hidden sm:inline truncate">{PLATFORM_LABELS[p]}</span>
-                    </TabsTrigger>
-                  );
-                })}
-              </TabsList>
-              <div className="mt-6">
-                <TabsContent value="android"><AndroidGuide /></TabsContent>
-                <TabsContent value="iphone"><IosGuide /></TabsContent>
-                <TabsContent value="windows"><DesktopGuide platform="windows" /></TabsContent>
-                <TabsContent value="mac"><DesktopGuide platform="mac" /></TabsContent>
+            <div className="space-y-3">
+              <Button onClick={handleInstall} disabled={isInstalling} className="w-full h-12 text-base" data-testid="button-install-maha">
+                {isInstalling ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4 mr-2" aria-hidden="true" />}
+                {isInstalling ? "Waiting for confirmation…" : "Install MAHA"}
+              </Button>
+              <p className="text-xs text-muted-foreground text-center leading-relaxed" data-testid="text-install-explanation">
+                {canInstallNative
+                  ? "Your browser will ask you to confirm installation."
+                  : isIos()
+                    ? "On iPhone and iPad, installation uses Share → Add to Home Screen."
+                    : "Opens the install prompt when available, or the steps for your device."}
+              </p>
+            </div>
+          )}
+
+          <Button asChild variant={isInstalled || accepted ? "default" : "outline"} className="w-full h-11">
+            <a href="#/" data-testid="button-open-browser">
+              {isInstalled || accepted ? "Open MAHA" : "Open in browser"}
+              <ArrowRight className="h-4 w-4 ml-2" aria-hidden="true" />
+            </a>
+          </Button>
+          {!isInstalled && !accepted && <p className="text-xs text-muted-foreground text-center -mt-2">You can use the platform without installing it.</p>}
+
+          {notice && !isInstalled && <p role="status" className="text-sm leading-relaxed" data-testid="text-install-notice">{notice}</p>}
+
+          {!isInstalled && (
+            <div className="border-t pt-4">
+              <button type="button" className="flex min-h-11 w-full items-center justify-between gap-2 text-sm font-medium"
+                aria-expanded={showHelp} aria-controls="install-help" onClick={() => setShowHelp(v => !v)} data-testid="button-install-help">
+                Installation help
+                <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${showHelp ? "rotate-180" : ""}`} />
+              </button>
+              <div id="install-help" hidden={!showHelp} className="pt-3">
+                <Tabs value={platform} onValueChange={v => setPlatform(v as Platform)}>
+                  <TabsList className="grid grid-cols-2 sm:grid-cols-4 h-auto w-full gap-1">
+                    {(Object.keys(PLATFORM_LABELS) as Platform[]).map(p => (
+                      <TabsTrigger key={p} value={p} data-testid={`tab-platform-${p}`} className="min-h-11 px-2 text-xs sm:text-sm">
+                        {PLATFORM_LABELS[p]}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                  <div className="mt-5">
+                    <TabsContent value="iphone">
+                      <Steps items={[
+                        "Open this page in Safari, or another browser that offers Add to Home Screen. If you opened it inside an email app, open it in your browser first.",
+                        "Tap Share, then Add to Home Screen. Turn on Open as Web App if that option appears.",
+                        "Tap Add to confirm. Open MAHA from the new Home Screen icon.",
+                      ]} />
+                    </TabsContent>
+                    <TabsContent value="android">
+                      <Steps items={[
+                        "Open this page in Chrome on your Android device.",
+                        "Open the browser menu and choose Install app or Add to Home screen.",
+                        "Confirm installation, then open MAHA from your device.",
+                      ]} />
+                    </TabsContent>
+                    <TabsContent value="windows">
+                      <Steps items={[
+                        "Open this page in Chrome or Edge.",
+                        "Use the install icon in the address bar, or the browser menu's Install app option.",
+                        "Confirm installation. You can then open MAHA in its own window.",
+                      ]} />
+                    </TabsContent>
+                    <TabsContent value="mac">
+                      <Steps items={[
+                        "In Safari on macOS Sonoma or later, choose File → Add to Dock.",
+                        "In Chrome or Edge, use the install icon in the address bar or the browser menu's Install app option.",
+                        "Confirm to add MAHA to your device.",
+                      ]} />
+                    </TabsContent>
+                  </div>
+                </Tabs>
               </div>
-            </Tabs>
+            </div>
           )}
         </CardContent>
       </Card>
-
-      <p className="text-[10px] text-muted-foreground/40 mt-8" data-testid="text-app-credit">
+      <p className="text-xs text-muted-foreground text-center mt-6" data-testid="text-app-credit">
         Webapp provided by Madden Medical e.U.
       </p>
-    </div>
+    </main>
   );
 }
