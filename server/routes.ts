@@ -2127,6 +2127,7 @@ export async function registerRoutes(
   // issued yet. Returns the plaintext password so the admin can hand it out
   // manually — never emailed or pushed automatically.
   app.get("/api/admin/migrated-users", requireAuth, requireRole("admin"), async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const rows = await storage.listMigratedUsersAwaitingCredentials();
     res.json(rows.map((u) => ({
       id: u.id,
@@ -2137,6 +2138,7 @@ export async function registerRoutes(
       email: u.email,
       username: u.username,
       password: u.migratedPasswordPlain,
+      credentialStatus: u.migratedPasswordPlain ? "verified" : "sign-in-or-reset-required",
       wpUserId: u.wpUserId,
       createdAt: u.createdAt,
     })));

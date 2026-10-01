@@ -27,6 +27,7 @@ import type {
 import { STANDING_TIERS, standingTierForPoints, estimateShippingCostCents, type CreateOrderInput } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
+import { compare as comparePassword } from "bcryptjs";
 import { eq, and, or, desc, asc, gte, gt, lte, isNull, inArray, like, sql } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
 import { adminRecordEditSchemas, type AdminRecordKind, type AdminRecordPreview } from "@shared/adminRecordControls";
@@ -606,7 +607,8 @@ export class DatabaseStorage implements IStorage {
     return db.update(users).set({ role }).where(eq(users.id, id)).returning().get();
   }
   async updateUserPassword(id: number, passwordHash: string) {
-    return db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning().get();
+    // A previously generated launch password is invalid after any password change.
+    return db.update(users).set({ passwordHash, migratedPasswordPlain: null }).where(eq(users.id, id)).returning().get();
   }
   // Reversible hide -- excludes the account from the default Admin
   // Partners & Students list and blocks login, but touches nothing else.
@@ -757,9 +759,27 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(users).where(eq(users.wpUserId, wpUserId)).get();
   }
   async listMigratedUsersAwaitingCredentials() {
-    return db.select().from(users)
-      .where(and(eq(users.migratedFromWp, true), isNull(users.credentialsIssuedAt)))
+    const rows = db.select().from(users)
+      .where(and(
+        eq(users.migratedFromWp, true), isNull(users.credentialsIssuedAt),
+        eq(users.role, "partner"), eq(users.status, "approved"), isNull(users.archivedAt),
+      ))
       .all();
+    // Verify old retained values too, without resetting accounts or changing
+    // issuance state. Sequential async comparisons avoid a burst of hashing work.
+    const verified: User[] = [];
+    for (const user of rows) {
+      let valid = false;
+      if (user.migratedPasswordPlain) {
+        try {
+          valid = await comparePassword(user.migratedPasswordPlain, user.passwordHash);
+        } catch {
+          // Invalid hashes must never make an unverified password distributable.
+        }
+      }
+      verified.push({ ...user, migratedPasswordPlain: valid ? user.migratedPasswordPlain : null });
+    }
+    return verified;
   }
   async markCredentialsIssued(id: number) {
     return db.update(users)

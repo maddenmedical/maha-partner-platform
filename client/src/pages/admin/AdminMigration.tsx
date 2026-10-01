@@ -60,6 +60,7 @@ export default function AdminMigration() {
   });
 
   function copyCreds(u: MigratedUser) {
+    if (!u.password) return;
     const text = `Email: ${u.email}\nPassword: ${u.password}`;
     navigator.clipboard?.writeText(text);
     toast({ title: "Copied to clipboard" });
@@ -106,8 +107,9 @@ export default function AdminMigration() {
       <div>
         <p className="text-sm font-medium mb-1">Credentials awaiting handout</p>
         <p className="text-xs text-muted-foreground">
-          These accounts were migrated but haven't been marked as issued yet. Copy the credentials to hand them
-          out yourself, then mark as issued to clear the password from this view.
+          These active, approved partner accounts were migrated but haven't been marked as issued yet.
+          Passwords shown here have been checked against the current account. If no verified launch password
+          is available, use a sign-in or password-reset message instead. Mark as issued only after delivery.
         </p>
       </div>
 
@@ -128,13 +130,13 @@ export default function AdminMigration() {
                   <p className="text-xs text-muted-foreground break-words">{u.email}</p>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant="secondary" className="font-mono text-xs" data-testid={`text-password-${u.id}`}>
-                      {u.password}
+                      {u.password || "No verified launch password"}
                     </Badge>
                     <p className="text-xs text-muted-foreground/70">Migrated {format(new Date(u.createdAt), "MMM d, yyyy")}</p>
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0 w-full sm:w-auto">
-                  <Button size="sm" variant="outline" className="flex-1 sm:flex-none" onClick={() => copyCreds(u)} data-testid={`button-copy-${u.id}`}>
+                  <Button size="sm" variant="outline" className="flex-1 sm:flex-none" disabled={!u.password} onClick={() => copyCreds(u)} data-testid={`button-copy-${u.id}`}>
                     <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
                   </Button>
                   <Button size="sm" className="flex-1 sm:flex-none" onClick={() => markIssued.mutate(u.id)} data-testid={`button-mark-issued-${u.id}`}>
