@@ -1,0 +1,23 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//MAHA Clinic//Partner Events//EN
+CALSCALE:GREGORIAN
+BEGIN:VEVENT
+UID:maha-opg-20261022@maha.clinic
+DTSTAMP:20261001T142400Z
+SEQUENCE:0
+DTSTART:20261022T180000Z
+DTEND:20261022T184500Z
+SUMMARY:MAHA Partners Only: OPG Analysis and New Platform Tools
+DESCRIPTION:Free webinar exclusively for MAHA partners.\nPresenter: Dr.
+  Sebastjan Perko\, PhD\, DDS.\nOPG interpretation and new MAHA Partner
+  Platform tools.\nPartner benefits will be presented during the meeting.
+ \n22 October 2026\, 20:00-20:45 CEST (Vienna/Slovenia).\nJoin via Zoom:
+  https://us06web.zoom.us/j/83383880209?pwd=bdiEW7lCSY75uaXxoQbQdYDJ
+ 26dVE0.1
+LOCATION:Online via Zoom
+URL:https://us06web.zoom.us/j/83383880209?pwd=bdiEW7lCSY75uaXxoQbQdYDJ
+ 26dVE0.1
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR

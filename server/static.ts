@@ -3,13 +3,22 @@ import type { Express } from 'express';
 import fs from "node:fs";
 import path from "node:path";
 
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+export function serveStatic(app: Express, distPath = path.resolve(__dirname, "public")) {
   if (!fs.existsSync(distPath)) {
     throw new Error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`,
     );
   }
+
+  // Public email calendar download: no session required and no RSVP,
+  // registration or email side effects. The .ics contains event details only.
+  app.get("/calendar/maha-opg-2026-10-22.ics", (_req, res) => {
+    res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="MAHA-OPG-22-October-2026.ics"');
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.sendFile(path.join(distPath, "calendar", "maha-opg-2026-10-22.ics"));
+  });
 
   // The admin PWA's manifest scope is "/admin/" (trailing slash), which is
   // what Android/iOS actually check when deciding which installed app owns
