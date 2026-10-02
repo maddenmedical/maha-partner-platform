@@ -8,6 +8,7 @@ import { startCaseDiscussionScheduler } from "./caseDiscussionScheduler";
 import { startBackupScheduler } from "./backupScheduler";
 import { startNotificationScheduler } from "./notificationScheduler";
 import { createServer } from "node:http";
+import { runLaunchMail } from "./launchMail";
 
 const app = express();
 const httpServer = createServer(app);
@@ -135,6 +136,8 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      void runLaunchMail(storage, sqliteDb).catch(err =>
+        console.error("[launch-mail] halted:", err instanceof Error ? err.message : "Unknown error"));
     },
   );
 })();
