@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { NotificationBell, CriticalReferralBanner } from "@/components/NotificationCenter";
 import {
   Home, UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2, ArrowLeft,
 } from "lucide-react";
@@ -264,8 +265,8 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
       <div className="flex h-dvh w-full overflow-hidden">
         <AdminSidebar />
         <div className="flex flex-col flex-1 min-w-0">
-          <header className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
+          <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
+            <div className="flex flex-1 items-center gap-2 min-w-[7rem]">
               {canGoBack && (
                 <button
                   type="button"
@@ -280,11 +281,12 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <h1 className="text-lg font-semibold truncate" data-testid="text-page-title">{title}</h1>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
               <span className="text-sm text-muted-foreground hidden sm:inline" data-testid="text-current-user">
                 {user?.name}
               </span>
               <InstallAppButton />
+              <NotificationBell />
               <Button variant="ghost" size="icon" asChild aria-label="Account settings" data-testid="button-account">
                 <Link href="/admin/account">
                   <Settings className="h-4 w-4" />
@@ -303,6 +305,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
               </Button>
             </div>
           </header>
+          <CriticalReferralBanner />
           <main className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-6">{children}</main>
         </div>
       </div>

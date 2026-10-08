@@ -9,7 +9,13 @@ export function setPendingThreadId(id: number) {
 }
 
 export function consumePendingThreadId(): number | null {
-  const id = pendingThreadId;
+  const url = new URL(window.location.href);
+  const linkedId = Number(url.searchParams.get("thread"));
+  const id = pendingThreadId ?? (Number.isSafeInteger(linkedId) && linkedId > 0 ? linkedId : null);
+  if (url.searchParams.has("thread")) {
+    url.searchParams.delete("thread");
+    window.history.replaceState(window.history.state, "", url);
+  }
   pendingThreadId = null;
   return id;
 }

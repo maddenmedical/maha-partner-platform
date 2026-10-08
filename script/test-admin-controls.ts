@@ -283,6 +283,7 @@ if (serve) {
     console.log(`PASS: ${checks} API checks plus atomic rollback, isolation, authorship, account/session, audit and cascade assertions.`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
+    await (await import("../server/referralAlerts")).deliverReferralAlerts();
     sqliteDb.close();
   }
 }

@@ -1,5 +1,7 @@
 import type { IStorage } from "./storage";
 import { sendEmail, buildRegistrationEmailHtml } from "./email";
+import { deliverReferralAlerts } from "./referralAlerts";
+import { deliverChatReminders } from "./chatReminders";
 
 // Guard against duplicate intervals (e.g. tsx hot reload in dev). Clearing any
 // existing interval before creating a new one keeps exactly one running.
@@ -30,14 +32,8 @@ export async function retryRegistrationAlerts(storage: IStorage) {
 
 const CHECK_INTERVAL_MS = 2 * 60_000; // every 2 minutes
 
-const REFERRAL_BASE_RECIPIENTS = ["partner@maha.clinic", "coordinator@maha.si"];
 const ORDER_BASE_RECIPIENTS = ["partner@maha.clinic", "tina@maha.si"];
 const CHAT_BASE_RECIPIENTS = ["partner@maha.clinic"];
-
-// Escalate a thread that's gone 6+ hours without an admin reply. Checked
-// against the wall clock each poll rather than a fixed threshold constant
-// so the value is easy to find/change in one place.
-const ESCALATION_THRESHOLD_MS = 6 * 60 * 60_000;
 
 // Dr. Perko and Elisabeth Madden (the admin accounts) must always get these
 // emails per the standing notification rules -- merged into every recipient
@@ -59,12 +55,8 @@ function escapeHtml(s: string): string {
 
 // Polls for new referrals and shop orders and emails the relevant MAHA team
 // addresses, mirroring the caseDiscussionScheduler / backupScheduler pattern.
-// Each row is marked notified once an email attempt was made for it (even if
-// a secondary recipient like coordinator@maha.si / tina@maha.si can't yet be
-// delivered because no sending domain is verified in Resend — partner@maha.clinic
-// still gets it, and every recipient will start working automatically the
-// moment a domain is verified, no re-notification needed since it's a config
-// change, not a data change).
+// Referrals use a durable per-recipient outbox; provider acceptance for every
+// current recipient is required before marking the referral notified.
 export function startNotificationScheduler(storage: IStorage) {
   if (intervalHandle) clearInterval(intervalHandle);
 
@@ -72,36 +64,12 @@ export function startNotificationScheduler(storage: IStorage) {
     if (running) return;
     running = true;
     try {
+      await deliverReferralAlerts();
+      await deliverChatReminders();
       await retryRegistrationAlerts(storage);
       const adminEmails = await getAdminEmails(storage);
-      const REFERRAL_RECIPIENTS = mergeRecipients(REFERRAL_BASE_RECIPIENTS, adminEmails);
       const ORDER_RECIPIENTS = mergeRecipients(ORDER_BASE_RECIPIENTS, adminEmails);
       const CHAT_RECIPIENTS = mergeRecipients(CHAT_BASE_RECIPIENTS, adminEmails);
-
-      const referrals = await storage.listUnnotifiedReferrals();
-      for (const referral of referrals) {
-        const partner = await storage.getUser(referral.partnerId);
-        const html = `
-          <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
-            <h2>New patient referral</h2>
-            <p><b>${escapeHtml(partner?.name || "A partner")}</b> submitted a new referral (${escapeHtml(referral.urgency)}).</p>
-            <table style="border-collapse:collapse;">
-              <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Patient</td><td style="font-size:13px;">${escapeHtml(referral.patientFirstName)} ${escapeHtml(referral.patientLastName)}</td></tr>
-              <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Contact</td><td style="font-size:13px;">${escapeHtml(referral.patientContact)}</td></tr>
-              <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;vertical-align:top;">Case</td><td style="font-size:13px;">${escapeHtml(referral.caseDescription)}</td></tr>
-              ${referral.notes ? `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;vertical-align:top;">Notes</td><td style="font-size:13px;">${escapeHtml(referral.notes)}</td></tr>` : ""}
-            </table>
-          </div>`;
-        const referralResults = await sendEmail(REFERRAL_RECIPIENTS, `New referral: ${referral.patientFirstName} ${referral.patientLastName}`, html);
-        // Only mark notified once the guaranteed recipient (partner@maha.clinic)
-        // got it — secondary Resend-sandbox-blocked recipients don't block this,
-        // but a total failure (rate limit, network) leaves it unnotified so the
-        // next poll retries automatically.
-        if (referralResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {
-          await storage.markReferralsNotified([referral.id], Date.now());
-        }
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
 
       const orders = await storage.listUnnotifiedOrders();
       for (const order of orders) {
@@ -133,6 +101,8 @@ export function startNotificationScheduler(storage: IStorage) {
 
       const threads = await storage.listUnnotifiedChatThreads();
       for (const thread of threads) {
+        // The dedicated referral alert replaces the auto-created chat alert.
+        if (thread.kind === "referral") continue;
         const starter = await storage.getUser(thread.userId);
         const html = `
           <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
@@ -147,31 +117,6 @@ export function startNotificationScheduler(storage: IStorage) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // 6-hour escalation: any thread whose most recent message came from a
-      // partner/student and has sat unanswered by an admin for 6+ hours gets
-      // one alert email -- tracked via escalationSentForMessageId so it fires
-      // exactly once per unanswered message, then fires again if a later
-      // message goes unanswered too (see schema.ts comment for details).
-      const now = Date.now();
-      const allThreads = await storage.listThreads();
-      for (const thread of allThreads) {
-        const last = await storage.getLastMessageForThread(thread.id);
-        if (!last || last.senderRole === "admin") continue;
-        if (now - last.createdAt < ESCALATION_THRESHOLD_MS) continue;
-        if (thread.escalationSentForMessageId === last.id) continue;
-        const starter = await storage.getUser(thread.userId);
-        const hoursWaiting = Math.floor((now - last.createdAt) / 3_600_000);
-        const html = `
-          <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
-            <h2>Chat waiting for a reply</h2>
-            <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b>'s message in <b>${escapeHtml(thread.topic)}</b> has been waiting ${hoursWaiting}+ hours without an admin reply.</p>
-            <p style="font-size:13px;color:#666;">"${escapeHtml((last.body || "[attachment]").slice(0, 200))}"</p>
-            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Platform.</p>
-          </div>`;
-        await sendEmail(mergeRecipients([], adminEmails), `Waiting 6+ hours for a reply: ${thread.topic}`, html);
-        await storage.updateThread(thread.id, { escalationSentForMessageId: last.id });
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
     } catch (err) {
       console.error("[notification-scheduler] error:", err);
     } finally {

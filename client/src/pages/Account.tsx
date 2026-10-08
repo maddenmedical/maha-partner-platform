@@ -113,7 +113,7 @@ function notifyCategoryConfigs(role: string | undefined): NotifyCategoryConfig[]
 const NOTIFY_STYLE_OPTIONS: { value: NotifyStyle; label: string; description: string }[] = [
   { value: "preview", label: "Preview", description: "Show the full message, e.g. who sent it and what it says." },
   { value: "alert", label: "Alert only", description: "Notify me, but don't show the content." },
-  { value: "silent", label: "Silent", description: "No push \u2014 just bump the in-app unread badge." },
+  { value: "silent", label: "Quiet", description: "A quiet notification and unread badge, without sound." },
 ];
 
 type NotifyPrefs = Record<NotifyCategory, { enabled: boolean; style: NotifyStyle }>;

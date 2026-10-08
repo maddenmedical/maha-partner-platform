@@ -32,6 +32,8 @@ import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
+import { notificationSummary, readNotices, readReferralNotice, readChatNotices } from "./notificationStore";
+import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
@@ -137,18 +139,15 @@ async function sendDecisionEmail(user: { name: string; role: string; email: stri
   await sendEmail([user.email], subject, html);
 }
 
-// Item 11: push a notification to every admin when a partner/student writes
-// into a chat that ALREADY had prior messages (a brand-new first message
-// is a "new chat" and is covered separately by the email in
-// notificationScheduler, so we don't double-notify for that case).
-async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, msg: { senderName: string; body: string | null }) {
-  const messageCount = await storage.countMessagesForThread(thread.id);
-  if (messageCount <= 1) return; // first message in the thread -- handled as "new chat" via email
+// In-app/push notification for every new partner message, including the first.
+// An email about a new thread does not replace its unread app notification.
+async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, msg: { id: number; senderName: string; body: string | null }) {
   const admins = await storage.listAdmins();
   const adminIds = admins.map((a) => a.id);
   if (!adminIds.length) return;
   const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
   await notifyUsers(adminIds, "chat", {
+    threadId: thread.id, messageId: msg.id,
     previewTitle: `${msg.senderName}: ${thread.topic}`,
     previewBody: bodyPreview,
     genericTitle: "New chat message",
@@ -161,9 +160,10 @@ async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, m
 // chat -- previously missing entirely (partners only found out about admin
 // replies by opening the app). Respects the recipient's own "chat" category
 // preference via notifyUsers.
-async function notifyOwnerOfAdminReply(thread: { id: number; userId: number; topic: string }, msg: { senderName: string; body: string | null }) {
+async function notifyOwnerOfAdminReply(thread: { id: number; userId: number; topic: string }, msg: { id: number; senderName: string; body: string | null }) {
   const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
   await notifyUsers([thread.userId], "chat", {
+    threadId: thread.id, messageId: msg.id,
     previewTitle: `${msg.senderName} replied in ${thread.topic}`,
     previewBody: bodyPreview,
     genericTitle: "New reply in your chat",
@@ -1095,7 +1095,9 @@ export async function registerRoutes(
     // referral -- flat, one-time credit for using the feature, not tied to
     // referral outcome. See shared/schema.ts STANDING note for why.
     awardStanding(req.user!.id, "referral_submitted", "app_activity").catch(console.error);
+    await queueReferralAlerts(referral).catch(err => console.error("[referral-alert] queue failed", err));
     res.json(referral);
+    void deliverReferralAlerts().catch(err => console.error("[referral-alert] delivery failed", err));
   });
 
   app.get("/api/referrals/mine", requireAuth, requireRole("partner", "student"), async (req: AuthedRequest, res) => {
@@ -1110,6 +1112,12 @@ export async function registerRoutes(
   });
 
   // ---------- ADMIN: REFERRALS ----------
+  app.post("/api/admin/referrals/:id/seen", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const referral = await storage.getReferral(Number(req.params.id));
+    if (!referral) return res.status(404).json({ message: "Referral not found" });
+    readReferralNotice(req.user!.id, referral.id);
+    res.json({ ok: true });
+  });
   // `?archived=true` returns only archived referrals, `?archived=all` returns
   // both. Default (omitted / anything else) returns only active referrals so
   // the main inbox and sidebar unread badge naturally exclude archived rows.
@@ -2403,6 +2411,7 @@ export async function registerRoutes(
     const reactionsByMessage = await reactionSummariesForThread(thread.id, req.user!.id);
     // Opening the thread clears the unread marker for its owner (Item 10).
     await storage.updateThread(thread.id, { ownerLastReadAt: Date.now() });
+    readChatNotices(req.user!.id, thread.id, messages.map(m => m.id));
     res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
@@ -2614,6 +2623,7 @@ export async function registerRoutes(
     const reactionsByMessage = await reactionSummariesForThread(threadId, req.user!.id);
     // Opening the thread clears the unread marker for the whole admin team (Item 10).
     await storage.updateThread(threadId, { adminLastReadAt: Date.now() });
+    readChatNotices(req.user!.id, threadId, messages.map(m => m.id));
     res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
 
@@ -3616,6 +3626,18 @@ export async function registerRoutes(
   });
 
   // ---------- NOTIFICATION PREFERENCES (self-service, all roles) ----------
+  app.get("/api/notifications", requireAuth, async (req: AuthedRequest, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(notificationSummary(req.user!.id));
+  });
+  app.post("/api/notifications/read", requireAuth, async (req: AuthedRequest, res) => {
+    const ids = req.body?.ids;
+    if (ids !== undefined && (!Array.isArray(ids) || ids.length > 100 || ids.some(id => typeof id !== "string"))) {
+      return res.status(400).json({ message: "Invalid notification IDs" });
+    }
+    readNotices(req.user!.id, ids);
+    res.json(notificationSummary(req.user!.id));
+  });
   app.patch("/api/notifications/preferences", requireAuth, async (req: AuthedRequest, res) => {
     const parsed = updateNotificationPreferenceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });

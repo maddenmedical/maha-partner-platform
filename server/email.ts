@@ -15,22 +15,25 @@
 const RESEND_BASE_URL = process.env.CUSTOM_CRED_API_RESEND_COM_URL || "https://api.resend.com";
 const RESEND_TOKEN = process.env.CUSTOM_CRED_API_RESEND_COM_TOKEN || process.env.RESEND_API_KEY;
 
-// Resend's sandbox (unverified domain) only allows sending FROM the
-// resend.dev test domain. Once a custom domain (e.g. maha.clinic) is
-// verified in Resend, update this to an address on that domain.
-const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || "MAHA Partner Platform <onboarding@resend.dev>";
+// Production sender; an explicitly configured deployment address takes
+// precedence. Never silently fall back to the provider's sandbox sender.
+const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || "MAHA Partner Platform <partner@maha.clinic>";
 
 export type EmailResult = { to: string; ok: boolean; error?: string };
 
-async function sendOne(to: string, subject: string, html: string): Promise<EmailResult> {
+export type EmailOptions = { idempotencyKey?: string; highPriority?: boolean };
+async function sendOne(to: string, subject: string, html: string, options?: EmailOptions): Promise<EmailResult> {
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (RESEND_TOKEN) headers.Authorization = `Bearer ${RESEND_TOKEN}`;
+    if (options?.idempotencyKey) headers["Idempotency-Key"] = `${options.idempotencyKey}:${to.toLowerCase()}`;
     const res = await fetch(`${RESEND_BASE_URL}/emails`, {
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers,
-      body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html }),
+      body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html,
+        ...(options?.highPriority ? { headers: { "X-Priority": "1", Importance: "high" } } : {}),
+      }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -47,10 +50,10 @@ async function sendOne(to: string, subject: string, html: string): Promise<Email
 // hiccup break the request that triggered it. Recipients are sent to
 // sequentially with a small delay to stay well under Resend's per-second
 // rate limit when a catch-up run has several notifications queued up.
-export async function sendEmail(to: string[], subject: string, html: string): Promise<EmailResult[]> {
+export async function sendEmail(to: string[], subject: string, html: string, options?: EmailOptions): Promise<EmailResult[]> {
   const results: EmailResult[] = [];
   for (const addr of to) {
-    const r = await sendOne(addr, subject, html);
+    const r = await sendOne(addr, subject, html, options);
     if (!r.ok) console.error(`[email] failed to send "${subject}" to ${r.to}:`, r.error);
     else console.log(`[email] sent "${subject}" to ${r.to}`);
     results.push(r);

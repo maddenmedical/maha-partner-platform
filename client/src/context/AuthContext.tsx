@@ -204,6 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     queryClient.clear();
+    void (navigator as Navigator & { clearAppBadge?: () => Promise<void> }).clearAppBadge?.().catch(() => {});
     // Reset location too, so signing back in (possibly as a different role)
     // never inherits a hash path that belongs to the previous role's shell.
     navigate("/", { replace: true });

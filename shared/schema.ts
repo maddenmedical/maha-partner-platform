@@ -610,6 +610,34 @@ export function estimateShippingCostCents(totalWeightGrams: number, destinationC
 }
 
 // ---------- REFERRALS ----------
+// Persistent per-person notifications. Opening the app does not acknowledge
+// anything; another admin reading a referral never clears this person's alert.
+export const appNotifications = sqliteTable("app_notifications", {
+  id: text("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  category: text("category").notNull(),
+  threadId: integer("thread_id"),
+  messageId: integer("message_id"),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  url: text("url").notNull(),
+  critical: integer("critical", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at").notNull(),
+  readAt: integer("read_at"),
+  pushSentAt: integer("push_sent_at"),
+  // Hashes of subscriptions that accepted this notice. Retrying one failed
+  // device must not repeatedly alert the user's other successful devices.
+  pushDeliveredDevices: text("push_delivered_devices").notNull().default("[]"),
+});
+export const referralEmailDeliveries = sqliteTable("referral_email_deliveries", {
+  id: text("id").primaryKey(),
+  referralId: integer("referral_id").notNull(),
+  email: text("email").notNull(),
+  acceptedAt: integer("accepted_at"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+});
+
 export const referrals = sqliteTable("referrals", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   partnerId: integer("partner_id").notNull(),
@@ -863,11 +891,9 @@ export const chatThreads = sqliteTable("chat_threads", {
   // last-read timestamp here.
   ownerLastReadAt: integer("owner_last_read_at"),
   adminLastReadAt: integer("admin_last_read_at"),
-  // Item 11 (6-hour escalation): the id of the most recent partner/student
-  // message this thread has already sent an "unanswered for 6+ hours" alert
-  // for. Compared against the current last message's id on each poll so the
-  // alert fires exactly once per unanswered message, and fires again for a
-  // later message if the thread goes unanswered again after an admin reply.
+  // Historical six-hour escalation marker, retained for data compatibility.
+  // Current two-hour reminders use the per-recipient chat_reminder_deliveries
+  // ledger instead; the old six-hour job no longer runs.
   escalationSentForMessageId: integer("escalation_sent_for_message_id"),
   // Admin-only reversible "hide from inbox" toggle. Set to the archive time,
   // null when active/unarchived. Messages, flags, reactions, and to-dos are
@@ -917,6 +943,19 @@ export const chatMessages = sqliteTable("chat_messages", {
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, deletedAt: true, deletedByName: true, editedAt: true });
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+
+// One reminder per waiting episode and recipient. Successful delivery to one
+// admin must never suppress retries to another admin or to the partner.
+export const chatReminderDeliveries = sqliteTable("chat_reminder_deliveries", {
+  id: text("id").primaryKey(),
+  threadId: integer("thread_id").notNull(),
+  episodeMessageId: integer("episode_message_id").notNull(),
+  recipientId: integer("recipient_id").notNull(),
+  email: text("email").notNull(),
+  acceptedAt: integer("accepted_at"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+});
 
 // ---------- CHAT MESSAGE FLAGS (per-user "star for later") ----------
 export const chatMessageFlags = sqliteTable("chat_message_flags", {

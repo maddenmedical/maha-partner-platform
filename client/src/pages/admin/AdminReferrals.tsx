@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Referral } from "@shared/schema";
@@ -24,7 +24,7 @@ import { Inbox, FileText, MessageSquare, MoreVertical, Archive, ArchiveRestore, 
 import { cn, joinNonEmpty } from "@/lib/utils";
 import { openAuthedFile } from "@/lib/fileAccess";
 import { setPendingThreadId } from "@/lib/chatNav";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
@@ -49,8 +49,24 @@ export default function AdminReferrals() {
     ? ["/api/admin/referrals", { archived: scopeParam }] as const
     : ["/api/admin/referrals"] as const;
 
-  const { data: referrals, isLoading } = useQuery<ReferralWithPartner[]>({ queryKey: listKey });
-  const [, navigate] = useLocation();
+  const { data: referrals, isLoading } = useQuery<ReferralWithPartner[]>({ queryKey: listKey, refetchInterval: 15000 });
+  const [location, navigate] = useLocation();
+  const search = useSearch();
+  useEffect(() => {
+    const id = Number(new URLSearchParams(search).get("referral"));
+    const referral = referrals?.find(row => row.id === id);
+    if (referral) {
+      setSelected(referral);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("referral");
+      window.history.replaceState(window.history.state, "", url);
+    }
+  }, [location, search, referrals]);
+  useEffect(() => {
+    if (!selected) return;
+    void apiRequest("POST", `/api/admin/referrals/${selected.id}/seen`).then(() =>
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] })).catch(() => {});
+  }, [selected?.id, queryClient]);
 
   function openReferralChat(threadId: number) {
     setPendingThreadId(threadId);
@@ -61,6 +77,7 @@ export default function AdminReferrals() {
   // tab, and the archived tab all refresh after any mutation.
   function invalidateReferrals() {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/referrals"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
   }
 
   const mutation = useMutation({

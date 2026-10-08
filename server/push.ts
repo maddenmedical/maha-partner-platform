@@ -1,6 +1,7 @@
 import webpush from "web-push";
 import type { PushSubscriptionRow } from "@shared/schema";
 import { storage } from "./storage";
+import { addNotice, notificationSummary } from "./notificationStore";
 
 let configured = false;
 
@@ -25,10 +26,13 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string | null;
-  // "silent" tells the service worker to bump the app-icon badge instead of
-  // showing a system notification. badgeCount is the running total to set.
+  // Quiet notifications still display, without sound. badgeCount is the
+  // authoritative unread ledger count, never a client-side increment.
   silent?: boolean;
   badgeCount?: number;
+  tag?: string;
+  requireInteraction?: boolean;
+  priority?: "high" | "normal";
 }
 
 export interface SendResult {
@@ -57,6 +61,7 @@ export async function sendToSubscriptions(
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
           body,
+          { urgency: payload.priority || "normal", TTL: 24 * 60 * 60, timeout: 10_000 },
         );
         sent++;
       } catch (err: any) {
@@ -82,7 +87,7 @@ export async function sendToSubscriptions(
 // Every push a user receives falls into one of four categories they control
 // independently (community / chat / orders / offers), each with its own
 // on/off switch and delivery style:
-//   - "silent"  -- app-icon badge count only, no sound or popup
+//   - "silent"  -- quiet generic popup + badge, without sound
 //   - "alert"   -- tone + popup, generic text (no message content revealed)
 //   - "preview" -- tone + popup with the actual content (platform default)
 // notifyUsers() is the single place that turns a caller's "what happened"
@@ -93,6 +98,8 @@ export async function sendToSubscriptions(
 export type NotificationCategory = "community" | "chat" | "orders" | "offers" | "standing" | "staff";
 
 export interface NotifyContent {
+  threadId?: number;
+  messageId?: number;
   // Shown for "alert" style -- must not reveal message/order content.
   genericTitle: string;
   genericBody: string;
@@ -131,27 +138,32 @@ export async function notifyUsers(
   await Promise.all(
     uniqueIds.map(async (userId) => {
       const user = await storage.getUser(userId);
-      if (!user) return;
+      if (!user || user.status !== "approved" || user.archivedAt) return;
       const enabled = (user as any)[cols.enabled];
       if (!enabled) return;
       const style: string = (user as any)[cols.style] || "preview";
+      let url = content.url || "/#/";
+      if (url.startsWith("/") && !url.startsWith("//") && !url.includes("#")) {
+        const route = user.role === "admin" && url === "/community" ? "/admin/community" : url;
+        url = `/#${route}`;
+      }
+      const id = addNotice({ userId, category, title: content.genericTitle, body: content.genericBody,
+        url, threadId: content.threadId, messageId: content.messageId, createdAt: Date.now() });
+      const badgeCount = notificationSummary(userId).count;
 
       const subs = await storage.getPushSubscriptionsForUserIds([userId]);
-      if (subs.length === 0 && style !== "silent") return;
+      if (subs.length === 0) return;
 
       let payload: PushPayload;
       if (style === "silent") {
-        const nextCount = (user.unreadBadgeCount ?? 0) + 1;
-        await storage.updateUserProfile(userId, { unreadBadgeCount: nextCount });
-        if (subs.length === 0) return;
-        payload = { title: "", body: "", silent: true, badgeCount: nextCount, url: content.url ?? null };
+        payload = { title: content.genericTitle, body: content.genericBody, silent: true, url: content.url ?? null };
       } else if (style === "alert") {
         payload = { title: content.genericTitle, body: content.genericBody, url: content.url ?? null };
       } else {
         payload = { title: content.previewTitle, body: content.previewBody, url: content.url ?? null };
       }
 
-      await sendToSubscriptions(subs, payload);
+      await sendToSubscriptions(subs, { ...payload, url, badgeCount, tag: id });
     }),
   );
 }

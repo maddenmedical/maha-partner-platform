@@ -1,12 +1,12 @@
 import {
-  users, sessions, products, priceTiers, orders, orderItems, referrals,
+  users, sessions, products, priceTiers, orders, orderItems, referrals, appNotifications, referralEmailDeliveries,
   videos, courses, courseAccessGrants, coursePurchases, modules, cohorts, cohortEnrollments,
   classSessions, homeworkSubmissions, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles,
   pushSubscriptions, announcements, caseDiscussions, caseDiscussionRsvps, legacyOrders,
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
   standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog, adminRecordAudit,
-  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages,
+  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages, chatReminderDeliveries,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, InsertSession, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -1009,6 +1009,8 @@ export class DatabaseStorage implements IStorage {
     return db.update(referrals).set({ status }).where(eq(referrals.id, id)).returning().get();
   }
   async setReferralArchived(id: number, archived: boolean) {
+    if (archived) db.update(appNotifications).set({ readAt: Date.now() })
+      .where(and(eq(appNotifications.category, "referral"), like(appNotifications.id, `referral:${id}:%`))).run();
     return db.update(referrals)
       .set({ archivedAt: archived ? Date.now() : null })
       .where(eq(referrals.id, id))
@@ -1019,6 +1021,9 @@ export class DatabaseStorage implements IStorage {
   // a general chat, preserving the conversation history. Files, flags,
   // reactions, and to-dos on that chat are untouched.
   async deleteReferral(id: number) {
+    db.delete(appNotifications).where(and(eq(appNotifications.category, "referral"),
+      like(appNotifications.id, `referral:${id}:%`))).run();
+    db.delete(referralEmailDeliveries).where(eq(referralEmailDeliveries.referralId, id)).run();
     db.update(chatThreads)
       .set({ referralId: null, kind: "general" })
       .where(eq(chatThreads.referralId, id))
@@ -1262,6 +1267,8 @@ export class DatabaseStorage implements IStorage {
     return db.update(chatThreads).set(patch).where(eq(chatThreads.id, id)).returning().get();
   }
   async deleteThread(id: number) {
+    db.delete(chatReminderDeliveries).where(eq(chatReminderDeliveries.threadId, id)).run();
+    db.delete(appNotifications).where(eq(appNotifications.threadId, id)).run();
     const msgIds = db.select({ id: chatMessages.id }).from(chatMessages).where(eq(chatMessages.threadId, id)).all().map((r) => r.id);
     if (msgIds.length > 0) {
       db.delete(chatMessageFlags).where(inArray(chatMessageFlags.messageId, msgIds)).run();

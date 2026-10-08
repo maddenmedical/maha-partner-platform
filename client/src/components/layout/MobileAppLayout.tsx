@@ -6,6 +6,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { NotificationBell } from "@/components/NotificationCenter";
 import { LogOut, Settings, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCanGoBack } from "@/hooks/use-can-go-back";
@@ -69,8 +70,8 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
           </Button>
         </div>
       )}
-      <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
-        <div className="flex items-center gap-2 min-w-0">
+      <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
+        <div className="flex flex-1 items-center gap-2 min-w-[7rem]">
           {canGoBack ? (
             <button
               type="button"
@@ -96,8 +97,9 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 ml-auto">
           <InstallAppButton />
+          <NotificationBell />
           <Button variant="ghost" size="icon" asChild aria-label="Account settings" data-testid="button-account">
             <Link href="/account">
               <Settings className="h-4 w-4" />
