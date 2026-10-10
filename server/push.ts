@@ -163,7 +163,10 @@ export async function notifyUsers(
         payload = { title: content.previewTitle, body: content.previewBody, url: content.url ?? null };
       }
 
-      await sendToSubscriptions(subs, { ...payload, url, badgeCount, tag: id });
+      // Ask supporting platforms to retain alerting notifications. Android and
+      // Firefox control their own presentation; never override Quiet mode.
+      await sendToSubscriptions(subs, { ...payload, url, badgeCount, tag: id,
+        requireInteraction: style !== "silent" && user.notifyEnhancedVisibility !== false });
     }),
   );
 }

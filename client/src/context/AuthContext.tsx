@@ -34,6 +34,7 @@ export type AuthUser = {
   // content), alert (generic, content-free), or silent (badge only, no
   // push). Server default for every category is enabled + "preview".
   notifyCommunityEnabled: boolean;
+  notifyEnhancedVisibility: boolean;
   notifyCommunityStyle: string;
   notifyChatEnabled: boolean;
   notifyChatStyle: string;

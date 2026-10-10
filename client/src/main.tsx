@@ -12,8 +12,13 @@ createRoot(document.getElementById("root")!).render(<App />);
 // sandboxed iframes) that don't support service workers.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // Non-fatal: push simply stays unavailable if registration fails.
-    });
+    try {
+      navigator.serviceWorker.register("/sw.js").catch(() => {
+        // Non-fatal: push simply stays unavailable if registration fails.
+      });
+    } catch {
+      // Restricted contexts can throw when reading serviceWorker itself.
+      // Keep the application and persistent in-app alerts available.
+    }
   });
 }

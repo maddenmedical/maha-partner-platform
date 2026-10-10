@@ -300,6 +300,7 @@ type PublicUser = {
   communityShowPhone: boolean;
   communityShowEmail: boolean;
   notifyCommunityEnabled: boolean;
+  notifyEnhancedVisibility: boolean;
   notifyCommunityStyle: string;
   notifyChatEnabled: boolean;
   notifyChatStyle: string;
@@ -345,6 +346,7 @@ function toPublicUser(user: {
   communityShowPhone?: boolean | null;
   communityShowEmail?: boolean | null;
   notifyCommunityEnabled?: boolean | null;
+  notifyEnhancedVisibility?: boolean | null;
   notifyCommunityStyle?: string | null;
   notifyChatEnabled?: boolean | null;
   notifyChatStyle?: string | null;
@@ -384,6 +386,7 @@ function toPublicUser(user: {
     communityShowPhone: user.communityShowPhone ?? false,
     communityShowEmail: user.communityShowEmail ?? false,
     notifyCommunityEnabled: user.notifyCommunityEnabled ?? true,
+    notifyEnhancedVisibility: user.notifyEnhancedVisibility ?? true,
     notifyCommunityStyle: user.notifyCommunityStyle ?? "preview",
     notifyChatEnabled: user.notifyChatEnabled ?? true,
     notifyChatStyle: user.notifyChatStyle ?? "preview",
@@ -3643,7 +3646,7 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
     const updated = await storage.updateNotificationPreference(req.user!.id, parsed.data.category, {
       enabled: parsed.data.enabled,
-      style: parsed.data.style,
+      style: "style" in parsed.data ? parsed.data.style : undefined,
     });
     if (!updated) return res.status(404).json({ message: "Not found" });
     res.json(toPublicUser(updated));

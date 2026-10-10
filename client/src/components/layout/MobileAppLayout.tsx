@@ -6,7 +6,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
-import { NotificationBell } from "@/components/NotificationCenter";
+import { NotificationBell, NotificationAttentionBanner } from "@/components/NotificationCenter";
 import { LogOut, Settings, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCanGoBack } from "@/hooks/use-can-go-back";
@@ -119,6 +119,7 @@ export function MobileAppLayout({ children, tabs, title }: { children: ReactNode
         </div>
       </header>
 
+      <NotificationAttentionBanner />
       <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-24">{children}</main>
 
       {/* Wide roles (e.g. a student who also has partner functions) get more

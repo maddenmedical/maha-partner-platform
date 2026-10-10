@@ -20,7 +20,7 @@ self.addEventListener("push", event => {
       body: payload.body || "Open MAHA to review your new notification.",
       icon: "./icon-192.png", badge: "./icon-192.png", tag: payload.tag,
       requireInteraction: !!payload.requireInteraction, silent: !!payload.silent,
-      ...(payload.requireInteraction && !payload.silent ? { vibrate: [250, 100, 250] } : {}),
+      ...(payload.priority === "high" && !payload.silent ? { vibrate: [250, 100, 250] } : {}),
       data: { url: payload.url || "./" },
     });
     for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {

@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { InstallAppButton } from "@/components/InstallAppButton";
-import { NotificationBell, CriticalReferralBanner } from "@/components/NotificationCenter";
+import { NotificationBell, NotificationAttentionBanner } from "@/components/NotificationCenter";
 import {
   Home, UserCheck, Inbox, ShoppingCart, Package, Video, GraduationCap, MessageSquare, Users, Users2, LogOut, Megaphone, CalendarClock, UploadCloud, Settings, Contact, ListTodo, GripVertical, Building2, Eye, Loader2, ArrowLeft,
 } from "lucide-react";
@@ -305,7 +305,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
               </Button>
             </div>
           </header>
-          <CriticalReferralBanner />
+          <NotificationAttentionBanner />
           <main className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-6">{children}</main>
         </div>
       </div>

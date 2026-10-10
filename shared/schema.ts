@@ -86,6 +86,7 @@ export const users = sqliteTable("users", {
   // Chat without touching their platform account otherwise. Null = not blocked.
   communityBlockedAt: integer("community_blocked_at"),
   // ---- Push notification preferences, per category ----
+  notifyEnhancedVisibility: integer("notify_enhanced_visibility", { mode: "boolean" }).notNull().default(true),
   // "silent" = app-icon badge count only, no sound/popup. "alert" = tone +
   // popup with generic text (no message content). "preview" = tone + popup
   // with the actual content (default for every category; user-adjustable).
@@ -288,11 +289,14 @@ export type CommunityVisibilityInput = z.infer<typeof communityVisibilitySchema>
 // Self-service push notification preferences -- one category at a time.
 export const NOTIFICATION_CATEGORIES = ["community", "chat", "orders", "offers", "staff"] as const;
 export const NOTIFICATION_STYLES = ["silent", "alert", "preview"] as const;
-export const updateNotificationPreferenceSchema = z.object({
+export const updateNotificationPreferenceSchema = z.union([z.object({
   category: z.enum(NOTIFICATION_CATEGORIES),
   enabled: z.boolean().optional(),
   style: z.enum(NOTIFICATION_STYLES).optional(),
-});
+}), z.object({
+  category: z.literal("visibility"),
+  enabled: z.boolean(),
+}).strict()]);
 export type UpdateNotificationPreferenceInput = z.infer<typeof updateNotificationPreferenceSchema>;
 
 // Admin-initiated edit of another user's core contact details -- deliberately

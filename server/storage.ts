@@ -1671,6 +1671,11 @@ export class DatabaseStorage implements IStorage {
 
   // ---------- notification preferences ----------
   async updateNotificationPreference(userId: number, category: string, patch: { enabled?: boolean; style?: string }) {
+    if (category === "visibility") {
+      if (typeof patch.enabled !== "boolean") return this.getUser(userId);
+      return db.update(users).set({ notifyEnhancedVisibility: patch.enabled })
+        .where(eq(users.id, userId)).returning().get();
+    }
     const colMap: Record<string, { enabled: keyof typeof users.$inferInsert; style: keyof typeof users.$inferInsert }> = {
       community: { enabled: "notifyCommunityEnabled", style: "notifyCommunityStyle" },
       chat: { enabled: "notifyChatEnabled", style: "notifyChatStyle" },

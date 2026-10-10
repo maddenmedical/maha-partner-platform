@@ -134,6 +134,7 @@ export default function Account() {
     staff: { enabled: true, style: "preview" },
   });
   const [notifySaving, setNotifySaving] = useState<NotifyCategory | null>(null);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
   const [enablingPush, setEnablingPush] = useState(false);
 
@@ -173,6 +174,19 @@ export default function Account() {
       toast({ title: "Could not update notification setting", description: err.message, variant: "destructive" });
     } finally {
       setNotifySaving(null);
+    }
+  }
+
+  async function saveEnhancedVisibility(enabled: boolean) {
+    setVisibilitySaving(true);
+    try {
+      const res = await apiRequest("PATCH", "/api/notifications/preferences", { category: "visibility", enabled });
+      updateUser(await res.json());
+      toast({ title: enabled ? "Enhanced notification visibility on" : "Standard notification visibility on" });
+    } catch (err: any) {
+      toast({ title: "Could not update notification setting", description: err.message, variant: "destructive" });
+    } finally {
+      setVisibilitySaving(false);
     }
   }
 
@@ -553,6 +567,29 @@ export default function Account() {
                 Choose how you want to hear about each type of update. These settings are just for you.
               </p>
             </div>
+          </div>
+
+          <div className="rounded-lg border border-border p-3 flex items-start justify-between gap-3"
+            data-testid="section-notify-visibility">
+            <div className="min-w-0">
+              <Label htmlFor="enhanced-notification-visibility" className="text-sm font-semibold">
+                Enhanced notification visibility
+              </Label>
+              <p id="visibility-description" className="text-xs text-muted-foreground mt-1">
+                Add a persistent unread banner, larger red counters and a browser-tab count.
+                Keep alerting pop-ups visible until interaction where supported. On by default.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Turning this off keeps standard bell counts, supported device badges, referral warnings and emails.
+                Your phone and browser control home-screen badge availability.
+              </p>
+            </div>
+            <Switch id="enhanced-notification-visibility"
+              checked={user?.notifyEnhancedVisibility !== false}
+              onCheckedChange={saveEnhancedVisibility}
+              disabled={visibilitySaving || !!user?.impersonating}
+              aria-describedby="visibility-description"
+              data-testid="switch-notify-visibility" className="shrink-0" />
           </div>
 
           {pushPermission !== "granted" && pushPermission !== "unsupported" && (

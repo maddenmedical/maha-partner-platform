@@ -79,6 +79,19 @@ else {
   try {
     await queueReferralAlerts(ref);
     check(notificationSummary(1).count === 2 && notificationSummary(2).count === 1, "queue deduplicated, counts per user");
+    check((await (await api("GET", "/api/auth/me")).json()).notifyEnhancedVisibility === true,
+      "enhanced visibility defaults on");
+    check((await api("PATCH", "/api/notifications/preferences", "none", { category: "visibility", enabled: false })).status === 401,
+      "visibility preference requires authentication");
+    check((await api("PATCH", "/api/notifications/preferences", "qa-1", { category: "visibility", enabled: "false" })).status === 400,
+      "visibility preference rejects non-boolean input");
+    check((await api("PATCH", "/api/notifications/preferences", "qa-1", { category: "visibility", enabled: false, userId: 2 })).status === 400,
+      "visibility preference rejects cross-account payload");
+    await api("PATCH", "/api/notifications/preferences", "qa-1", { category: "visibility", enabled: false });
+    check((await (await api("GET", "/api/auth/me")).json()).notifyEnhancedVisibility === false &&
+      (await storage.getUser(2))!.notifyEnhancedVisibility === true, "visibility preference persisted only for own account");
+    check(notificationSummary(1).count === 2 && notificationSummary(1).criticalCount === 1,
+      "turning enhanced visibility off preserves unread and critical ledger");
     check((await api("GET", "/api/notifications", "none")).status === 401, "unauthenticated count denied");
     check((await api("POST", `/api/admin/referrals/${ref.id}/seen`, "qa-3", {})).status === 403, "partner cannot acknowledge admin referral");
     check((await api("POST", "/api/notifications/read", "qa-1", { ids: [42] })).status === 400, "malformed read rejected");
@@ -95,6 +108,8 @@ else {
     check(mail.every(m => !/Synthetic|Private|private-contact|private-case/.test(JSON.stringify(m))), "referral emails contain no patient details");
     check(mail.every(m => m.from.includes("partner@maha.clinic") && m.headers.Importance === "high" && m.requestHeaders["Idempotency-Key"]), "sender, priority and provider idempotency header");
     check(pushes.length === 2 && pushes.every(p => p.payload.requireInteraction && p.opts.urgency === "high"), "visible high-priority push for each admin");
+    check((await storage.getUser(1))!.notifyEnhancedVisibility === false,
+      "critical referral push remains high priority even with enhanced visibility off");
     check(pushes.find(p => p.sub.endpoint.endsWith("/1")).payload.badgeCount === 2, "push includes absolute ledger count");
     await deliverReferralAlerts();
     check(mail.length === 4 && pushes.length === 2, "retry backoff and successful push deduplication");
@@ -115,6 +130,8 @@ else {
     }
     check(notificationSummary(3).count === 3, "all notification styles count and duplicate recipient IDs collapse");
     check(pushes.slice(-3).map(p => p.payload.badgeCount).join(",") === "1,2,3", "all push styles carry badge counts");
+    check(pushes.slice(-3).map(p => p.payload.requireInteraction).join(",") === "true,true,false",
+      "preview and alert request persistence; Quiet preference preserved");
     db.delete(s.pushSubscriptions).where(eq(s.pushSubscriptions.userId, 3)).run();
     await notifyUsers([3], "chat", { genericTitle: "New message", genericBody: "Sign in", previewTitle: "", previewBody: "" });
     check(notificationSummary(3).count === 4, "in-app notices work without push subscription");
@@ -174,6 +191,43 @@ else {
       await pending;
       check(badges[0] === count && shown.length === 1, `service worker ${style}: navigator badge, visible alert, zero/offline handling`);
     }
+    // Firefox/Android capability fallback: no Badging API, but visible pushes
+    // must still work. Retention never forces Quiet alerts to vibrate.
+    for (const style of ["referral", "chat", "quiet"]) {
+      const handlers: any = {}, shown: any[] = [];
+      let closed = 0, destination = "", pending: any;
+      const client = { url: "https://example.invalid/", postMessage() {},
+        async navigate(url: string) { destination = url; }, async focus() {} };
+      const self = { navigator: {}, location: { origin: "https://example.invalid" },
+        registration: { scope: "https://example.invalid/", showNotification: async (...v: any[]) => { shown.push(v); } },
+        clients: { claim: async () => {}, matchAll: async () => [client] },
+        addEventListener: (name: string, fn: any) => { handlers[name] = fn; } };
+      vm.runInNewContext(readFileSync("client/public/sw.js", "utf8"), {
+        self, URL, AbortController, setTimeout, clearTimeout,
+        fetch: async () => ({ ok: true, json: async () => ({ count: 4 }) }),
+      });
+      handlers.push({ data: { json: () => ({ title: "MAHA", tag: style,
+        requireInteraction: style !== "quiet", priority: style === "referral" ? "high" : "normal",
+        silent: style === "quiet", url: "/?thread=1#/chat" }) }, waitUntil: (p: any) => { pending = p; } });
+      await pending;
+      check(shown.length === 1 && !!shown[0][1].vibrate === (style === "referral"),
+        `Android fallback ${style}: no badge API required; only priority referrals request vibration`);
+      handlers.activate({ waitUntil: (p: any) => { pending = p; } }); await pending;
+      check(closed === 0 && !handlers.notificationclose, `Android fallback ${style}: activation and swipe do not mark read`);
+      handlers.notificationclick({ notification: { data: shown[0][1].data, close() { closed++; } },
+        waitUntil: (p: any) => { pending = p; } }); await pending;
+      check(closed === 1 && destination === "https://example.invalid/?thread=1#/chat",
+        `Android fallback ${style}: tap closes only tapped notification and opens destination`);
+    }
+    await api("PATCH", "/api/notifications/preferences", "qa-3", { category: "visibility", enabled: false });
+    db.update(s.users).set({ notifyChatEnabled: true, notifyChatStyle: "alert" }).where(eq(s.users.id, 3)).run();
+    db.insert(s.pushSubscriptions).values({ userId: 3, endpoint: "https://push.example.invalid/3-new", p256dh: "mock", auth: "mock", createdAt: now }).run();
+    await notifyUsers([3], "chat", { genericTitle: "New message", genericBody: "Sign in", previewTitle: "", previewBody: "" });
+    check(pushes.at(-1).payload.requireInteraction === false, "enhanced visibility off stops ordinary push retention request");
+    const restored = await api("PATCH", "/api/notifications/preferences", "qa-3", { category: "visibility", enabled: true });
+    check((await restored.json()).notifyEnhancedVisibility === true, "partner can re-enable enhanced visibility");
+    await notifyUsers([3], "chat", { genericTitle: "New message", genericBody: "Sign in", previewTitle: "", previewBody: "" });
+    check(pushes.at(-1).payload.requireInteraction === true, "re-enabled enhanced visibility requests ordinary push retention");
     console.log(`ALL ${checks} NOTIFICATION CHECKS PASSED`);
   } finally {
     server.closeAllConnections();
