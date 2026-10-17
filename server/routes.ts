@@ -25,7 +25,7 @@ import {
   estimateShippingCostCents, pushSubscribeSchema, createAnnouncementSchema,
   insertCaseDiscussionSchema, createCommunityTopicSchema, postCommunityMessageSchema,
   communityVisibilitySchema, updateNotificationPreferenceSchema, COMMUNITY_ENABLED_KEY,
-  STANDING_POINTS, STANDING_TIERS, postStaffChatMessageSchema,
+  STANDING_POINTS, STANDING_TIERS, postStaffChatMessageSchema, startAdminChatSchema,
   WELCOME_INTRO_TOPIC_ID_KEY, WELCOME_INTRO_REMIND_EVERY_N_VISITS, WELCOME_INTRO_MAX_REMINDERS,
 } from "@shared/schema";
 import type { Course, Video } from "@shared/schema";
@@ -2559,6 +2559,31 @@ export async function registerRoutes(
       })
     );
     res.json(withUser);
+  });
+
+  // Minimal directory for the direct admin New chat flow. Never return the
+  // full user row (password hashes, retained credentials, private fields).
+  app.get("/api/admin/chat/recipients", requireAuth, requireRole("admin"), async (_req, res) => {
+    const partners = await storage.listUsersByRoleStatus("partner", "approved");
+    res.json(partners.map(({ id, name, email, businessName }) => ({ id, name, email, businessName }))
+      .sort((a, b) => a.name.localeCompare(b.name)));
+  });
+
+  app.post("/api/admin/chat/start", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    const parsed = startAdminChatSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Choose a partner, chat type, subject and first message." });
+    try {
+      const result = await storage.startAdminChat(req.user!, parsed.data);
+      // Same notification/preferences/reminder path as an ordinary admin
+      // message. Replayed requests do not create or announce another message.
+      if (result.created && result.message) {
+        notifyOwnerOfAdminReply(result.thread, result.message)
+          .catch((err) => console.error("[push] new admin chat notify failed:", err));
+      }
+      res.status(result.created ? 201 : 200).json({ thread: result.thread });
+    } catch (err: any) {
+      res.status(err.status || 500).json({ message: err.status ? err.message : "Could not start the chat. Please retry." });
+    }
   });
 
   // Admin-side equivalent of the partner "New chat" flow, driven from the

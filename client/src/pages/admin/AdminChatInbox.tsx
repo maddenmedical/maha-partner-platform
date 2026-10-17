@@ -31,6 +31,7 @@ import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/C
 import { UserAvatar } from "@/components/UserAvatar";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
+import { AdminNewChat } from "@/components/chat/AdminNewChat";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
 import type { Referral, User } from "@shared/schema";
 
@@ -120,7 +121,13 @@ export default function AdminChatInbox() {
 
   return (
     <div className="flex flex-col h-[calc(100dvh-6.5rem)] max-w-5xl -m-1">
-      <div className="mb-3 flex justify-end shrink-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <AdminNewChat onStarted={(id) => {
+          setView("active");
+          setStaffSelection(null);
+          setSelectedThread(null);
+          setPendingSelectId(id);
+        }} />
         <CrossChatSearch searchUrl="/api/admin/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="admin-chat-search" />
       </div>
       <div className="flex flex-1 min-h-0 gap-4">

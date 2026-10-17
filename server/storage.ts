@@ -6,7 +6,7 @@ import {
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
   standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog, adminRecordAudit,
-  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages, chatReminderDeliveries,
+  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages, chatReminderDeliveries, adminChatStarts,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, InsertSession, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -22,7 +22,7 @@ import type {
   AdminTodo, InsertAdminTodo,
   AppSetting, CommunityTopic, InsertCommunityTopic, CommunityMessage, CommunityMessageRead,
   StandingEntry, Clinic, AdminPinnedMember, ImpersonationLogEntry,
-  StaffRoomMessage, StaffDmThread, StaffDmMessage,
+  StaffRoomMessage, StaffDmThread, StaffDmMessage, StartAdminChatInput,
 } from "@shared/schema";
 import { STANDING_TIERS, standingTierForPoints, estimateShippingCostCents, type CreateOrderInput } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -30,6 +30,7 @@ import Database from "better-sqlite3";
 import { compare as comparePassword } from "bcryptjs";
 import { eq, and, or, desc, asc, gte, gt, lte, isNull, inArray, like, sql } from "drizzle-orm";
 import { autoMigrate } from "./autoMigrate";
+import { createHash } from "node:crypto";
 import { adminRecordEditSchemas, type AdminRecordKind, type AdminRecordPreview } from "@shared/adminRecordControls";
 
 const adminRecordTables = {
@@ -272,6 +273,7 @@ export interface IStorage {
   deleteProductResource(id: number): Promise<void>;
 
   // chat
+  startAdminChat(admin: Pick<User, "id" | "name">, input: StartAdminChatInput): Promise<{ thread: ChatThread; message?: ChatMessage; created: boolean }>;
   createThread(userId: number, userRole: string, topic: string, opts?: { kind?: string; referralId?: number }): Promise<ChatThread>;
   listThreadsForUser(userId: number): Promise<ChatThread[]>;
   listThreads(): Promise<ChatThread[]>;
@@ -1239,6 +1241,40 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteProductResource(id: number) {
     db.delete(productResources).where(eq(productResources.id, id)).run();
+  }
+
+  async startAdminChat(admin: Pick<User, "id" | "name">, input: StartAdminChatInput) {
+    const { requestId, ...payload } = input;
+    const key = `${admin.id}:${requestId}`;
+    const fingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    return db.transaction(() => {
+      const prior = db.select().from(adminChatStarts).where(eq(adminChatStarts.id, key)).get();
+      if (prior) {
+        if (prior.fingerprint !== fingerprint) recordError(409, "This request was already used. Close this dialog and start a new chat.");
+        const thread = db.select().from(chatThreads).where(eq(chatThreads.id, prior.threadId)).get();
+        if (!thread) recordError(410, "This chat was already created and has since been removed or merged. Please check your inbox.");
+        return { thread, created: false };
+      }
+      const partner = db.select().from(users).where(eq(users.id, input.userId)).get();
+      if (!partner || partner.role !== "partner" || partner.status !== "approved" || partner.archivedAt) {
+        recordError(400, "This partner is no longer available. Please choose an approved, active partner.");
+      }
+      const now = Date.now();
+      const thread = db.insert(chatThreads).values({
+        userId: partner.id, userRole: "partner", topic: input.topic, kind: "general",
+        pendingReferralRequestedAt: input.mode === "referral" ? now : null,
+        pendingReferralRequestedByRole: input.mode === "referral" ? "admin" : null,
+        // The admin initiated this conversation; do not send the MAHA team
+        // the legacy "partner started a chat" email for it.
+        emailNotified: true, notifiedAt: now, adminLastReadAt: now, createdAt: now,
+      }).returning().get();
+      const message = db.insert(chatMessages).values({
+        threadId: thread.id, senderId: admin.id, senderRole: "admin",
+        senderName: admin.name, body: input.message, createdAt: now,
+      }).returning().get();
+      db.insert(adminChatStarts).values({ id: key, fingerprint, threadId: thread.id }).run();
+      return { thread, message, created: true };
+    });
   }
 
   async createThread(userId: number, userRole: string, topic: string, opts?: { kind?: string; referralId?: number }) {

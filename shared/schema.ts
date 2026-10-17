@@ -918,6 +918,28 @@ export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({
 export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
 export type ChatThread = typeof chatThreads.$inferSelect;
 
+// Durable deduplication for the admin's direct "New chat & send" action.
+// Metadata only: no message body or patient details are retained here.
+export const adminChatStarts = sqliteTable("admin_chat_starts", {
+  id: text("id").primaryKey(), // authenticated admin id + client request UUID
+  fingerprint: text("fingerprint").notNull(),
+  threadId: integer("thread_id").notNull(),
+});
+export const startAdminChatSchema = z.object({
+  userId: z.number().int().positive(),
+  mode: z.enum(["general", "referral"]),
+  topic: z.string().trim().min(1).max(160),
+  message: z.string().trim().min(1).max(5000),
+  requestId: z.string().uuid(),
+}).strict();
+export type StartAdminChatInput = z.infer<typeof startAdminChatSchema>;
+export type AdminChatRecipient = {
+  id: number;
+  name: string;
+  email: string;
+  businessName: string | null;
+};
+
 // ---------- CHAT MESSAGES ----------
 export const chatMessages = sqliteTable("chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
