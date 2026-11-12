@@ -32,6 +32,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { AdminNewChat } from "@/components/chat/AdminNewChat";
+import { AdminChatInvites } from "@/components/chat/AdminChatInvites";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
 import type { Referral, User } from "@shared/schema";
 
@@ -128,6 +129,7 @@ export default function AdminChatInbox() {
           setSelectedThread(null);
           setPendingSelectId(id);
         }} />
+        <AdminChatInvites onOpenChat={id => { setView("active"); setSelectedThread(null); setPendingSelectId(id); }} />
         <CrossChatSearch searchUrl="/api/admin/chat/search" onSelectThread={(id) => setPendingSelectId(id)} testIdPrefix="admin-chat-search" />
       </div>
       <div className="flex flex-1 min-h-0 gap-4">

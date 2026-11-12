@@ -21,7 +21,10 @@ const EMPTY_FORM = {
   topic: "",
   presenterName: "",
   datetime: "",
-  zoomLink: "https://zoom.us/j/0000000000",
+  endDatetime: "",
+  registrationMode: "app",
+  attachments: [] as NonNullable<CaseDiscussion["attachments"]>,
+  zoomLink: "",
   notes: "",
 };
 
@@ -61,6 +64,27 @@ export default function AdminCaseDiscussions() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [attendeesFor, setAttendeesFor] = useState<CaseDiscussionRow | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function uploadFiles(files: FileList | null) {
+    if (!files?.length) return;
+    if (form.attachments.length + files.length > 10) {
+      toast({ title: "Maximum 10 attachments per event", variant: "destructive" }); return;
+    }
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} is larger than 20 MB.`);
+        const body = new FormData(); body.append("file", file);
+        const response = await fetch(`${API_BASE}/api/admin/event-attachments`, { method: "POST", credentials: "include", body });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "Upload failed.");
+        setForm(current => ({ ...current, attachments: [...current.attachments, result] }));
+      }
+    } catch (error) {
+      toast({ title: "Attachment not uploaded", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally { setUploading(false); }
+  }
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/admin/case-discussions"] });
 
@@ -76,6 +100,9 @@ export default function AdminCaseDiscussions() {
       topic: d.topic,
       presenterName: d.presenterName ?? "",
       datetime: toDatetimeLocal(d.scheduledAt),
+      endDatetime: d.endsAt ? toDatetimeLocal(d.endsAt) : "",
+      registrationMode: d.registrationMode || "app",
+      attachments: d.attachments ?? [],
       zoomLink: d.zoomLink,
       notes: d.notes ?? "",
     });
@@ -88,6 +115,9 @@ export default function AdminCaseDiscussions() {
         topic: form.topic,
         presenterName: form.presenterName.trim() ? form.presenterName.trim() : null,
         scheduledAt: new Date(form.datetime).getTime(),
+        endsAt: form.endDatetime ? new Date(form.endDatetime).getTime() : null,
+        registrationMode: form.registrationMode,
+        attachments: form.attachments,
         zoomLink: form.zoomLink,
         notes: form.notes.trim() ? form.notes.trim() : null,
       };
@@ -113,13 +143,13 @@ export default function AdminCaseDiscussions() {
   });
 
   const sorted = [...(discussions || [])].sort((a, b) => b.scheduledAt - a.scheduledAt);
-  const canSave = form.topic.trim() && form.datetime && form.zoomLink.trim();
+  const validEnd = !form.endDatetime || new Date(form.endDatetime).getTime() > new Date(form.datetime).getTime();
+  const canSave = form.topic.trim() && form.datetime && /^https?:\/\/\S+$/i.test(form.zoomLink.trim()) && validEnd;
 
   return (
     <div className="max-w-5xl flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Schedule upcoming events — webinars, meetings, and case discussions. Partners can RSVP, download a calendar
-        invite, and receive a Zoom push reminder when a session starts.
+        Schedule single-day or multi-day events. Choose registration in the app or on an external website, and attach programmes or other event files.
       </p>
 
       <Button size="sm" className="self-start" onClick={openCreate} data-testid="button-add-case-discussion">
@@ -140,7 +170,7 @@ export default function AdminCaseDiscussions() {
                   <th className="px-4 py-3 font-medium">Presenter</th>
                   <th className="px-4 py-3 font-medium">Date &amp; time</th>
                   <th className="px-4 py-3 font-medium">RSVPs</th>
-                  <th className="px-4 py-3 font-medium">Zoom</th>
+                  <th className="px-4 py-3 font-medium">Link</th>
                   <th className="px-4 py-3 font-medium"></th>
                 </tr>
               </thead>
@@ -149,8 +179,10 @@ export default function AdminCaseDiscussions() {
                   <tr key={d.id} className="border-b border-border last:border-0" data-testid={`row-case-discussion-${d.id}`}>
                     <td className="px-4 py-3">{d.topic}</td>
                     <td className="px-4 py-3 text-muted-foreground">{d.presenterName || "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground tabular-nums">{format(new Date(d.scheduledAt), "MMM d, yyyy HH:mm")}</td>
-                    <td className="px-4 py-3 tabular-nums" data-testid={`text-rsvp-count-${d.id}`}>{d.rsvpCount}</td>
+                    <td className="px-4 py-3 text-muted-foreground tabular-nums">{format(new Date(d.scheduledAt), "MMM d, yyyy HH:mm")}
+                      {d.endsAt && <span className="block">to {format(new Date(d.endsAt), "MMM d, yyyy HH:mm")}</span>}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums" data-testid={`text-rsvp-count-${d.id}`}>{d.registrationMode === "external" ? `External${d.rsvpCount ? ` (${d.rsvpCount} earlier app RSVPs)` : ""}` : d.rsvpCount}</td>
                     <td className="px-4 py-3">
                       <a href={d.zoomLink} target="_blank" rel="noopener noreferrer" className="text-primary flex items-center gap-1">
                         <ExternalLink className="h-3.5 w-3.5" /> Link
@@ -181,8 +213,8 @@ export default function AdminCaseDiscussions() {
       )}
 
       {/* Create / edit dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent data-testid="dialog-case-discussion-form">
+      <Dialog open={dialogOpen} onOpenChange={open => { if (!uploading && !saveMutation.isPending) setDialogOpen(open); }}>
+        <DialogContent className="w-[calc(100%-2rem)] max-h-[85dvh] overflow-y-auto rounded-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0" data-testid="dialog-case-discussion-form">
           <DialogHeader>
             <DialogTitle>{editingId != null ? "Edit event" : "Add event"}</DialogTitle>
           </DialogHeader>
@@ -196,12 +228,41 @@ export default function AdminCaseDiscussions() {
               <Input id="cd-presenter" value={form.presenterName} onChange={(e) => setForm({ ...form, presenterName: e.target.value })} data-testid="input-case-discussion-presenter" />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cd-datetime">Date &amp; time</Label>
-              <Input id="cd-datetime" type="datetime-local" value={form.datetime} onChange={(e) => setForm({ ...form, datetime: e.target.value })} data-testid="input-case-discussion-datetime" />
+              <Label htmlFor="cd-datetime">Start date &amp; time</Label>
+              <Input className="min-w-0 max-w-full" id="cd-datetime" type="datetime-local" value={form.datetime} onChange={(e) => setForm({ ...form, datetime: e.target.value })} data-testid="input-case-discussion-datetime" />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cd-zoom">Zoom link</Label>
-              <Input id="cd-zoom" value={form.zoomLink} onChange={(e) => setForm({ ...form, zoomLink: e.target.value })} data-testid="input-case-discussion-zoom" />
+              <Label htmlFor="cd-end">End date &amp; time (optional)</Label>
+              <Input className="min-w-0 max-w-full" id="cd-end" type="datetime-local" value={form.endDatetime} onChange={e => setForm({ ...form, endDatetime: e.target.value })} data-testid="input-case-discussion-end" />
+              <p className="text-xs text-muted-foreground">For multi-day events, choose the final day. Times use your device's local time zone. Without an end time, the calendar reserves one hour.</p>
+              {!validEnd && <p role="alert" className="text-xs text-destructive">End must be after start.</p>}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="cd-zoom">Link</Label>
+              <Input id="cd-zoom" type="url" placeholder="https://" value={form.zoomLink} onChange={(e) => setForm({ ...form, zoomLink: e.target.value })} data-testid="input-case-discussion-zoom" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="cd-registration">Registration</Label>
+              <select id="cd-registration" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.registrationMode} onChange={e => setForm({ ...form, registrationMode: e.target.value })}>
+                <option value="app">Register in the app</option>
+                <option value="external">Register on the linked website</option>
+              </select>
+              <p className="text-xs text-muted-foreground">{form.registrationMode === "external"
+                ? "Partners follow the link above to register. External registrations are not tracked in the app. Earlier app RSVPs are retained."
+                : "Partners register here and receive access to the event link."}</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="cd-files">Attachments (optional)</Label>
+              <Input id="cd-files" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.webp" disabled={uploading || saveMutation.isPending || form.attachments.length >= 10}
+                onChange={e => { uploadFiles(e.target.files); e.target.value = ""; }} />
+              <p className="text-xs text-muted-foreground">PDF, Word, Excel, PowerPoint or images. Up to 10 files, 20 MB each. Save the event to make them available to partners.</p>
+              {uploading && <p role="status" className="text-sm">Uploading attachment…</p>}
+              {form.attachments.map((file, index) => <div key={`${file.url}-${index}`} className="flex min-w-0 items-center gap-2 rounded border p-2">
+                <span className="min-w-0 flex-1 break-all text-sm">{file.name}</span>
+                <Button size="icon" variant="ghost" disabled={uploading || saveMutation.isPending} aria-label={`Remove ${file.name}`} onClick={() => setForm(current => ({ ...current, attachments: current.attachments.filter((_, i) => i !== index) }))}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>)}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="cd-notes">Notes (optional)</Label>
@@ -209,7 +270,7 @@ export default function AdminCaseDiscussions() {
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={() => saveMutation.mutate()} disabled={!canSave || saveMutation.isPending} data-testid="button-save-case-discussion">
+            <Button onClick={() => saveMutation.mutate()} disabled={!canSave || saveMutation.isPending || uploading} data-testid="button-save-case-discussion">
               {saveMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
             </Button>
           </DialogFooter>

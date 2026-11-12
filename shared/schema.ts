@@ -940,6 +940,46 @@ export type AdminChatRecipient = {
   businessName: string | null;
 };
 
+// Chat-first invitations are isolated from member chats until identity is
+// verified. No user account, community access or patient history is granted
+// merely by possessing an invitation.
+export const guestChatInvites = sqliteTable("guest_chat_invites", {
+  id: text("id").primaryKey(),
+  tokenHash: text("token_hash").notNull(),
+  createdBy: integer("created_by").notNull(),
+  intendedUserId: integer("intended_user_id"),
+  label: text("label").notNull(),
+  topic: text("topic").notNull(),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+  openedAt: integer("opened_at"),
+  sessionHash: text("session_hash"),
+  sessionExpiresAt: integer("session_expires_at"),
+  declinedAt: integer("declined_at"),
+  revokedAt: integer("revoked_at"),
+  linkedUserId: integer("linked_user_id"),
+  linkedThreadId: integer("linked_thread_id"),
+  linkedAt: integer("linked_at"),
+  linkedBy: integer("linked_by"),
+  adminReadAt: integer("admin_read_at"),
+  verificationEmail: text("verification_email"),
+  verificationHash: text("verification_hash"),
+  verificationExpiresAt: integer("verification_expires_at"),
+  verificationSentAt: integer("verification_sent_at"),
+  verificationAttempts: integer("verification_attempts").notNull().default(0),
+  verificationSends: integer("verification_sends").notNull().default(0),
+});
+export const guestChatMessages = sqliteTable("guest_chat_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  inviteId: text("invite_id").notNull(),
+  senderId: integer("sender_id"),
+  senderName: text("sender_name").notNull(),
+  senderRole: text("sender_role").notNull(),
+  body: text("body").notNull(),
+  requestId: text("request_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
 // ---------- CHAT MESSAGES ----------
 export const chatMessages = sqliteTable("chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -1159,12 +1199,30 @@ export const caseDiscussions = sqliteTable("case_discussions", {
   topic: text("topic").notNull(), // e.g. "Partner Case Discussion" or a specific case title
   presenterName: text("presenter_name"), // optional — name of the partner presenting a case
   scheduledAt: integer("scheduled_at").notNull(), // epoch ms
+  endsAt: integer("ends_at"),
+  registrationMode: text("registration_mode").notNull().default("app"),
+  attachments: text("attachments", { mode: "json" }).$type<{ name: string; url: string; size: number }[]>(),
   zoomLink: text("zoom_link").notNull(),
   notes: text("notes"),
   notifiedAt: integer("notified_at"), // epoch ms — set once the auto push notification has fired, to avoid double-sending
   createdAt: integer("created_at").notNull(),
 });
-export const insertCaseDiscussionSchema = createInsertSchema(caseDiscussions).omit({ id: true, createdAt: true, notifiedAt: true });
+export const caseDiscussionFieldsSchema = createInsertSchema(caseDiscussions).omit({ id: true, createdAt: true, notifiedAt: true }).extend({
+  topic: z.string().trim().min(1).max(300),
+  scheduledAt: z.number().int().min(0).max(8640000000000000),
+  endsAt: z.number().int().min(0).max(8640000000000000).nullable().optional(),
+  registrationMode: z.enum(["app", "external"]).optional(),
+  zoomLink: z.string().trim().url().max(2000).refine(v => /^https?:\/\//i.test(v), "Use an http or https link"),
+  attachments: z.array(z.object({
+    name: z.string().min(1).max(255),
+    url: z.string().regex(/^\/api\/files\/[A-Za-z0-9_-]+$/),
+    size: z.number().int().min(0).max(20 * 1024 * 1024),
+  })).max(10).nullable().optional(),
+});
+export const insertCaseDiscussionSchema = caseDiscussionFieldsSchema.refine(
+  d => d.endsAt == null || d.endsAt > d.scheduledAt,
+  { message: "End must be after start", path: ["endsAt"] },
+);
 export type InsertCaseDiscussion = z.infer<typeof insertCaseDiscussionSchema>;
 export type CaseDiscussion = typeof caseDiscussions.$inferSelect;
 

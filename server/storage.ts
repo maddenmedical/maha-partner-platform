@@ -1600,7 +1600,7 @@ export class DatabaseStorage implements IStorage {
   async listUpcomingCaseDiscussions(forUserId: number) {
     const now = Date.now();
     const rows = db.select().from(caseDiscussions)
-      .where(gte(caseDiscussions.scheduledAt, now))
+      .where(gte(sql`coalesce(${caseDiscussions.endsAt}, ${caseDiscussions.scheduledAt} + 3600000)`, now))
       .orderBy(asc(caseDiscussions.scheduledAt))
       .all();
     return rows.map((d) => {
@@ -1635,6 +1635,9 @@ export class DatabaseStorage implements IStorage {
       topic: input.topic,
       presenterName: input.presenterName ?? null,
       scheduledAt: input.scheduledAt,
+      endsAt: input.endsAt ?? null,
+      registrationMode: input.registrationMode ?? "app",
+      attachments: input.attachments ?? [],
       zoomLink: input.zoomLink,
       notes: input.notes ?? null,
       notifiedAt: null,

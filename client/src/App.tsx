@@ -14,6 +14,7 @@ import Register from "@/pages/auth/Register";
 import ForgotPassword from "@/pages/auth/ForgotPassword";
 import ResetPassword from "@/pages/auth/ResetPassword";
 import Install from "@/pages/Install";
+import ContinueChat from "@/pages/ContinueChat";
 import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPage";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
@@ -263,6 +264,7 @@ function App() {
               {/* /install is reachable regardless of auth/bootstrap state — it's the
                   link partners get in onboarding emails, before they ever sign in. */}
               <Switch>
+                <Route path="/continue-chat/:id/:token" component={ContinueChat} />
                 <Route path="/install/:platform" component={Install} />
                 <Route path="/install" component={Install} />
                 {/* Reachable regardless of auth/bootstrap state — this link is on the

@@ -19,12 +19,16 @@ export function startCaseDiscussionScheduler(storage: IStorage) {
       const now = Date.now();
       const due = await storage.findCaseDiscussionsNeedingNotification(now - WINDOW_MS, now);
       for (const discussion of due) {
+        if (discussion.registrationMode === "external") {
+          await storage.markCaseDiscussionNotified(discussion.id, now);
+          continue;
+        }
         const attendees = await storage.listCaseDiscussionAttendees(discussion.id);
         if (attendees.length > 0) {
           const subs = await storage.getPushSubscriptionsForUserIds(attendees.map((a) => a.userId));
           const result = await sendToSubscriptions(subs, {
             title: "Event starting now",
-            body: `${discussion.topic} is starting — tap to join on Zoom.`,
+            body: `${discussion.topic} is starting. Tap to open the event link.`,
             url: discussion.zoomLink,
           });
           // Prune expired/unsubscribed endpoints, same as the announcements route.

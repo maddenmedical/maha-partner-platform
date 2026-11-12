@@ -22,19 +22,20 @@ function toIcsUtc(epochMs: number): string {
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-// Build a minimal valid single-VEVENT ICS for a case discussion. Assumes a
-// 1-hour duration since no end time is modeled. Uses CRLF line endings as
+// Build a single-VEVENT ICS with the full event span. Legacy events without
+// an end retain their one-hour fallback. Uses CRLF line endings as
 // required by RFC 5545.
 export function buildCaseDiscussionIcs(discussion: CaseDiscussion): string {
   const dtStamp = toIcsUtc(Date.now());
   const dtStart = toIcsUtc(discussion.scheduledAt);
-  const dtEnd = toIcsUtc(discussion.scheduledAt + ONE_HOUR_MS);
+  const dtEnd = toIcsUtc(discussion.endsAt ?? discussion.scheduledAt + ONE_HOUR_MS);
 
   const summary = escapeText(discussion.topic);
   const descriptionParts: string[] = [];
   if (discussion.presenterName) descriptionParts.push(`Presenter: ${discussion.presenterName}`);
   if (discussion.notes) descriptionParts.push(discussion.notes);
-  descriptionParts.push(`Join via Zoom: ${discussion.zoomLink}`);
+  descriptionParts.push(`${discussion.registrationMode === "external" ? "Register on event website" : "Link"}: ${discussion.zoomLink}`);
+  if (discussion.registrationMode === "external") descriptionParts.push("Adding this calendar entry does not register you. Complete registration on the event website.");
   const description = escapeText(descriptionParts.join("\n\n"));
   const location = escapeText(discussion.zoomLink);
 

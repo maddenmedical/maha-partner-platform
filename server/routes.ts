@@ -35,6 +35,7 @@ import { getVapidPublicKey, notifyUsers } from "./push";
 import { notificationSummary, readNotices, readReferralNotice, readChatNotices } from "./notificationStore";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
+import { registerGuestChatRoutes } from "./guestChat";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
 import { runLegacyPartnerImport } from "./migrateLegacyPartners";
@@ -526,6 +527,7 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  registerGuestChatRoutes(app, requireAuth, requireRole("admin"), getOptionalUser, setSessionCookie);
   app.get("/api/health", (_req, res) => {
     try {
       sqliteDb.prepare("SELECT 1").get();
@@ -584,6 +586,12 @@ export async function registerRoutes(
         allowed = isAdmin || (!!thread && thread.userId === req.user!.id);
         break;
       }
+      case "event": {
+        const events = await storage.listAllCaseDiscussionsForAdmin();
+        allowed = isAdmin || (["partner", "student"].includes(req.user!.role) &&
+          events.some(event => event.attachments?.some(file => file.url === `/api/files/${rec.driveFileId}`)));
+        break;
+      }
       default:
         allowed = isAdmin;
     }
@@ -600,7 +608,7 @@ export async function registerRoutes(
     // re-encode replaces them.
     const etag = `"${rec.driveFileId}-${rec.size}"`;
     if (rec.status === "ready") {
-      res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+      res.setHeader("Cache-Control", rec.category === "event" ? "private, no-store" : "private, max-age=31536000, immutable");
       res.setHeader("ETag", etag);
       if (req.headers["if-none-match"] === etag) {
         return res.status(304).end();
@@ -630,7 +638,8 @@ export async function registerRoutes(
       // "attachment" forces a save dialog (used by the explicit download
       // button); everything else stays "inline" so it plays/previews within
       // the chat bubble as before.
-      const disposition = req.query.download === "1" ? "attachment" : "inline";
+      const disposition = req.query.download === "1" || rec.category === "event" ? "attachment" : "inline";
+      if (rec.category === "event") res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader(
         "Content-Disposition",
         `${disposition}; filename="${rec.filename.replace(/"/g, "")}"`,
@@ -3760,6 +3769,7 @@ export async function registerRoutes(
   app.post("/api/case-discussions/:id/rsvp", requireAuth, requireRole("partner", "student", "admin"), async (req: AuthedRequest, res) => {
     const discussion = await storage.getCaseDiscussionById(Number(req.params.id));
     if (!discussion) return res.status(404).json({ message: "Not found" });
+    if (discussion.registrationMode === "external") return res.status(409).json({ message: "Please register on the event website." });
     await storage.rsvpToCaseDiscussion(discussion.id, req.user!.id);
     res.json({ ok: true });
   });
@@ -3779,6 +3789,43 @@ export async function registerRoutes(
   });
 
   // ---------- CASE DISCUSSIONS (admin) ----------
+  const eventUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
+  app.post("/api/admin/event-attachments", requireAuth, requireRole("admin"), (req, res, next) => {
+    eventUpload.single("file")(req, res, err => {
+      if (err) return res.status(400).json({ message: "Upload one file, up to 20 MB." });
+      next();
+    });
+  }, async (req: AuthedRequest, res) => {
+    const file = req.file;
+    if (!file) return res.status(400).json({ message: "Choose a file." });
+    const allowedTypes: Record<string, string> = {
+      ".pdf": "application/pdf", ".doc": "application/msword",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".xls": "application/vnd.ms-excel", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".ppt": "application/vnd.ms-powerpoint", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+    };
+    const mimeType = allowedTypes[path.extname(file.originalname).toLowerCase()];
+    if (!mimeType || !file.size) return res.status(400).json({ message: "Use a PDF, Word, Excel, PowerPoint or image file." });
+    const name = path.basename(file.originalname).replace(/[\x00-\x1f\x7f"\\/]/g, "_").slice(0, 255);
+    try {
+      const { driveFileId } = await uploadToDrive(file.buffer, name, mimeType);
+      await storage.createUploadedFile({ driveFileId, filename: name, mimeType, size: file.size,
+        category: "event", ownerId: req.user!.id, uploadedAt: Date.now() });
+      res.json({ url: `/api/files/${driveFileId}`, name, size: file.size });
+    } catch {
+      res.status(502).json({ message: "Could not upload this file. Please try again." });
+    }
+  });
+
+  async function verifiedEventFiles(files: { url: string; name: string; size: number }[] | null | undefined) {
+    for (const file of files ?? []) {
+      const stored = await storage.getUploadedFileByDriveId(file.url.split("/").pop()!);
+      if (!stored || stored.category !== "event" || stored.filename !== file.name || stored.size !== file.size) return false;
+    }
+    return true;
+  }
+
   app.get("/api/admin/case-discussions", requireAuth, requireRole("admin"), async (_req, res) => {
     res.json(await storage.listAllCaseDiscussionsForAdmin());
   });
@@ -3786,13 +3833,17 @@ export async function registerRoutes(
   app.post("/api/admin/case-discussions", requireAuth, requireRole("admin"), async (req, res) => {
     const parsed = insertCaseDiscussionSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    if (!await verifiedEventFiles(parsed.data.attachments)) return res.status(400).json({ message: "Invalid event attachment" });
     res.json(await storage.createCaseDiscussion(parsed.data));
   });
 
   app.patch("/api/admin/case-discussions/:id", requireAuth, requireRole("admin"), async (req, res) => {
     const existing = await storage.getCaseDiscussionById(Number(req.params.id));
     if (!existing) return res.status(404).json({ message: "Not found" });
-    const updated = await storage.updateCaseDiscussion(Number(req.params.id), req.body);
+    const parsed = insertCaseDiscussionSchema.safeParse({ ...existing, ...req.body });
+    if (!parsed.success) return res.status(400).json({ message: "Check the dates, link and registration method." });
+    if (!await verifiedEventFiles(parsed.data.attachments)) return res.status(400).json({ message: "Invalid event attachment" });
+    const updated = await storage.updateCaseDiscussion(Number(req.params.id), parsed.data);
     res.json(updated);
   });
 

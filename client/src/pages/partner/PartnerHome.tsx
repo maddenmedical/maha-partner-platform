@@ -69,6 +69,7 @@ function formatSessionTime(epochMs: number): string {
     weekday: "short",
     month: "short",
     day: "numeric",
+    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
@@ -85,7 +86,7 @@ function CaseDiscussionsSection() {
     mutationFn: (id: number) => apiRequest("POST", `/api/case-discussions/${id}/rsvp`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/case-discussions"] });
-      toast({ title: "You're attending", description: "You'll get a Zoom reminder when it starts." });
+      toast({ title: "You're attending", description: "You can now open the event link and add it to your calendar." });
     },
     onError: () => toast({ title: "Could not RSVP", description: "Please try again.", variant: "destructive" }),
   });
@@ -140,6 +141,7 @@ function CaseDiscussionsSection() {
       <div className="flex flex-col gap-3">
         {upcoming.map((d) => {
           const attending = d.iAmAttending;
+          const external = d.registrationMode === "external";
           const busy = rsvpMutation.isPending || cancelMutation.isPending;
           const names = d.attendeeNames ?? [];
           const shownNames = names.slice(0, 3);
@@ -155,26 +157,32 @@ function CaseDiscussionsSection() {
                     <p className="text-base font-semibold leading-snug">{d.topic}</p>
                     <p className="text-sm text-muted-foreground mt-0.5 tabular-nums" data-testid={`text-session-time-${d.id}`}>
                       {formatSessionTime(d.scheduledAt)}
+                      {d.endsAt && <span className="block">to {formatSessionTime(d.endsAt)}</span>}
                     </p>
                     {d.presenterName && (
                       <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-presenter-${d.id}`}>
-                        Case presented by {d.presenterName}
+                        Presented by {d.presenterName}
                       </p>
                     )}
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5" data-testid={`text-attendee-count-${d.id}`}>
+                    {!external && <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5" data-testid={`text-attendee-count-${d.id}`}>
                       <Users className="h-3.5 w-3.5" />
                       {d.rsvpCount === 0
                         ? "No partners attending yet"
                         : shownNames.length > 0
                         ? `${shownNames.join(", ")}${extraCount > 0 ? ` +${extraCount} more` : ""} attending`
                         : `${d.rsvpCount} ${d.rsvpCount === 1 ? "partner" : "partners"} attending`}
-                    </div>
+                    </div>}
                   </div>
                 </div>
 
                 {d.notes && <p className="text-sm text-muted-foreground">{d.notes}</p>}
+                {!!d.attachments?.length && <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Event files</p>
+                  {d.attachments.map((file, index) => <a key={`${file.url}-${index}`} href={`${API_BASE}${file.url}?download=1`} target="_blank" rel="noopener noreferrer"
+                    className="text-sm text-primary underline underline-offset-4 break-all">{file.name}</a>)}
+                </div>}
 
-                {attending ? (
+                {external ? <p className="text-xs text-muted-foreground">Registration takes place on the event website. Adding it to your calendar does not register you.</p> : attending ? (
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-500 font-medium">
                       <CheckCircle2 className="h-3.5 w-3.5" /> You're attending
@@ -186,17 +194,17 @@ function CaseDiscussionsSection() {
                       className="inline-flex items-center gap-1.5 text-sm text-primary break-all"
                       data-testid={`link-zoom-${d.id}`}
                     >
-                      <Video className="h-4 w-4 shrink-0" /> Join Zoom
+                      <Video className="h-4 w-4 shrink-0" /> Open event link
                     </a>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`hint-locked-zoom-${d.id}`}>
-                    <Lock className="h-3.5 w-3.5" /> RSVP to see the Zoom link
+                    <Lock className="h-3.5 w-3.5" /> RSVP to see the event link
                   </div>
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {attending ? (
+                  {external ? <Button size="sm" asChild><a href={d.zoomLink} target="_blank" rel="noopener noreferrer" data-testid={`button-external-register-${d.id}`}>Register on event website</a></Button> : attending ? (
                     <Button
                       variant="outline"
                       size="sm"
