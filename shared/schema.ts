@@ -978,6 +978,34 @@ export const guestChatMessages = sqliteTable("guest_chat_messages", {
   body: text("body").notNull(),
   requestId: text("request_id").notNull(),
   createdAt: integer("created_at").notNull(),
+  attachmentId: text("attachment_id"),
+  replyToMessageId: integer("reply_to_message_id"),
+  editedAt: integer("edited_at"),
+  deletedAt: integer("deleted_at"),
+  deletedByName: text("deleted_by_name"),
+});
+
+// Invitation-scoped files never become ordinary member files until linking.
+export const guestChatFiles = sqliteTable("guest_chat_files", {
+  id: text("id").primaryKey(),
+  inviteId: text("invite_id").notNull(),
+  uploaderKey: text("uploader_key").notNull(),
+  driveFileId: text("drive_file_id").notNull(),
+  name: text("name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  type: text("type").notNull(),
+  size: integer("size").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export const guestChatMarks = sqliteTable("guest_chat_marks", {
+  id: text("id").primaryKey(),
+  inviteId: text("invite_id").notNull(),
+  messageId: integer("message_id").notNull(),
+  actorKey: text("actor_key").notNull(),
+  actorName: text("actor_name").notNull(),
+  kind: text("kind").notNull(), // star or reaction; one of each per actor/message
+  emoji: text("emoji"),
+  createdAt: integer("created_at").notNull(),
 });
 
 // ---------- CHAT MESSAGES ----------

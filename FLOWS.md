@@ -36,3 +36,20 @@ Preserve existing MAHA layout, authentication, admin role restrictions and Rende
 - Admin can link a retained conversation to a verified partner later, with explicit confirmation.
 - Wrong account, replay, expired/incorrect codes, rate limits and failed email delivery handled.
 - No physical Samsung/app-link association claim without a real device check.
+
+## Rich temporary chat
+- Baseline inspected in synthetic mobile browser: temporary chat only had text and Keep this chat.
+- Guest and admin use the shared chat composer and message bubbles, preserving MAHA styling.
+- Send text, emoji, photo, document, audio/video and recorded voice note; preview/remove pending attachment.
+- Reply and swipe to reply; original sender/snippet visible; cross-invitation reply IDs rejected.
+- React/unreact and star/unstar; search current conversation and show starred messages only.
+- Admin edits own messages and soft-deletes with in-page confirmation; guest cannot edit/delete or access admin actions.
+- Timestamps, safe clickable web links, download attachments, mobile message action sheet.
+- Failed sends retain text/attachment/reply; retries use same request ID without duplicate messages.
+- Files restricted to this invitation, private previews restricted to uploader, closed guest access denied.
+- Reject spoofed/foreign attachments and unsafe files; enforce 20 MB/file, 25 files and 100 MB/invitation.
+- On account linking: preserve files, replies, reactions, stars, edits/deletions and guest attribution atomically.
+- Decline/revoke/expiry retains admin transcript and attachments without allowing guest access.
+- No guest access to partner directory, other chats, referrals, community, admin to-dos or MP3 conversion.
+- Browser desktop/mobile/narrow guest and admin paths, normal member chat regression, existing flow smoke.
+- Private synthetic preview only; Render production push requires new approval.

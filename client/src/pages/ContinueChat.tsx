@@ -7,18 +7,18 @@ import { useAuth } from "@/context/AuthContext";
 import { setPendingThreadId } from "@/lib/chatNav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { InvitationConversation } from "@/components/chat/InvitationConversation";
 
 export default function ContinueChat({ params }: { params: { id: string; token: string } }) {
   const { user, bootstrapping, loginWithUser } = useAuth();
   const [started, setStarted] = useState(false), [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const [body, setBody] = useState(""), [keep, setKeep] = useState(false), [sentCode, setSentCode] = useState(false);
+  const [keep, setKeep] = useState(false), [sentCode, setSentCode] = useState(false);
   const [email, setEmail] = useState(""), [code, setCode] = useState("");
   const [firstName, setFirstName] = useState(""), [lastName, setLastName] = useState(""), [prefix, setPrefix] = useState("");
   const [acceptedLegal, setAcceptedLegal] = useState(false);
-  const attempted = useRef(false), messageAttempt = useRef<{ body: string; requestId: string } | null>(null);
+  const attempted = useRef(false);
   const endpoint = `/api/guest-chat/${params.id}`;
   const chat = useQuery<{ topic: string; messages: { id: number; body: string; senderName: string; senderRole: string }[] }>({
     queryKey: [endpoint], enabled: started && !closed, refetchInterval: 4000, retry: false,
@@ -48,15 +48,8 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
       attempted.current = true; void begin();
     }
   }, [bootstrapping, user?.id]);
-  async function sendMessage() {
-    await action(async () => {
-      if (!messageAttempt.current || messageAttempt.current.body !== body.trim()) messageAttempt.current = { body: body.trim(), requestId: crypto.randomUUID() };
-      await apiRequest("POST", `${endpoint}/message`, messageAttempt.current);
-      messageAttempt.current = null; setBody(""); await chat.refetch();
-    });
-  }
-  return <main className="min-h-dvh bg-background text-foreground px-4 py-6 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10">
-    <div className="mx-auto flex max-w-xl flex-col gap-4">
+  return <main className="min-h-dvh bg-background text-foreground px-4 py-6">
+    <div className="mx-auto flex max-w-2xl min-w-0 flex-col gap-4">
       <header className="border-b pb-4"><p className="text-xl font-semibold tracking-widest text-primary">MAHA</p><h1 className="mt-2 text-xl font-semibold">Continue your conversation</h1></header>
       {closed ? <div className="rounded-lg border p-5 space-y-3">
         <h2 className="font-semibold">Your conversation is safely retained by MAHA</h2>
@@ -68,19 +61,7 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
         <Button onClick={begin} disabled={busy || bootstrapping} className="w-full">{busy ? "Opening…" : "Start chat"}</Button>
       </div> : <>
         <h2 className="font-medium">{chat.data?.topic || "Chat with MAHA"}</h2>
-        <div aria-live="polite" className="flex max-h-[45dvh] min-h-40 flex-col gap-3 overflow-y-auto rounded-lg border bg-card p-4">
-          {chat.isLoading && <p>Loading conversation…</p>}
-          {chat.error && <p role="alert" className="text-sm text-destructive">Guest access is no longer available. Please contact MAHA to recover this chat.</p>}
-          {chat.data?.messages.map(message => <div key={message.id} className={`max-w-[90%] rounded-lg p-3 ${message.senderRole === "admin" ? "self-start bg-muted" : "self-end bg-primary text-primary-foreground"}`}>
-            <p className="mb-1 text-xs font-medium">{message.senderRole === "admin" ? message.senderName : "You"}</p>
-            <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
-          </div>)}
-        </div>
-        <form className="flex flex-col gap-2" onSubmit={e => { e.preventDefault(); void sendMessage(); }}>
-          <Label htmlFor="guest-message">Message</Label>
-          <Textarea id="guest-message" value={body} onChange={e => setBody(e.target.value)} maxLength={5000} rows={3} placeholder="Write your message…" />
-          <Button type="submit" disabled={busy || !body.trim() || !!chat.error}>Send message</Button>
-        </form>
+        <InvitationConversation key={params.id} inviteId={params.id} />
         {!keep ? <div className="rounded-lg border bg-card p-4 space-y-3">
           <p className="text-sm">Finished chatting? Keep this conversation in your partner account. Your invitation includes approval; no password is required.</p>
           <Button variant="outline" className="w-full" onClick={() => setKeep(true)}>Keep this chat</Button>

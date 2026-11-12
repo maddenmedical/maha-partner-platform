@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import type { AdminChatRecipient } from "@shared/schema";
+import { InvitationConversation } from "./InvitationConversation";
 type Invitation = { id: string; label: string; topic: string; unread: boolean; messageCount: number;
   linkedThreadId: number | null; intendedUserId: number | null; declinedAt: number | null; revokedAt: number | null };
 export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => void }) {
@@ -15,9 +16,8 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
   const [partner, setPartner] = useState<AdminChatRecipient | null>(null);
   const [label, setLabel] = useState(""), [topic, setTopic] = useState("Conversation with MAHA");
   const [message, setMessage] = useState("Thank you for continuing our conversation here. How can we help?");
-  const [reply, setReply] = useState(""), [url, setUrl] = useState(""), [error, setError] = useState("");
+  const [url, setUrl] = useState(""), [error, setError] = useState("");
   const [linking, setLinking] = useState(false), [copied, setCopied] = useState(false);
-  const replyAttempt = useRef<{ inviteId: string; body: string; requestId: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -29,9 +29,6 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
   const queryClient = useQueryClient();
   const invites = useQuery<Invitation[]>({ queryKey: ["/api/admin/guest-chats"], refetchInterval: 5000 });
   const recipients = useQuery<AdminChatRecipient[]>({ queryKey: ["/api/admin/chat/recipients"], enabled: open });
-  const conversation = useQuery<{ messages: { id: number; body: string; senderName: string; senderRole: string }[]; linkedThreadId: number | null }>({
-    queryKey: ["/api/admin/guest-chats", selected?.id], enabled: open && !!selected, refetchInterval: 4000,
-  });
   const fresh = invites.data?.find(i => i.id === selected?.id) || selected;
   const refresh = async () => { await queryClient.invalidateQueries({ queryKey: ["/api/admin/guest-chats"] }); };
   async function act(fn: () => Promise<void>) {
@@ -79,19 +76,8 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
         <h3 className="font-semibold">{fresh?.label}</h3>
         <p className="text-sm text-muted-foreground">{fresh?.topic}</p>
         <p className="rounded border p-2 text-xs text-muted-foreground">Guest messages before verification are not proof of identity. Retained conversations are visible to admins, including when a guest declines registration.</p>
-        <div className="max-h-64 space-y-3 overflow-y-auto rounded border p-3">
-          {conversation.data?.messages.map(m => <div key={m.id} className={`rounded p-3 ${m.senderRole === "admin" ? "bg-muted" : "border"}`}><p className="text-xs font-medium">{m.senderName}</p><p className="whitespace-pre-wrap break-words text-sm">{m.body}</p></div>)}
-        </div>
+        <InvitationConversation key={selected.id} inviteId={selected.id} admin closed={!!fresh?.declinedAt || !!fresh?.revokedAt || !!fresh?.linkedThreadId} />
         {fresh?.linkedThreadId ? <Button onClick={() => { setOpen(false); onOpenChat(fresh.linkedThreadId!); }}>Open linked member chat</Button> : <>
-          {!fresh?.declinedAt && !fresh?.revokedAt && <div className="space-y-2">
-            <Label htmlFor="invite-reply">Reply to guest</Label><Textarea id="invite-reply" value={reply} onChange={e => setReply(e.target.value)} maxLength={5000} />
-            <Button disabled={busy || !reply.trim()} onClick={() => act(async () => {
-              if (!replyAttempt.current || replyAttempt.current.inviteId !== selected.id || replyAttempt.current.body !== reply.trim())
-                replyAttempt.current = { inviteId: selected.id, body: reply.trim(), requestId: crypto.randomUUID() };
-              await apiRequest("POST", `/api/admin/guest-chats/${selected.id}/reply`, replyAttempt.current);
-              replyAttempt.current = null; setReply(""); await conversation.refetch();
-            })}>Send reply</Button>
-          </div>}
           {!linking ? <Button variant="outline" onClick={() => { setLinking(true); setPartner(null); setSearch(""); }}>Connect to a partner account</Button> : <div className="rounded border p-3 space-y-3">
             {choosePartner}<p className="text-sm">Confirm the identity first. This will give the selected partner access to all messages in this conversation and end guest access.</p>
             <Button disabled={busy || !partner} onClick={() => act(async () => {
@@ -104,7 +90,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
       </div> : <div className="space-y-3">
         <Button onClick={() => { setCreate(true); setSelected(null); setPartner(null); setSearch(""); setLabel(""); setError(""); }}>New WhatsApp invitation</Button>
         {invites.isLoading ? <p>Loading invitations…</p> : !invites.data?.length ? <p className="text-sm text-muted-foreground">No invitations yet.</p> : invites.data.map(i =>
-          <button key={i.id} className="block w-full rounded-lg border p-3 text-left hover:bg-muted" onClick={() => { setSelected(i); setReply(""); setLinking(false); }}>
+          <button key={i.id} className="block w-full rounded-lg border p-3 text-left hover:bg-muted" onClick={() => { setSelected(i); setLinking(false); }}>
             <span className="font-medium">{i.label}{i.unread ? " · New message" : ""}</span><span className="block text-sm text-muted-foreground">{i.topic}</span>
             <span className="text-xs text-muted-foreground">{i.linkedThreadId ? "Linked to member" : i.declinedAt ? "Declined registration · retained" : i.revokedAt ? "Revoked · retained" : "Awaiting account verification"} · {i.messageCount} messages</span>
           </button>)}

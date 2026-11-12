@@ -28,7 +28,9 @@ const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 // Splits a message body around @{{id|label}} mention tokens (see
 // chatMentions.ts) and renders each as a clickable jump-to-thread chip
 // inline with the surrounding text.
-function renderMessageBody(body: string, onNavigateToThread?: (id: number) => void) {
+function renderMessageBody(body: string, onNavigateToThread?: (id: number) => void, linkify = false) {
+  if (linkify) return body.split(/(https?:\/\/[^\s<>]+)/g).map((part, i) =>
+    /^https?:\/\//i.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline break-all">{part}</a> : part);
   const re = mentionTokenRegex();
   const nodes: React.ReactNode[] = [];
   let last = 0;
@@ -117,9 +119,12 @@ interface ChatMessageBubbleProps {
   // rather than wiring onToggleFlag/onReact to no-ops.
   hideFlag?: boolean;
   hideReactions?: boolean;
+  compact?: boolean;
+  disableMp3?: boolean;
+  linkify?: boolean;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify }: ChatMessageBubbleProps) {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(m.body || "");
@@ -247,17 +252,17 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
 
   return (
     <div
-      className={cn("group flex flex-col max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
+      className={cn("group flex min-w-0 flex-col", compact ? "max-w-full sm:max-w-[90%]" : "max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
       data-testid={`message-${m.id}`}
     >
-      <div className="flex items-start gap-1">
-        {!isMe && <UserAvatar photoUrl={m.senderPhotoUrl} name={m.senderName} size="sm" className="mt-1" />}
-        {!isMe && !hideReactions && (
+      <div className="flex max-w-full min-w-0 items-start gap-1">
+        {!isMe && !compact && <UserAvatar photoUrl={m.senderPhotoUrl} name={m.senderName} size="sm" className="mt-1" />}
+        {!isMe && !hideReactions && !compact && (
           <div className="hidden sm:block">
             <ReactionTrigger messageId={m.id} onReact={onReact} order="before" />
           </div>
         )}
-        <div className="relative" style={swipe.bubbleStyle}>
+        <div className="relative min-w-0" style={swipe.bubbleStyle}>
         {swipe.showIcon && (
           <CornerUpLeft
             className="absolute top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none"
@@ -266,7 +271,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         )}
         <div
           className={cn(
-            "rounded-lg px-3 py-2 text-base flex flex-col gap-1.5 touch-manipulation",
+            "rounded-lg px-3 py-2 text-base flex min-w-0 flex-col gap-1.5 touch-manipulation [overflow-wrap:anywhere]",
             isMe ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
           )}
           onPointerDown={handleBubblePointerDownMerged}
@@ -293,7 +298,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               <img
                 src={attachmentSrc}
                 alt={m.attachmentName || "attachment"}
-                className="max-w-[240px] max-h-64 rounded-md object-cover cursor-pointer"
+                className="w-auto max-w-full sm:max-w-[240px] max-h-64 rounded-md object-cover cursor-pointer"
                 onClick={handleOpenAttachment}
                 data-testid={`img-attachment-${m.id}`}
               />
@@ -330,7 +335,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
                 preload="metadata"
                 poster={m.attachmentThumbnail || undefined}
                 src={attachmentSrc}
-                className="max-w-[240px] max-h-64 rounded-md"
+                className="w-full max-w-[240px] max-h-64 rounded-md"
                 data-testid={`video-attachment-${m.id}`}
               />
               <button
@@ -347,8 +352,10 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           )}
           {attachmentSrc && m.attachmentType === "audio" && (
             <div className="flex items-center gap-1.5">
-              <audio controls src={attachmentSrc} className="max-w-[220px]" data-testid={`audio-attachment-${m.id}`} />
-              {isAdmin && (
+              <audio controls src={attachmentSrc} className="w-[220px] max-w-full min-w-0" data-testid={`audio-attachment-${m.id}`} />
+              {disableMp3 && <button type="button" onClick={handleDownloadAttachment} aria-label="Download voice note"
+                className="shrink-0 rounded-md p-1" data-testid={`button-download-audio-${m.id}`}><Download className="h-4 w-4" /></button>}
+              {isAdmin && !disableMp3 && (
                 <button
                   type="button"
                   onClick={handleDownloadMp3}
@@ -380,7 +387,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             </button>
           )}
           {isEditing ? (
-            <div className="flex flex-col gap-1.5 min-w-[200px]">
+            <div className={cn("flex flex-col gap-1.5", compact ? "min-w-0 w-full" : "min-w-[200px]")}>
               <Textarea
                 autoFocus
                 value={editValue}
@@ -422,7 +429,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           ) : (
             m.body && (
               <span className="whitespace-pre-wrap break-words">
-                {renderMessageBody(m.body, onNavigateToThread)}
+                {renderMessageBody(m.body, onNavigateToThread, linkify)}
                 {!!m.editedAt && <span className={cn("text-xs italic ml-1", isMe ? "text-primary-foreground/70" : "text-muted-foreground")}>(edited)</span>}
               </span>
             )
@@ -433,7 +440,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             hover state, so these end up tiny, cramped, and inconsistently
             visible -- touch users get the long-press action sheet below
             instead (opened from the bubble's onPointerDown handler). */}
-        <div className="hidden sm:flex sm:items-center">
+        <div className={compact ? "hidden" : "hidden sm:flex sm:items-center"}>
           {isMe && !hideReactions && <ReactionTrigger messageId={m.id} onReact={onReact} order="after" />}
           {onReply && (
             <button
@@ -503,7 +510,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         <button
           type="button"
           onClick={() => setActionSheetOpen(true)}
-          className="sm:hidden shrink-0 mt-1 rounded-full p-1 text-muted-foreground/60"
+          className={cn("shrink-0 mt-1 rounded-full p-2 text-muted-foreground", !compact && "sm:hidden")}
           aria-label="Message options"
           data-testid={`button-mobile-actions-${m.id}`}
         >

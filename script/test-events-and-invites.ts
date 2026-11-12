@@ -23,8 +23,14 @@ const fileStore = new Map<string, { bytes: Buffer; type: string }>();
     fileStore.set(id, { bytes: Buffer.concat(chunks), type: media.mimeType });
     return { data: { id } };
   },
-  get: async ({ fileId }: any) => {
+  get: async ({ fileId }: any, options: any) => {
     const file = fileStore.get(fileId)!;
+    const range = options?.headers?.Range?.match(/^bytes=(\d+)-(\d*)$/);
+    if (range) {
+      const start = Number(range[1]), end = Math.min(Number(range[2] || file.bytes.length - 1), file.bytes.length - 1);
+      return { data: Readable.from(file.bytes.subarray(start, end + 1)), status: 206,
+        headers: new Headers({ "content-length": String(end - start + 1), "content-range": `bytes ${start}-${end}/${file.bytes.length}`, "content-type": file.type }) };
+    }
     return { data: Readable.from(file.bytes), status: 200, headers: new Headers({ "content-length": String(file.bytes.length), "content-type": file.type }) };
   },
 } });
@@ -48,9 +54,19 @@ for (const [id, role, status, name] of [[1, "admin", "approved", "Dr. QA Admin"]
 const { registerRoutes } = await import("../server/routes");
 const app = express(); app.use(express.json());
 if (process.argv.includes("--serve") && !process.argv.includes("--preview")) app.get("/__qa/last-code", (_req, res) => res.json({ code }));
-if (process.argv.includes("--preview")) app.use((req, _res, next) => {
+const previewGuests = new Map<string, string>();
+let previewPath = "";
+if (process.argv.includes("--preview")) app.get("/__qa/guest-demo", (_req, res) => res.json({ path: previewPath }));
+if (process.argv.includes("--preview")) app.use((req, res, next) => {
   // Private preview: synthetic admin only; no real account or data.
-  req.headers.cookie = `${req.headers.cookie || ""}; sid=feature-1`; next();
+  const id = req.path.match(/^\/api\/guest-chat\/([^/]+)/)?.[1];
+  req.headers.cookie = `${req.headers.cookie || ""}; sid=feature-1${id && previewGuests.has(id) ? `; ${previewGuests.get(id)}` : ""}`;
+  if (id) res.once("finish", () => {
+    const values = res.getHeader("Set-Cookie");
+    const value = (Array.isArray(values) ? values : [String(values || "")]).find(v => v.startsWith("maha_guest_"));
+    if (value) previewGuests.set(id, value.split(";")[0]);
+  });
+  next();
 });
 const server = createServer(app);
 await registerRoutes(server, app);
@@ -81,6 +97,11 @@ async function start(i: any) { return (await request("POST", `${i.endpoint}/star
 if (serve) {
   await storage.createCaseDiscussion(event);
   await storage.createCaseDiscussion({ ...event, topic: "QA partner meeting", registrationMode: "app", endsAt: null });
+  if (process.argv.includes("--preview")) {
+    const demo = await invite();
+    previewPath = demo.path;
+    console.log(`SYNTHETIC_GUEST_PREVIEW=${demo.path}`);
+  }
   console.log(`Synthetic events and chat invitations fixture: ${base}`);
 } else try {
   // Additive upgrade preserves a real old-format row and old column reads.
@@ -92,6 +113,14 @@ if (serve) {
   assert.equal((oldDb.prepare("SELECT count(*) AS n FROM case_discussions").get() as any).n, 1);
   assert.equal((oldDb.prepare("SELECT topic, registration_mode, ends_at FROM case_discussions").get() as any).registration_mode, "app");
   oldDb.close();
+  const oldGuestDb = new Database(":memory:");
+  oldGuestDb.exec("CREATE TABLE guest_chat_messages (id INTEGER PRIMARY KEY, invite_id TEXT NOT NULL, sender_id INTEGER, sender_name TEXT NOT NULL, sender_role TEXT NOT NULL, body TEXT NOT NULL, request_id TEXT NOT NULL, created_at INTEGER NOT NULL)");
+  oldGuestDb.prepare("INSERT INTO guest_chat_messages VALUES (1, 'old-invite', NULL, 'Guest', 'guest', 'Original message', 'original-request', 1)").run();
+  autoMigrate(oldGuestDb);
+  assert.equal((oldGuestDb.prepare("SELECT count(*) AS n FROM guest_chat_messages").get() as any).n, 1);
+  assert.equal((oldGuestDb.prepare("SELECT body, attachment_id FROM guest_chat_messages").get() as any).body, "Original message");
+  assert.equal((oldGuestDb.prepare("SELECT attachment_id FROM guest_chat_messages").get() as any).attachment_id, null);
+  oldGuestDb.close();
   // Events: authorization, validation, file binding, calendars and migration-safe defaults.
   await request("POST", "/api/admin/case-discussions", 401, event, "");
   await request("POST", "/api/admin/case-discussions", 403, event, "sid=feature-2");
@@ -206,5 +235,104 @@ if (serve) {
   })));
   assert.equal(raceResponses.filter(r => r.status === 200).length, 1);
   assert.equal(raceResponses.filter(r => r.status >= 400).length, 1);
+  // Rich temporary chat: files, quoting, private stars, reactions, moderation,
+  // access isolation and transactional transfer into the member conversation.
+  const rich = await invite(), richCookie = await start(rich), richAdmin = `/api/admin/guest-chats/${rich.id}`;
+  const other = await invite(), otherCookie = await start(other);
+  const richMessages = async () => (await request("GET", rich.endpoint, 200, undefined, richCookie)).data.messages;
+  const first = (await richMessages())[0];
+  const form = (name: string, bytes: string | Uint8Array, type = "application/octet-stream") => {
+    const data = new FormData(); data.append("file", new Blob([bytes as any], { type }), name); return data;
+  };
+  await request("POST", `${rich.endpoint}/upload`, 403, form("note.txt", "test"), "");
+  await request("POST", `${richAdmin}/upload`, 403, form("note.txt", "test"), "sid=feature-2");
+  await request("POST", `${rich.endpoint}/upload`, 400, form("bad.html", "<script>bad</script>"), richCookie);
+  await request("POST", `${rich.endpoint}/upload`, 400, form("fake.png", "<html>not a PNG</html>", "image/png"), richCookie);
+  await request("POST", `${rich.endpoint}/upload`, 400, form("empty.txt", ""), richCookie);
+  await request("POST", `${rich.endpoint}/upload`, 400, form("large.txt", new Uint8Array(20 * 1024 * 1024 + 1).fill(65)), richCookie);
+  const guestFile = (await request("POST", `${rich.endpoint}/upload`, 200, form("notes.txt", "Synthetic attachment"), richCookie)).data;
+  const pending = await request("GET", guestFile.url, 200, undefined, richCookie);
+  assert.equal(pending.data, "Synthetic attachment"); assert.match(pending.headers.get("cache-control")!, /no-store/);
+  const partial = await nativeFetch(base + guestFile.url, { headers: { cookie: richCookie, Range: "bytes=0-3" } });
+  assert.equal(partial.status, 206); assert.equal(await partial.text(), "Synt"); assert.equal(partial.headers.get("content-range"), "bytes 0-3/20");
+  await request("GET", guestFile.url, 403, undefined, otherCookie);
+  await request("GET", guestFile.url.replace(rich.id, other.id), 404, undefined, otherCookie);
+  const adminFile = (await request("POST", `${richAdmin}/upload`, 200, form("admin-guide.pdf", "%PDF-1.4 synthetic"))).data;
+  const privatePreviewUrl = adminFile.url.replace("/api/admin/guest-chats", "/api/guest-chat");
+  await request("GET", privatePreviewUrl, 403, undefined, richCookie);
+  const richPost = { body: "See my attached notes", attachmentUrl: guestFile.url, attachmentType: guestFile.type, attachmentName: guestFile.name,
+    replyToMessageId: first.id, requestId: crypto.randomUUID() };
+  await request("POST", `${rich.endpoint}/message`, 400, { ...richPost, attachmentUrl: "/api/files/forged" }, richCookie);
+  await request("POST", `${other.endpoint}/message`, 400, richPost, otherCookie);
+  await request("POST", `${rich.endpoint}/message`, 400, { ...richPost, attachmentName: "forged.pdf" }, richCookie);
+  const foreign = (await request("GET", other.endpoint, 200, undefined, otherCookie)).data.messages[0];
+  await request("POST", `${rich.endpoint}/message`, 404, { body: "Foreign quote", replyToMessageId: foreign.id, requestId: crypto.randomUUID() }, richCookie);
+  await request("POST", `${rich.endpoint}/message`, 200, richPost, richCookie);
+  await request("POST", `${rich.endpoint}/message`, 200, richPost, richCookie);
+  assert.equal((await richMessages()).length, 2);
+  const own = (await richMessages())[1];
+  await request("POST", `${richAdmin}/reply`, 409, { body: "Replay other actor", requestId: richPost.requestId });
+  await request("POST", `${richAdmin}/reply`, 200, { body: "", attachmentUrl: adminFile.url, replyToMessageId: own.id, requestId: crypto.randomUUID() });
+  await request("GET", privatePreviewUrl, 200, undefined, richCookie);
+  const adminAttachment = (await richMessages())[2];
+  await request("POST", `${rich.endpoint}/messages/${own.id}/reaction`, 200, { emoji: "👍" }, richCookie);
+  await request("POST", `${richAdmin}/messages/${own.id}/reaction`, 200, { emoji: "👍" });
+  let reaction = (await richMessages())[1].reactions[0]; assert.equal(reaction.count, 2); assert.equal(reaction.mine, true);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/reaction`, 200, { emoji: "👍" }, richCookie);
+  assert.equal((await richMessages())[1].reactions[0].mine, false);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/reaction`, 200, { emoji: "❤️" }, richCookie);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/reaction`, 400, { emoji: "<script>" }, richCookie);
+  await request("POST", `${other.endpoint}/messages/${own.id}/reaction`, 404, { emoji: "👍" }, otherCookie);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/star`, 200, {}, richCookie);
+  assert.equal((await richMessages())[1].flaggedByMe, true);
+  assert.equal((await request("GET", richAdmin, 200)).data.messages[1].flaggedByMe, false);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/star`, 200, {}, richCookie);
+  assert.equal((await richMessages())[1].flaggedByMe, false);
+  await request("POST", `${rich.endpoint}/messages/${own.id}/star`, 200, {}, richCookie);
+  await request("PATCH", `${richAdmin}/messages/${first.id}`, 401, { body: "Impersonation" }, richCookie);
+  await request("PATCH", `${richAdmin}/messages/${own.id}`, 403, { body: "Not my message" });
+  await request("PATCH", `${richAdmin}/messages/${first.id}`, 200, { body: "Updated welcome" });
+  assert.ok((await richMessages())[0].editedAt);
+  await request("DELETE", `${richAdmin}/messages/${adminAttachment.id}`, 200);
+  assert.equal((await richMessages())[2].body, "");
+  assert.equal((await richMessages())[2].attachmentUrl, null);
+  await request("GET", privatePreviewUrl, 403, undefined, richCookie);
+  await request("GET", adminFile.url, 200);
+  await request("POST", `${rich.endpoint}/message`, 400, { body: "Deleted quote", replyToMessageId: adminAttachment.id, requestId: crypto.randomUUID() }, richCookie);
+  // Audio / video / image metadata uses inspected bytes rather than client fields.
+  for (const [name, bytes, mime, type] of [
+    ["photo.png", Buffer.from("89504e470d0a1a0a00000000", "hex"), "image/png", "image"],
+    ["voice.webm", Buffer.from("1a45dfa300000000", "hex"), "audio/webm", "audio"],
+    ["video.mp4", Buffer.from("000000186674797069736f6d", "hex"), "video/mp4", "video"],
+  ] as const) {
+    const uploaded = (await request("POST", `${rich.endpoint}/upload`, 200, form(name, bytes, mime), richCookie)).data;
+    assert.equal(uploaded.type, type);
+    await request("POST", `${rich.endpoint}/message`, 200, { body: "", attachmentUrl: uploaded.url, requestId: crypto.randomUUID() }, richCookie);
+  }
+  const linked = (await request("POST", `${richAdmin}/link`, 200, { userId: 2 })).data;
+  const moved = await storage.listMessagesForThread(linked.threadId);
+  assert.equal(moved.length, 6); assert.equal(moved[1].replyToMessageId, moved[0].id);
+  assert.equal(moved[2].replyToMessageId, moved[1].id); assert.ok(moved[2].deletedAt); assert.ok(moved[0].editedAt);
+  assert.match(moved[1].senderName, /Guest/);
+  await request("GET", moved[1].attachmentUrl!, 200, undefined, "sid=feature-2");
+  await request("GET", moved[1].attachmentUrl!, 403, undefined, "sid=feature-3");
+  await request("GET", guestFile.url, 403, undefined, richCookie);
+  await request("POST", `${rich.endpoint}/upload`, 403, form("note.txt", "test"), richCookie);
+  await request("POST", `${richAdmin}/upload`, 409, form("note.txt", "test"));
+  assert.equal(db.select().from(s.chatMessageFlags).where(eq(s.chatMessageFlags.messageId, moved[1].id)).all().length, 1);
+  assert.equal(db.select().from(s.chatMessageReactions).where(eq(s.chatMessageReactions.messageId, moved[1].id)).all().length, 2);
+  const again = (await request("POST", `${richAdmin}/link`, 200, { userId: 2 })).data;
+  assert.equal(again.threadId, linked.threadId);
+  assert.equal((await storage.listMessagesForThread(linked.threadId)).length, moved.length);
+  // Closed guests lose file access, but the retained admin transcript/file survives.
+  const endFile = (await request("POST", `${other.endpoint}/upload`, 200, form("retained.txt", "Retain me"), otherCookie)).data;
+  await request("POST", `${other.endpoint}/message`, 200, { body: "", attachmentUrl: endFile.url, requestId: crypto.randomUUID() }, otherCookie);
+  await request("POST", `${other.endpoint}/decline`, 200, {}, otherCookie);
+  await request("GET", endFile.url, 403, undefined, otherCookie);
+  await request("GET", endFile.url.replace("/api/guest-chat", "/api/admin/guest-chats"), 200);
+  const quota = await invite(), quotaCookie = await start(quota);
+  for (let n = 0; n < 25; n++) db.insert(s.guestChatFiles).values({ id: crypto.randomUUID(), inviteId: quota.id,
+    uploaderKey: "guest", driveFileId: `synthetic-quota-${n}`, name: "quota.txt", mimeType: "text/plain", type: "document", size: 1, createdAt: Date.now() }).run();
+  await request("POST", `${quota.endpoint}/upload`, 429, form("over.txt", "no"), quotaCookie);
   console.log(`PASS: ${checks} HTTP checks plus assertions; events, attachments and chat-first invitations. No external delivery.`);
 } finally { server.close(); }

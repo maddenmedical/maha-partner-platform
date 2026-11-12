@@ -1,11 +1,15 @@
 import type { Express, RequestHandler, Response } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
+import multer from "multer";
+import path from "node:path";
 import { parse, serialize } from "cookie";
 import { z } from "zod";
 import { and, eq, desc, asc, isNull, sql } from "drizzle-orm";
 import { db, storage } from "./storage";
-import { guestChatInvites as invites, guestChatMessages as messages, users, chatThreads, chatMessages, sessions } from "@shared/schema";
+import { guestChatInvites as invites, guestChatMessages as messages, guestChatFiles as files, guestChatMarks as marks,
+  users, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles, sessions } from "@shared/schema";
+import { uploadToDrive, streamFromDriveRanged } from "./googleDrive";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { sendEmail } from "./email";
 import { notifyUsers } from "./push";
@@ -17,6 +21,61 @@ type Invite = typeof invites.$inferSelect;
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
 const find = (id: string) => db.select().from(invites).where(eq(invites.id, id)).get() ?? fail(404, "Invitation not found.");
 const rows = (id: string) => db.select().from(messages).where(eq(messages.inviteId, id)).orderBy(asc(messages.id)).all();
+const fileRows = (id: string) => db.select().from(files).where(eq(files.inviteId, id)).all();
+const markRows = (id: string) => db.select().from(marks).where(eq(marks.inviteId, id)).all();
+const actor = (req: any, admin: boolean) => admin ? `admin:${req.user.id}` : "guest";
+function editable(invite: Invite) {
+  if (invite.linkedThreadId || invite.declinedAt || invite.revokedAt) fail(409, "This guest session is closed. Open the linked chat or send a new invitation.");
+}
+function messageIn(inviteId: string, id: number) {
+  return db.select().from(messages).where(and(eq(messages.id, id), eq(messages.inviteId, inviteId))).get() ?? fail(404, "Message not found.");
+}
+function present(inviteId: string, actorKey: string, admin: boolean) {
+  const attachments = fileRows(inviteId), allMarks = markRows(inviteId);
+  return rows(inviteId).map(m => {
+    const file = m.deletedAt ? undefined : attachments.find(f => f.id === m.attachmentId);
+    const reactions = allMarks.filter(mark => mark.messageId === m.id && mark.kind === "reaction");
+    return { id: m.id, threadId: 0, senderId: m.senderId ?? 0, senderRole: m.senderRole, senderName: m.senderName,
+      body: m.deletedAt ? "" : m.body, createdAt: m.createdAt, editedAt: m.editedAt, deletedAt: m.deletedAt,
+      deletedByName: admin ? m.deletedByName : null, replyToMessageId: m.replyToMessageId,
+      attachmentUrl: file ? `${admin ? "/api/admin/guest-chats" : "/api/guest-chat"}/${inviteId}/files/${file.id}` : null,
+      attachmentType: file?.type ?? null, attachmentName: file?.name ?? null,
+      flaggedByMe: allMarks.some(mark => mark.messageId === m.id && mark.kind === "star" && mark.actorKey === actorKey),
+      reactions: m.deletedAt ? [] : Array.from(new Set(reactions.map(r => r.emoji!))).map(emoji => {
+        const group = reactions.filter(r => r.emoji === emoji);
+        return { emoji, count: group.length, mine: group.some(r => r.actorKey === actorKey), userNames: group.map(r => r.actorName) };
+      }) };
+  });
+}
+const messageInput = z.object({ body: z.string().trim().max(5000).default(""), requestId: z.string().uuid(),
+  attachmentUrl: z.string().max(500).optional(), attachmentType: z.string().max(30).optional(),
+  attachmentName: z.string().max(200).optional(), replyToMessageId: z.number().int().positive().optional() });
+function send(req: any, invite: Invite, admin: boolean) {
+  editable(invite);
+  const input = messageInput.parse(req.body), actorKey = actor(req, admin);
+  const previous = rows(invite.id);
+  const retry = previous.find(m => m.requestId === input.requestId);
+  if (retry) {
+    if (retry.senderRole !== (admin ? "admin" : "guest") || (admin && retry.senderId !== req.user.id)) fail(409, "Please retry with a new message identifier.");
+    return false;
+  }
+  if (!input.body && !input.attachmentUrl) fail(400, "Write a message or attach a file.");
+  if (previous.length >= 500 || previous.filter(m => m.senderRole === (admin ? "admin" : "guest") && m.createdAt > Date.now() - 60000).length >= 20)
+    fail(429, "Please pause before sending more messages.");
+  let file: typeof files.$inferSelect | undefined;
+  if (input.attachmentUrl) {
+    file = fileRows(invite.id).find(f => input.attachmentUrl === `${admin ? "/api/admin/guest-chats" : "/api/guest-chat"}/${invite.id}/files/${f.id}`);
+    if (!file || file.uploaderKey !== actorKey) fail(400, "Choose a file uploaded by you in this conversation.");
+    if (input.attachmentType && input.attachmentType !== file!.type) fail(400, "Attachment type does not match.");
+    if (input.attachmentName && input.attachmentName !== file!.name) fail(400, "Attachment name does not match.");
+  }
+  if (input.replyToMessageId && messageIn(invite.id, input.replyToMessageId).deletedAt) fail(400, "That message was deleted. Cancel the reply and try again.");
+  db.insert(messages).values({ inviteId: invite.id, senderId: admin ? req.user.id : null,
+    senderRole: admin ? "admin" : "guest", senderName: admin ? req.user.name : "Guest (not yet verified)",
+    body: input.body, requestId: input.requestId, createdAt: Date.now(),
+    attachmentId: file?.id ?? null, replyToMessageId: input.replyToMessageId ?? null }).run();
+  return true;
+}
 const accountByEmail = (email: string) => db.select().from(users).where(sql`lower(${users.email}) = ${email.toLowerCase()}`).get();
 const cookieName = (id: string) => `maha_guest_${id.replace(/-/g, "")}`;
 function cookie(res: Response, id: string, token: string, expires: number) {
@@ -49,12 +108,37 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
     const now = Date.now();
     const thread = db.insert(chatThreads).values({ userId, userRole: "partner", topic: invite.topic,
       createdAt: invite.createdAt, emailNotified: true, notifiedAt: now, ownerLastReadAt: now }).returning().get();
-    for (const message of rows(inviteId)) db.insert(chatMessages).values({
-      threadId: thread.id, senderId: message.senderRole === "admin" ? message.senderId! : user.id,
-      senderRole: message.senderRole === "admin" ? "admin" : "partner",
-      senderName: message.senderRole === "admin" ? message.senderName : "Guest (before account verification)",
-      body: message.body, createdAt: message.createdAt,
-    }).run();
+    const attachments = fileRows(inviteId), mapping = new Map<number, number>();
+    const transcript = rows(inviteId);
+    for (const file of attachments.filter(f => transcript.some(m => m.attachmentId === f.id))) {
+      db.insert(uploadedFiles).values({ driveFileId: file.driveFileId, filename: file.name, mimeType: file.mimeType,
+        size: file.size, category: "chat", ownerId: user.id, threadId: thread.id, uploadedAt: file.createdAt }).run();
+    }
+    for (const message of transcript) {
+      const file = attachments.find(f => f.id === message.attachmentId);
+      const transferred = db.insert(chatMessages).values({
+        threadId: thread.id, senderId: message.senderRole === "admin" ? message.senderId! : user.id,
+        senderRole: message.senderRole === "admin" ? "admin" : "partner",
+        senderName: message.senderRole === "admin" ? message.senderName : "Guest (before account verification)",
+        body: message.body, createdAt: message.createdAt, editedAt: message.editedAt,
+        deletedAt: message.deletedAt, deletedByName: message.deletedByName,
+        attachmentUrl: file ? `/api/files/${file.driveFileId}` : null, attachmentType: file?.type, attachmentName: file?.name,
+      }).returning().get();
+      mapping.set(message.id, transferred.id);
+    }
+    for (const message of transcript) if (message.replyToMessageId) {
+      db.update(chatMessages).set({ replyToMessageId: mapping.get(message.replyToMessageId) ?? null })
+        .where(eq(chatMessages.id, mapping.get(message.id)!)).run();
+    }
+    for (const mark of markRows(inviteId)) {
+      const messageId = mapping.get(mark.messageId);
+      if (!messageId) continue;
+      const markUserId = mark.actorKey === "guest" ? user.id : Number(mark.actorKey.split(":")[1]);
+      if (!db.select({ id: users.id }).from(users).where(eq(users.id, markUserId)).get()) continue;
+      if (mark.kind === "star") db.insert(chatMessageFlags).values({ messageId, userId: markUserId, createdAt: mark.createdAt }).run();
+      else db.insert(chatMessageReactions).values({ messageId, userId: markUserId, emoji: mark.emoji!,
+        userName: mark.actorKey === "guest" ? "Guest (before account verification)" : mark.actorName, createdAt: mark.createdAt }).run();
+    }
     db.update(invites).set({ linkedUserId: userId, linkedThreadId: thread.id, linkedBy, linkedAt: now,
       sessionHash: null, verificationHash: null }).where(eq(invites.id, inviteId)).run();
     return thread.id;
@@ -63,13 +147,125 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
 const safe = (fn: (req: any, res: Response) => any): RequestHandler => async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try { await fn(req, res); } catch (error: any) {
+    if (res.headersSent) { res.end(); return; }
     res.status(error.status || (error instanceof z.ZodError ? 400 : 500))
       .json({ message: error.status ? error.message : error instanceof z.ZodError ? "Please check the required fields." : "Could not complete this action. Please try again." });
   }
 };
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 2, parts: 3 } }).single("file");
+const uploading = new Set<string>();
+function inspectFile(file: Express.Multer.File) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const b = file.buffer, ascii = (a: number, n: number) => b.subarray(a, a + n).toString("ascii");
+  const hex = b.subarray(0, 12).toString("hex");
+  let mimeType = "", type = "document", valid = false;
+  switch (ext) {
+    case ".pdf": mimeType = "application/pdf"; valid = ascii(0, 5) === "%PDF-"; break;
+    case ".txt": mimeType = "text/plain"; valid = !b.includes(0); break;
+    case ".doc": case ".xls": case ".ppt":
+      mimeType = ({ ".doc": "application/msword", ".xls": "application/vnd.ms-excel", ".ppt": "application/vnd.ms-powerpoint" })[ext]!;
+      valid = hex.startsWith("d0cf11e0a1b11ae1"); break;
+    case ".docx": case ".xlsx": case ".pptx":
+      mimeType = `application/vnd.openxmlformats-officedocument.${({ ".docx": "wordprocessingml.document", ".xlsx": "spreadsheetml.sheet", ".pptx": "presentationml.presentation" })[ext]}`;
+      valid = hex.startsWith("504b0304"); break;
+    case ".jpg": case ".jpeg": type = "image"; mimeType = "image/jpeg"; valid = hex.startsWith("ffd8ff"); break;
+    case ".png": type = "image"; mimeType = "image/png"; valid = hex.startsWith("89504e470d0a1a0a"); break;
+    case ".gif": type = "image"; mimeType = "image/gif"; valid = ["GIF87a", "GIF89a"].includes(ascii(0, 6)); break;
+    case ".webp": type = "image"; mimeType = "image/webp"; valid = ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP"; break;
+    case ".mp4": case ".mov": case ".m4a":
+      type = ext === ".m4a" ? "audio" : "video"; mimeType = type === "audio" ? "audio/mp4" : "video/mp4";
+      valid = ascii(4, 4) === "ftyp"; break;
+    case ".webm": type = file.mimetype.startsWith("audio/") ? "audio" : "video"; mimeType = `${type}/webm`; valid = hex.startsWith("1a45dfa3"); break;
+    case ".mp3": type = "audio"; mimeType = "audio/mpeg"; valid = ascii(0, 3) === "ID3" || (b[0] === 255 && (b[1] & 224) === 224); break;
+    case ".wav": type = "audio"; mimeType = "audio/wav"; valid = ascii(0, 4) === "RIFF" && ascii(8, 4) === "WAVE"; break;
+    case ".ogg": type = "audio"; mimeType = "audio/ogg"; valid = ascii(0, 4) === "OggS"; break;
+  }
+  if (!b.length || !valid) fail(400, "Unsupported or invalid file. Choose a photo, PDF, Office document, text file, audio or video.");
+  return { mimeType, type, name: path.basename(file.originalname).replace(/[\x00-\x1f\x7f]/g, "").slice(0, 180) || `attachment${ext}` };
+}
 export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandler, requireAdmin: RequestHandler,
   optionalUser: (req: any) => Promise<any>, setSession: (res: Response, token: string, expiresAt: number) => void) {
   const admin = [requireAuth, requireAdmin];
+  for (const isAdmin of [false, true]) {
+    const prefix = isAdmin ? "/api/admin/guest-chats/:id" : "/api/guest-chat/:id";
+    const guards = isAdmin ? admin : [];
+    const access = (req: any) => isAdmin ? find(req.params.id) : checkGuest(req);
+    app.post(`${prefix}/upload`, ...guards, safe(async (req, res) => {
+      const invite = access(req); editable(invite);
+      if (uploading.has(invite.id)) fail(429, "Another upload is in progress. Please wait.");
+      const existing = fileRows(invite.id);
+      if (existing.length >= 25 || existing.reduce((n, f) => n + f.size, 0) >= 100 * 1024 * 1024)
+        fail(429, "This temporary chat has reached its upload limit. Keep the chat in a partner account to continue.");
+      uploading.add(invite.id);
+      try {
+        await new Promise<void>((resolve, reject) => upload(req, res, err => err ? reject(Object.assign(new Error("Upload failed. Maximum 20 MB per file."), { status: 400 })) : resolve()));
+        if (!req.file) fail(400, "Choose a file.");
+        const info = inspectFile(req.file);
+        if (existing.reduce((n, f) => n + f.size, 0) + req.file.size > 100 * 1024 * 1024) fail(429, "This chat has reached its 100 MB upload limit.");
+        const result = await uploadToDrive(req.file.buffer, info.name, info.mimeType);
+        // Linking/revocation can happen while Drive is uploading. Do not grant
+        // access based on the old session snapshot.
+        editable(access(req));
+        const id = crypto.randomUUID();
+        db.insert(files).values({ id, inviteId: invite.id, uploaderKey: actor(req, isAdmin), driveFileId: result.driveFileId,
+          ...info, size: req.file.size, createdAt: Date.now() }).run();
+        res.json({ url: `${isAdmin ? "/api/admin/guest-chats" : "/api/guest-chat"}/${invite.id}/files/${id}`, ...info });
+      } finally { uploading.delete(invite.id); }
+    }));
+    app.get(`${prefix}/files/:fileId`, ...guards, safe(async (req, res) => {
+      const invite = access(req);
+      const file = db.select().from(files).where(and(eq(files.id, req.params.fileId), eq(files.inviteId, invite.id))).get();
+      if (!file) fail(404, "File not found.");
+      const attached = rows(invite.id).filter(m => m.attachmentId === file!.id);
+      if (!isAdmin && !attached.some(m => !m.deletedAt) && (attached.length || file!.uploaderKey !== actor(req, false))) fail(403, "File is not available.");
+      const result = await streamFromDriveRanged(file!.driveFileId, req.headers.range);
+      // Recheck after the external read too, before releasing any bytes.
+      try { access(req); } catch (e) { (result.stream as any).destroy?.(); throw e; }
+      res.status(result.status === 206 ? 206 : 200);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+      res.setHeader("Content-Type", file!.mimeType);
+      res.setHeader("Accept-Ranges", "bytes");
+      if (result.headers["content-range"]) res.setHeader("Content-Range", result.headers["content-range"]);
+      if (result.headers["content-length"]) res.setHeader("Content-Length", result.headers["content-length"]);
+      res.setHeader("Content-Disposition", `${file!.type === "document" || req.query.download === "1" ? "attachment" : "inline"}; filename="attachment${path.extname(file!.name)}"; filename*=UTF-8''${encodeURIComponent(file!.name)}`);
+      result.stream.on("error", () => { if (!res.headersSent) res.status(502).json({ message: "Could not load attachment." }); else res.end(); });
+      result.stream.pipe(res);
+    }));
+    for (const kind of ["star", "reaction"] as const) {
+      app.post(`${prefix}/messages/:messageId/${kind}`, ...guards, safe(async (req, res) => {
+        const invite = access(req);
+        if (invite.linkedThreadId) fail(409, "Open the linked member chat to continue.");
+        const message = messageIn(invite.id, Number(req.params.messageId));
+        if (message.deletedAt) fail(400, "This message was deleted.");
+        const emoji = kind === "reaction" ? z.object({ emoji: z.string().min(1).max(20).regex(new RegExp("^[\\p{Extended_Pictographic}\\p{Emoji_Component}\\u200d\\uFE0F]+$", "u")) }).parse(req.body).emoji : null;
+        const actorKey = actor(req, isAdmin), id = `${message.id}:${actorKey}:${kind}`;
+        const old = db.select().from(marks).where(eq(marks.id, id)).get();
+        db.transaction(() => {
+          if (old) db.delete(marks).where(eq(marks.id, id)).run();
+          if (!old || (kind === "reaction" && old.emoji !== emoji))
+            db.insert(marks).values({ id, inviteId: invite.id, messageId: message.id, actorKey,
+              actorName: isAdmin ? req.user.name : "Guest (not yet verified)", kind, emoji, createdAt: Date.now() }).run();
+        });
+        res.json({ ok: true });
+      }));
+    }
+  }
+  app.patch("/api/admin/guest-chats/:id/messages/:messageId", ...admin, safe(async (req, res) => {
+    const invite = find(req.params.id); editable(invite);
+    const message = messageIn(invite.id, Number(req.params.messageId));
+    if (message.senderRole !== "admin" || message.senderId !== req.user.id || message.deletedAt) fail(403, "Only your own undeleted messages can be edited.");
+    const { body } = z.object({ body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    db.update(messages).set({ body, editedAt: Date.now() }).where(eq(messages.id, message.id)).run();
+    res.json({ ok: true });
+  }));
+  app.delete("/api/admin/guest-chats/:id/messages/:messageId", ...admin, safe(async (req, res) => {
+    const invite = find(req.params.id); editable(invite);
+    const message = messageIn(invite.id, Number(req.params.messageId));
+    if (!message.deletedAt) db.update(messages).set({ deletedAt: Date.now(), deletedByName: req.user.name }).where(eq(messages.id, message.id)).run();
+    res.json({ ok: true });
+  }));
   app.get("/api/admin/guest-chats", ...admin, safe(async (_req, res) => {
     const list = db.select().from(invites).orderBy(desc(invites.createdAt)).all();
     res.json(list.map(({ id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt, adminReadAt }) => {
@@ -94,15 +290,11 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   app.get("/api/admin/guest-chats/:id", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
     db.update(invites).set({ adminReadAt: Date.now() }).where(eq(invites.id, invite.id)).run();
-    res.json({ messages: rows(invite.id), linkedThreadId: invite.linkedThreadId });
+    res.json({ messages: present(invite.id, actor(req, true), true), linkedThreadId: invite.linkedThreadId });
   }));
   app.post("/api/admin/guest-chats/:id/reply", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
-    if (invite.linkedThreadId || invite.declinedAt || invite.revokedAt) fail(409, "This guest session is closed. Open the linked chat or send a new invitation.");
-    const input = z.object({ body: z.string().trim().min(1).max(5000), requestId: z.string().uuid() }).parse(req.body);
-    const existing = db.select().from(messages).where(and(eq(messages.inviteId, invite.id), eq(messages.requestId, input.requestId))).get();
-    if (!existing) db.insert(messages).values({ ...input, inviteId: invite.id, senderId: req.user.id,
-      senderRole: "admin", senderName: req.user.name, createdAt: Date.now() }).run();
+    send(req, invite, true);
     res.json({ ok: true });
   }));
   app.post("/api/admin/guest-chats/:id/revoke", ...admin, safe(async (req, res) => {
@@ -139,17 +331,11 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.get("/api/guest-chat/:id", safe(async (req, res) => {
     const invite = checkGuest(req);
-    res.json({ topic: invite.topic, messages: rows(invite.id).map(({ id, senderRole, senderName, body, createdAt }) =>
-      ({ id, senderRole, senderName, body, createdAt })), expiresAt: invite.sessionExpiresAt });
+    res.json({ topic: invite.topic, messages: present(invite.id, "guest", false), expiresAt: invite.sessionExpiresAt });
   }));
   app.post("/api/guest-chat/:id/message", safe(async (req, res) => {
     const invite = checkGuest(req);
-    const input = z.object({ body: z.string().trim().min(1).max(5000), requestId: z.string().uuid() }).parse(req.body);
-    const previous = rows(invite.id);
-    if (previous.some(m => m.requestId === input.requestId)) return res.json({ ok: true });
-    const recent = previous.filter(m => m.senderRole === "guest" && m.createdAt > Date.now() - 60000);
-    if (recent.length >= 20 || previous.length >= 500) fail(429, "Please pause before sending more messages.");
-    db.insert(messages).values({ ...input, inviteId: invite.id, senderRole: "guest", senderName: "Guest (not yet verified)", createdAt: Date.now() }).run();
+    if (!send(req, invite, false)) return res.json({ ok: true });
     const admins = await storage.listAdmins();
     void notifyUsers(admins.map(a => a.id), "chat", {
       previewTitle: "New invitation chat message", previewBody: "Open Chat invitations to reply.",

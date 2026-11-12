@@ -50,12 +50,17 @@ interface ChatComposerProps {
   // feature ("@ to link another chat") is not wired up for this surface --
   // the default text would otherwise advertise a feature that does nothing.
   placeholder?: string;
+  maxLength?: number;
+  accept?: string;
+  maxFileBytes?: number;
+  disabled?: boolean;
+  maxRecordingSeconds?: number;
 }
 
 // Voice notes are always recorded as real audio via MediaRecorder and sent as
 // a normal audio attachment the recipient can play back -- no speech-to-text,
 // no transcription. Server-side transcription (Whisper) is out of scope.
-export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", disableAttachments, replyingTo, onCancelReply, mentionThreads = [], onResolveMention, placeholder }: ChatComposerProps) {
+export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", disableAttachments, replyingTo, onCancelReply, mentionThreads = [], onResolveMention, placeholder, maxLength, accept, maxFileBytes, disabled, maxRecordingSeconds }: ChatComposerProps) {
   const { toast } = useToast();
   const [body, setBody] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -68,6 +73,9 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [mentionResolving, setMentionResolving] = useState(false);
+  const submittingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const mentionMatches: MentionCandidate[] = mention
     ? [
@@ -84,7 +92,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
 
   function applyBodyChange(nextBody: string, caret: number) {
     setBody(nextBody);
-    const active = findActiveMention(nextBody, caret);
+    const active = mentionThreads.length || onResolveMention ? findActiveMention(nextBody, caret) : null;
     setMention(active);
     setMentionActiveIndex(0);
   }
@@ -124,6 +132,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   }
 
   async function uploadFile(file: File): Promise<PendingAttachment> {
+    if (maxFileBytes && file.size > maxFileBytes) throw new Error(`Please choose a file smaller than ${Math.round(maxFileBytes / 1024 / 1024)} MB.`);
     const formData = new FormData();
     formData.append("file", file);
     formData.append("threadId", String(threadId));
@@ -148,6 +157,8 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   async function startAudioRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -155,6 +166,8 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
       };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        if (!mountedRef.current) return;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         const ext = blob.type.includes("mp4") ? "m4a" : "webm";
         const file = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: blob.type });
@@ -172,12 +185,13 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
       recorder.start();
       setRecording(true);
     } catch {
+      streamRef.current?.getTracks().forEach(t => t.stop());
       toast({ title: "Microphone access denied", description: "Allow microphone access to record a voice note.", variant: "destructive" });
     }
   }
 
   function stopAudioRecording() {
-    mediaRecorderRef.current?.stop();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
     mediaRecorderRef.current = null;
     setRecording(false);
   }
@@ -191,28 +205,41 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   }
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      mediaRecorderRef.current?.stop?.();
+      mountedRef.current = false;
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+      streamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
+  useEffect(() => {
+    if (!recording || !maxRecordingSeconds) return;
+    const timer = window.setTimeout(stopAudioRecording, maxRecordingSeconds * 1000);
+    return () => window.clearTimeout(timer);
+  }, [recording, maxRecordingSeconds]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!body.trim() && !pendingAttachment) return;
-    await onSend({
+    if (disabled || sending || uploading || recording || submittingRef.current || (!body.trim() && !pendingAttachment)) return;
+    submittingRef.current = true;
+    try {
+      await onSend({
       body: body.trim(),
       attachmentUrl: pendingAttachment?.url,
       attachmentType: pendingAttachment?.type,
       attachmentName: pendingAttachment?.name,
       replyToMessageId: replyingTo?.id,
-    });
-    setBody("");
-    setPendingAttachment(null);
-    setMention(null);
-    onCancelReply?.();
+      });
+      setBody("");
+      setPendingAttachment(null);
+      setMention(null);
+      onCancelReply?.();
+    } catch (error) {
+      toast({ title: "Message not sent", description: error instanceof Error ? error.message : "Please try again. Your draft is still here.", variant: "destructive" });
+    } finally { submittingRef.current = false; }
   }
 
-  const busy = uploading || sending || recording;
+  const busy = uploading || sending || recording || disabled;
 
   return (
     <form
@@ -305,6 +332,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           <input
             ref={fileInputRef}
             type="file"
+            accept={accept}
             className="sr-only"
             onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
             data-testid={`input-${testIdPrefix}-attachment`}
@@ -317,6 +345,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             size="icon"
             className="shrink-0 h-11 w-11 rounded-full"
             disabled={busy}
+            aria-label="Attach file"
             onClick={() => fileInputRef.current?.click()}
             data-testid={`button-${testIdPrefix}-attach`}
           >
@@ -326,12 +355,12 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
         {/* WhatsApp-style pill: emoji trigger and the growing text field share
             one rounded, bordered surface instead of each being its own boxy
             control crammed against its neighbors. */}
-        <div className="flex flex-1 items-end gap-1 rounded-3xl border border-input bg-background pl-1.5 pr-2 min-h-11">
+        <div className="flex min-w-0 flex-1 items-end gap-1 rounded-3xl border border-input bg-background pl-1.5 pr-2 min-h-11">
           <EmojiPicker
             onSelect={(e) => setBody((b) => b + e)}
             testId={`button-${testIdPrefix}-emoji`}
             trigger={
-              <Button type="button" variant="ghost" size="icon" className="shrink-0 h-9 w-9 rounded-full self-end mb-0.5" data-testid={`button-${testIdPrefix}-emoji`}>
+              <Button type="button" variant="ghost" size="icon" disabled={disabled} aria-label="Choose emoji" className="shrink-0 h-9 w-9 rounded-full self-end mb-0.5" data-testid={`button-${testIdPrefix}-emoji`}>
                 <Smile className="h-5 w-5" />
               </Button>
             }
@@ -339,7 +368,9 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
           <Textarea
             ref={textareaRef}
             value={body}
-            disabled={mentionResolving}
+            disabled={mentionResolving || disabled || sending}
+            maxLength={maxLength}
+            aria-label="Message"
             onChange={(e) => applyBodyChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
             placeholder={placeholder ?? "Type a message..."}
             rows={1}
@@ -390,6 +421,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             size="icon"
             className="shrink-0 h-11 w-11 rounded-full"
             onClick={handleMicClick}
+            aria-label="Stop recording"
             data-testid={`button-${testIdPrefix}-mic`}
           >
             <Square className="h-5 w-5" />
@@ -399,7 +431,8 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             type="submit"
             size="icon"
             className="shrink-0 h-11 w-11 rounded-full"
-            disabled={sending || uploading}
+            disabled={sending || uploading || disabled}
+            aria-label="Send message"
             data-testid={`button-${testIdPrefix}-send`}
           >
             {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
@@ -410,7 +443,8 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
             variant="secondary"
             size="icon"
             className="shrink-0 h-11 w-11 rounded-full"
-            disabled={uploading || sending}
+            disabled={uploading || sending || disabled}
+            aria-label="Record voice note"
             onClick={handleMicClick}
             data-testid={`button-${testIdPrefix}-mic`}
           >
