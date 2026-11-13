@@ -53,3 +53,12 @@ Preserve existing MAHA layout, authentication, admin role restrictions and Rende
 - No guest access to partner directory, other chats, referrals, community, admin to-dos or MP3 conversion.
 - Browser desktop/mobile/narrow guest and admin paths, normal member chat regression, existing flow smoke.
 - Private synthetic preview only; Render production push requires new approval.
+
+## Invitation account guidance
+- Existing non-partner email explains that this is a partner-chat linking flow; open the existing account in a separate tab without promising chat transfer.
+- Pending/inactive partner explains that the existing account needs review in this conversation, without creating a duplicate or changing approval.
+- Wrong invited email offers correction; verification limit explains requesting a new invitation within the current chat.
+- Guidance appears next to verification controls; changing email or returning to chat clears stale errors.
+- Continue chatting preserves messages, composer draft and guest access; account sign-in opens separately.
+- Approved and new partners still verify and keep rich conversations; failed guidance requests do not send email or mutate accounts.
+- Desktop, 375px/320px, hosted preview and existing navigation regression; no production push without approval.

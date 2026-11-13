@@ -18,7 +18,8 @@ const hash = (value: string) => crypto.createHash("sha256").update(value).digest
 const secret = () => crypto.randomBytes(32).toString("hex");
 const HOUR = 3600000;
 type Invite = typeof invites.$inferSelect;
-const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
+type GuestNextStep = "sign-in" | "review-in-chat" | "check-email";
+const fail = (status: number, message: string, nextStep?: GuestNextStep): never => { throw Object.assign(new Error(message), { status, nextStep }); };
 const find = (id: string) => db.select().from(invites).where(eq(invites.id, id)).get() ?? fail(404, "Invitation not found.");
 const rows = (id: string) => db.select().from(messages).where(eq(messages.inviteId, id)).orderBy(asc(messages.id)).all();
 const fileRows = (id: string) => db.select().from(files).where(eq(files.inviteId, id)).all();
@@ -96,6 +97,17 @@ function activePartner(id: number) {
   if (!user || user.role !== "partner" || user.status !== "approved" || user.archivedAt) fail(400, "Choose an active, approved partner.");
   return user!;
 }
+function checkGuestAccount(user: typeof users.$inferSelect) {
+  if (user.role !== "partner") fail(403,
+    "This email is already linked to a MAHA account that is not a partner account. Open your existing account in a separate tab, or use your partner-account email if you have one. Signing in separately will not attach this guest conversation to that account.",
+    "sign-in");
+  if (user.archivedAt || user.status === "rejected") fail(403,
+    "This existing partner account is not currently active. You can continue chatting here. Ask the MAHA team in this conversation to review access to your existing account before keeping the chat. Please do not create a second account.",
+    "review-in-chat");
+  if (user.status !== "approved") fail(403,
+    "This partner account is still awaiting approval. You can continue chatting here. Ask the MAHA team in this conversation to review your existing account, then try keeping the chat again. Please do not create a second account.",
+    "review-in-chat");
+}
 function linkChat(inviteId: string, userId: number, linkedBy: number | null = null) {
   return db.transaction(() => {
     const invite = find(inviteId);
@@ -149,7 +161,8 @@ const safe = (fn: (req: any, res: Response) => any): RequestHandler => async (re
   try { await fn(req, res); } catch (error: any) {
     if (res.headersSent) { res.end(); return; }
     res.status(error.status || (error instanceof z.ZodError ? 400 : 500))
-      .json({ message: error.status ? error.message : error instanceof z.ZodError ? "Please check the required fields." : "Could not complete this action. Please try again." });
+      .json({ message: error.status ? error.message : error instanceof z.ZodError ? "Please check the required fields." : "Could not complete this action. Please try again.",
+        ...(error.status && error.nextStep ? { nextStep: error.nextStep } : {}) });
   }
 };
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 2, parts: 3 } }).single("file");
@@ -353,10 +366,14 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     const invite = checkGuest(req), now = Date.now();
     const { email } = z.object({ email: z.string().trim().toLowerCase().email().max(254) }).parse(req.body);
     if (invite.verificationSentAt && now - invite.verificationSentAt < 60000) fail(429, "Please wait one minute before requesting another code.");
-    if (invite.verificationSends >= 5) fail(429, "Please contact MAHA to complete verification.");
-    if (invite.intendedUserId && activePartner(invite.intendedUserId).email.toLowerCase() !== email) fail(400, "Use the email address of the invited partner account, or contact MAHA.");
+    if (invite.verificationSends >= 5) fail(429, "For security, no more codes can be requested with this invitation. Continue this conversation and ask the MAHA team here for a new invitation.", "review-in-chat");
+    if (invite.intendedUserId) {
+      const intended = db.select().from(users).where(eq(users.id, invite.intendedUserId)).get();
+      if (!intended || intended.email.toLowerCase() !== email) fail(400, "This invitation is for a different partner email. Enter the email address the invitation was intended for. If you are unsure, continue this conversation and ask the MAHA team here.", "check-email");
+      checkGuestAccount(intended!);
+    }
     const account = accountByEmail(email);
-    if (account && (account.role !== "partner" || account.status !== "approved" || account.archivedAt)) fail(403, "Please contact MAHA about access to this account.");
+    if (account) checkGuestAccount(account);
     const code = String(crypto.randomInt(100000, 1000000));
     db.update(invites).set({ verificationEmail: email, verificationHash: hash(`${invite.id}:${code}`),
       verificationExpiresAt: now + 10 * 60000, verificationSentAt: now, verificationAttempts: 0,
@@ -392,7 +409,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
           lastName: input.lastName, prefix: input.prefix || null, username: `partner-${crypto.randomUUID()}`,
           approvalEmailNotified: true, legalAcceptedVersion: CURRENT_LEGAL_VERSION, legalAcceptedAt: Date.now(), createdAt: Date.now() }).returning().get();
       }
-      activePartner(user.id);
+      checkGuestAccount(user);
       if (fresh.intendedUserId && fresh.intendedUserId !== user.id) fail(403, "This invitation is for another account.");
       db.update(users).set({ legalAcceptedVersion: CURRENT_LEGAL_VERSION, legalAcceptedAt: Date.now() }).where(eq(users.id, user.id)).run();
       const thread = linkChat(invite.id, user.id);
@@ -406,6 +423,8 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   app.post("/api/guest-chat/:id/keep", requireAuth, safe(async (req, res) => {
     const invite = checkGuest(req);
     if (req.user.role !== "partner" || req.user.impersonating) fail(403, "Sign in with your own partner account.");
+    const account = db.select().from(users).where(eq(users.id, req.user.id)).get();
+    if (account) checkGuestAccount(account);
     res.json({ threadId: linkChat(invite.id, req.user.id) });
   }));
 }

@@ -35,8 +35,9 @@ const fileStore = new Map<string, { bytes: Buffer; type: string }>();
   },
 } });
 const nativeFetch = globalThis.fetch;
-let code = "", mailFails = false;
+let code = "", mailFails = false, mailCalls = 0;
 globalThis.fetch = (async (_url: any, options: any) => {
+  mailCalls++;
   const data = options?.body ? JSON.parse(options.body) : {};
   const match = data.html?.match(/>(\d{6})<\/p>/);
   if (match) code = match[1];
@@ -46,9 +47,10 @@ const { db, storage } = await import("../server/storage");
 const s = await import("../shared/schema");
 const { eq } = await import("drizzle-orm");
 const { CURRENT_LEGAL_VERSION } = await import("../shared/legalVersion");
-for (const [id, role, status, name] of [[1, "admin", "approved", "Dr. QA Admin"], [2, "partner", "approved", "Dr. QA Partner"], [3, "partner", "approved", "Dr. Other Partner"], [4, "partner", "pending", "Pending Partner"]] as const) {
+for (const [id, role, status, name] of [[1, "admin", "approved", "Dr. QA Admin"], [2, "partner", "approved", "Dr. QA Partner"], [3, "partner", "approved", "Dr. Other Partner"], [4, "partner", "pending", "Pending Partner"],
+  [5, "partner", "approved", "Archived Partner"], [6, "partner", "rejected", "Inactive Partner"], [7, "student", "approved", "Student Account"]] as const) {
   db.insert(s.users).values({ id, role, status, name, email: `qa-${id}@example.invalid`, passwordHash: "synthetic",
-    legalAcceptedVersion: CURRENT_LEGAL_VERSION, createdAt: Date.now() }).run();
+    archivedAt: id === 5 ? Date.now() : null, legalAcceptedVersion: CURRENT_LEGAL_VERSION, createdAt: Date.now() }).run();
   db.insert(s.sessions).values({ token: `feature-${id}`, userId: id, expiresAt: Date.now() + 86400000 }).run();
 }
 const { registerRoutes } = await import("../server/routes");
@@ -194,7 +196,8 @@ if (serve) {
   await request("POST", `${existing.endpoint}/start`, 403, { token: existing.token }, "sid=feature-3");
   // Signed-out existing partner verifies once and reuses their account.
   const returning = await invite(2), returningCookie = await start(returning);
-  await request("POST", `${returning.endpoint}/send-code`, 400, { email: "qa-3@example.invalid" }, returningCookie);
+  const wrongEmail = await request("POST", `${returning.endpoint}/send-code`, 400, { email: "qa-3@example.invalid" }, returningCookie);
+  assert.equal(wrongEmail.data.nextStep, "check-email");
   await request("POST", `${returning.endpoint}/send-code`, 200, { email: "qa-2@example.invalid" }, returningCookie);
   const beforeUsers = db.select().from(s.users).all().length;
   await request("POST", `${returning.endpoint}/verify`, 200, { ...verify, code, firstName: "", lastName: "" }, returningCookie);
@@ -214,6 +217,32 @@ if (serve) {
   await request("POST", `/api/admin/guest-chats/${failed.id}/revoke`, 200, {});
   await request("GET", failed.endpoint, 403, undefined, failedCookie);
   await request("POST", "/api/admin/guest-chats", 400, { ...inviteBody, intendedUserId: 4 });
+  // Actionable guidance must not grant access, send codes or break ongoing chat.
+  for (const [id, nextStep, phrase] of [[1, "sign-in", "not a partner account"], [4, "review-in-chat", "awaiting approval"],
+    [5, "review-in-chat", "not currently active"], [6, "review-in-chat", "not currently active"], [7, "sign-in", "not a partner account"]] as const) {
+    const blocked = await invite(), blockedCookie = await start(blocked);
+    const beforeAccount = db.select().from(s.users).where(eq(s.users.id, id)).get();
+    const beforeMail = mailCalls;
+    const response = await request("POST", `${blocked.endpoint}/send-code`, 403, { email: `qa-${id}@example.invalid` }, blockedCookie);
+    assert.equal(response.data.nextStep, nextStep); assert.ok(response.data.message.includes(phrase));
+    assert.ok(!response.data.message.includes("Please contact MAHA"));
+    assert.equal(mailCalls, beforeMail);
+    assert.deepEqual(db.select().from(s.users).where(eq(s.users.id, id)).get(), beforeAccount);
+    const state = db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id, blocked.id)).get()!;
+    assert.equal(state.verificationHash, null); assert.equal(state.verificationSends, 0); assert.equal(state.linkedThreadId, null);
+    await request("POST", `${blocked.endpoint}/message`, 200, { body: "Still chatting after guidance.", requestId: crypto.randomUUID() }, blockedCookie);
+    assert.equal((await request("GET", blocked.endpoint, 200, undefined, blockedCookie)).data.messages.length, 2);
+  }
+  const statusChanged = await invite(), statusCookie = await start(statusChanged);
+  await request("POST", `${statusChanged.endpoint}/send-code`, 200, { email: "qa-3@example.invalid" }, statusCookie);
+  db.update(s.users).set({ status: "pending" }).where(eq(s.users.id, 3)).run();
+  const statusResponse = await request("POST", `${statusChanged.endpoint}/verify`, 403, { ...verify, code }, statusCookie);
+  assert.equal(statusResponse.data.nextStep, "review-in-chat");
+  assert.equal(db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id, statusChanged.id)).get()!.linkedThreadId, null);
+  db.update(s.users).set({ status: "approved" }).where(eq(s.users.id, 3)).run();
+  const exhausted = await invite(), exhaustedCookie = await start(exhausted);
+  db.update(s.guestChatInvites).set({ verificationSends: 5 }).where(eq(s.guestChatInvites.id, exhausted.id)).run();
+  assert.equal((await request("POST", `${exhausted.endpoint}/send-code`, 429, { email: "new@example.invalid" }, exhaustedCookie)).data.nextStep, "review-in-chat");
   const expired = await invite(); db.update(s.guestChatInvites).set({ expiresAt: 1 }).where(eq(s.guestChatInvites.id, expired.id)).run();
   await request("POST", `${expired.endpoint}/start`, 403, { token: expired.token }, "");
   const limited = await invite(), limitedCookie = await start(limited);

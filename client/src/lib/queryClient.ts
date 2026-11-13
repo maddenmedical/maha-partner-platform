@@ -13,6 +13,7 @@ export const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let message = res.statusText;
+    let nextStep: string | undefined;
     // Read the body as text ONCE (Response bodies can only be consumed a
     // single time — calling .json() and then .text() on failure throws
     // "body stream already read" and hides the real error from the user).
@@ -21,6 +22,7 @@ async function throwIfResNotOk(res: Response) {
       try {
         const data = JSON.parse(raw);
         message = data.message || message;
+        if (["sign-in", "review-in-chat", "check-email"].includes(data.nextStep)) nextStep = data.nextStep;
       } catch {
         // Not JSON. This happens when the request never reached our server at
         // all -- e.g. Render/Cloudflare's own edge returning a generic HTML
@@ -32,7 +34,7 @@ async function throwIfResNotOk(res: Response) {
           : raw;
       }
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { nextStep });
   }
 }
 

@@ -14,11 +14,18 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
   const { user, bootstrapping, loginWithUser } = useAuth();
   const [started, setStarted] = useState(false), [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [nextStep, setNextStep] = useState<string | undefined>();
   const [keep, setKeep] = useState(false), [sentCode, setSentCode] = useState(false);
   const [email, setEmail] = useState(""), [code, setCode] = useState("");
   const [firstName, setFirstName] = useState(""), [lastName, setLastName] = useState(""), [prefix, setPrefix] = useState("");
   const [acceptedLegal, setAcceptedLegal] = useState(false);
   const attempted = useRef(false);
+  const emailInput = useRef<HTMLInputElement>(null);
+  const conversation = useRef<HTMLDivElement>(null);
+  const guidancePanel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) guidancePanel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [error]);
   const endpoint = `/api/guest-chat/${params.id}`;
   const chat = useQuery<{ topic: string; messages: { id: number; body: string; senderName: string; senderRole: string }[] }>({
     queryKey: [endpoint], enabled: started && !closed, refetchInterval: 4000, retry: false,
@@ -32,10 +39,31 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
   }
   async function action(fn: () => Promise<void>) {
     if (busy) return;
-    setBusy(true); setError("");
-    try { await fn(); } catch (err) { setError(err instanceof Error ? err.message : "Please try again."); }
+    setBusy(true); setError(""); setNextStep(undefined);
+    try { await fn(); } catch (err) {
+      setError(err instanceof Error ? err.message : "Please try again.");
+      setNextStep((err as { nextStep?: string })?.nextStep);
+    }
     finally { setBusy(false); }
   }
+  function returnToConversation() {
+    setKeep(false); setError(""); setNextStep(undefined);
+    conversation.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    conversation.current?.querySelector("textarea")?.focus({ preventScroll: true });
+  }
+  const guidance = error && <div ref={guidancePanel} role="alert" className="rounded-lg border border-destructive p-3 space-y-3 text-sm" data-testid="guest-account-guidance">
+    <p className="text-destructive">{error}</p>
+    {nextStep && <p>Your messages remain in this conversation. You can keep chatting while this is resolved.</p>}
+    <div className="flex flex-wrap gap-2">
+      {nextStep === "sign-in" && <Button asChild variant="outline" className="whitespace-normal h-auto min-h-9">
+        <a href="#/" target="_blank" rel="noopener noreferrer">Open existing account (new tab)</a>
+      </Button>}
+      {(nextStep === "sign-in" || nextStep === "check-email") && <Button variant="outline" onClick={() => {
+        setEmail(""); setSentCode(false); setCode(""); setError(""); setNextStep(undefined); emailInput.current?.focus();
+      }}>Use a different email</Button>}
+      {nextStep && <Button variant="outline" onClick={returnToConversation}>Continue chatting</Button>}
+    </div>
+  </div>;
   async function begin() {
     await action(async () => {
       const response = await apiRequest("POST", `${endpoint}/start`, { token: params.token });
@@ -61,7 +89,7 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
         <Button onClick={begin} disabled={busy || bootstrapping} className="w-full">{busy ? "Opening…" : "Start chat"}</Button>
       </div> : <>
         <h2 className="font-medium">{chat.data?.topic || "Chat with MAHA"}</h2>
-        <InvitationConversation key={params.id} inviteId={params.id} />
+        <div ref={conversation}><InvitationConversation key={params.id} inviteId={params.id} /></div>
         {!keep ? <div className="rounded-lg border bg-card p-4 space-y-3">
           <p className="text-sm">Finished chatting? Keep this conversation in your partner account. Your invitation includes approval; no password is required.</p>
           <Button variant="outline" className="w-full" onClick={() => setKeep(true)}>Keep this chat</Button>
@@ -72,7 +100,7 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
             const response = await apiRequest("POST", `${endpoint}/keep`); await openMemberChat((await response.json()).threadId);
           })}>Keep in my signed-in account</Button> : <>
             <Label htmlFor="guest-email">Email address</Label>
-            <Input id="guest-email" type="email" autoComplete="email" value={email} onChange={e => { setEmail(e.target.value); setSentCode(false); }} />
+            <Input ref={emailInput} id="guest-email" type="email" autoComplete="email" value={email} onChange={e => { setEmail(e.target.value); setSentCode(false); setCode(""); setError(""); setNextStep(undefined); }} />
             <Button variant="outline" disabled={busy || !email.includes("@")} onClick={() => action(async () => {
               await apiRequest("POST", `${endpoint}/send-code`, { email }); setSentCode(true);
             })}>{sentCode ? "Send a new code" : "Email me a verification code"}</Button>
@@ -90,7 +118,8 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
               })}>Verify and keep my chat</Button>
             </>}
           </>}
-          <Button variant="ghost" disabled={busy} onClick={() => setKeep(false)}>Return to conversation</Button>
+          {guidance}
+          <Button variant="ghost" disabled={busy} onClick={returnToConversation}>Return to conversation</Button>
         </section>}
         <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">I do not want to keep access</summary>
           <p className="my-3">This ends your guest session. MAHA will retain the chat for its admins and can connect it later if you register. It does not delete the conversation.</p>
@@ -99,7 +128,7 @@ export default function ContinueChat({ params }: { params: { id: string; token: 
           })}>End guest access without registering</Button>
         </details>
       </>}
-      {error && <p role="alert" className="rounded border border-destructive p-3 text-sm text-destructive">{error}</p>}
+      {(!started || !keep || closed) && guidance}
     </div>
   </main>;
 }
