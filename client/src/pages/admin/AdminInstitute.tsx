@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { openAuthedFile } from "@/lib/fileAccess";
 import { GraduationCap, Plus, Trash2, Loader2, FileText, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
+import type { InstituteEnquirySummary } from "@shared/schema";
 
 type HomeworkWithNames = { id: number; classSessionId: number; studentId: number; fileUrl: string; comment: string | null; studentName?: string; sessionTitle?: string; createdAt: number };
 type EnrollmentWithNames = { id: number; cohortId: number; studentId: number; studentName?: string; studentEmail?: string; cohortName?: string };
@@ -31,14 +32,34 @@ export default function AdminInstitute() {
           <TabsTrigger value="sessions" data-testid="tab-sessions">Class Sessions</TabsTrigger>
           <TabsTrigger value="enrollments" data-testid="tab-enrollments">Enrollments</TabsTrigger>
           <TabsTrigger value="homework" data-testid="tab-homework">Homework Review</TabsTrigger>
+          <TabsTrigger value="enquiries">Enquiries</TabsTrigger>
         </TabsList>
         <TabsContent value="modules" className="mt-4"><ModulesTab /></TabsContent>
         <TabsContent value="sessions" className="mt-4"><SessionsTab /></TabsContent>
         <TabsContent value="enrollments" className="mt-4"><EnrollmentsTab /></TabsContent>
         <TabsContent value="homework" className="mt-4"><HomeworkTab /></TabsContent>
+        <TabsContent value="enquiries" className="mt-4"><EnquiriesTab /></TabsContent>
       </Tabs>
     </div>
   );
+}
+
+function EnquiriesTab() {
+  const [before, setBefore] = useState<number>();
+  const url = "/api/admin/institute-enquiries" + (before ? `?before=${before}` : "");
+  const q = useQuery<{items: InstituteEnquirySummary[]; hasMore: boolean}>({queryKey:[url], staleTime:0, refetchOnMount:"always"});
+  return <section className="space-y-3">
+    <div className="flex flex-wrap justify-between gap-2"><div><h2 className="font-semibold">Training enquiries</h2><p className="text-sm text-muted-foreground">Review the answers and prepare a personal offer. Email drafts are not sent automatically.</p></div>
+      <Button variant="outline" size="sm" onClick={() => before ? setBefore(undefined) : q.refetch()}>Refresh latest</Button></div>
+    {q.isLoading ? <p>Loading enquiries…</p> : q.isError ? <p role="alert">Could not load enquiries. Refresh to try again.</p> : !q.data?.items.length ? <p>No enquiries yet.</p> :
+      q.data.items.map(r => <Card key={r.id}><CardContent className="p-4 space-y-3 break-words">
+        <p className="text-xs text-muted-foreground">{format(new Date(r.createdAt),"dd MMM yyyy, HH:mm")}</p>
+        <h3 className="font-medium">{r.attendance === "team" ? `Team of ${r.groupSize} · Group pricing` : "Individual training"}</h3>
+        <dl className="space-y-2 text-sm">{[["Clinical experience", r.experience], ["Learning goals", r.goals], ["Reply email", r.email]].map(([label,value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="whitespace-pre-wrap">{value}</dd></div>)}</dl>
+        <Button asChild variant="outline" size="sm"><a href={`mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent("Your MAHA Institute training enquiry")}`}>Draft offer by email</a></Button>
+      </CardContent></Card>)}
+    {q.data?.hasMore && <Button variant="outline" onClick={() => setBefore(q.data.items[q.data.items.length-1].id)}>Older enquiries</Button>}
+  </section>;
 }
 
 function ModulesTab() {

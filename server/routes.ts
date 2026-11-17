@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import { parse as parseCookie, serialize as serializeCookie } from "cookie";
 import { storage, sqliteDb, DB_FILE_PATH } from "./storage";
+import { instituteEnquiryInput } from "@shared/schema";
 import { uploadToDrive, streamFromDrive, streamFromDriveRanged, replaceDriveFileContent, listFolderFiles, getOrCreateBackupFolderId } from "./googleDrive";
 import { convertDriveAudioToMp3, cleanupTempFiles } from "./audioConvert";
 import { normalizeVideoForUpload, reencodeVideoForUpload } from "./videoConvert";
@@ -1724,6 +1725,35 @@ export async function registerRoutes(
   }
 
   // ---------- INSTITUTE: MODULES / COHORTS / SESSIONS ----------
+  // One-way intake only: no public transcript, user lookup, notification or account creation.
+  const enquiryBuckets = new Map<string, number>();
+  let enquiryWindow = 0, enquiryTotal = 0;
+  app.post("/api/public/institute-enquiries", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    if (!req.is("application/json")) return res.sendStatus(415);
+    if (Date.now() >= enquiryWindow) {
+      enquiryWindow = Date.now() + 15 * 60_000; enquiryTotal = 0; enquiryBuckets.clear();
+    }
+    // Render appends its observed client address at the trusted end of XFF.
+    const ip = (process.env.RENDER && req.get("x-forwarded-for")?.split(",").pop()?.trim()) || req.socket.remoteAddress || "unknown";
+    const count = enquiryBuckets.get(ip) || 0;
+    if (count >= 12 || enquiryTotal >= 300) return res.status(429).set("Retry-After", String(Math.ceil((enquiryWindow - Date.now()) / 1000))).json({message: "Please try again in 15 minutes."});
+    enquiryBuckets.set(ip, count + 1); enquiryTotal++;
+    const parsed = instituteEnquiryInput.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({message: "Please check your answers and email address."});
+    const {requestKey, attendance, groupSize, experience, goals, email} = parsed.data;
+    sqliteDb.prepare(`INSERT INTO institute_enquiries (request_key, attendance, group_size, experience, goals, email, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(request_key) DO NOTHING`).run(requestKey, attendance, groupSize, experience, goals, email, Date.now());
+    return res.status(201).json({received: true});
+  });
+  app.get("/api/admin/institute-enquiries", requireAuth, requireRole("admin"), (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    const before = req.query.before === undefined ? Number.MAX_SAFE_INTEGER : Number(req.query.before);
+    if (!Number.isSafeInteger(before) || before < 1) return res.sendStatus(400);
+    const rows = sqliteDb.prepare(`SELECT id, attendance, group_size AS groupSize, experience, goals, email, created_at AS createdAt
+      FROM institute_enquiries WHERE id < ? ORDER BY id DESC LIMIT 51`).all(before);
+    return res.json({items: rows.slice(0,50), hasMore: rows.length > 50});
+  });
   app.get("/api/modules", requireAuth, async (_req, res) => {
     res.json(await storage.listModules());
   });

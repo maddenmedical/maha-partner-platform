@@ -1,5 +1,11 @@
 # MAHA event update checks
 
+## Public Institute enquiry
+- Signed-out deep link opens the guided assessment, not the login screen. Both individual and team paths allow review before submission.
+- A submission appears in Institute > Enquiries for admins; anonymous visitors and members cannot read the inbox. Retrying does not duplicate the enquiry.
+- Preparing an offer opens the administrator's email composer, never an automatic send. An enquiry does not create a user, approval, enrollment, guest invitation or chat.
+- Test submissions and admin review on synthetic local SQLite only. On Render, navigate read-only and never submit a test enquiry.
+
 Preserve existing MAHA layout, authentication, admin role restrictions and Render hosting. Production push requires separate approval.
 
 ## Main flows

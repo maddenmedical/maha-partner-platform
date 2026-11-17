@@ -1,0 +1,65 @@
+// Standalone end-to-end test. Requires npm run build. All records are synthetic.
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import express from "express";
+import { chromium } from "@playwright/test";
+process.env.SQLITE_DB_PATH = ":memory:";
+process.env.NODE_ENV = "test";
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = (async () => { throw new Error("External requests disabled during Institute QA"); }) as typeof fetch;
+const { db, sqliteDb } = await import("../server/storage");
+const s = await import("../shared/schema");
+const { CURRENT_LEGAL_VERSION } = await import("../shared/legalVersion");
+const sessions: string[] = [];
+for (const [i, role] of ["admin","partner","student"].entries()) {
+  const id=i+1, token=randomUUID(); sessions.push(token);
+  db.insert(s.users).values({id, role, status:"approved", name:`QA ${role}`, email:`${role}@example.invalid`, passwordHash:"synthetic", createdAt:Date.now(), legalAcceptedVersion:CURRENT_LEGAL_VERSION}).run();
+  db.insert(s.sessions).values({token, userId:id, expiresAt:Date.now()+86400000}).run();
+}
+const { registerRoutes } = await import("../server/routes");
+const app=express(); app.use(express.json());
+const server=createServer(app); await registerRoutes(server,app); app.use(express.static("dist/public"));
+await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+const inbox="/api/admin/institute-enquiries", intake="/api/public/institute-enquiries";
+const read=(path:string, token?:string)=>nativeFetch(base+path,{headers:token?{cookie:`sid=${token}`}:{}}); 
+const submit=(data:unknown)=>nativeFetch(base+intake,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+const browser=await chromium.launch({executablePath:process.env.QA_CHROME_PATH || undefined,args:["--no-sandbox"]});
+try {
+  assert.equal((await read(inbox)).status,401);
+  for (const member of sessions.slice(1)) assert.equal((await read(inbox,member)).status,403);
+  const individual={requestKey:randomUUID(),attendance:"individual",groupSize:null,experience:"Synthetic clinical practice",goals:"Case discussion",email:"qa@example.invalid"};
+  assert.equal((await submit({...individual, groupSize:2})).status,400);
+  assert.equal((await submit({...individual,email:"not an address"})).status,400);
+  assert.equal((await submit({...individual,role:"admin"})).status,400);
+  for(let i=0;i<2;i++) assert.equal((await submit(individual)).status,201);
+  const ctx=await browser.newContext({viewport:{width:375,height:812},serviceWorkers:"block"});
+  await ctx.route("**/*",route=>route.request().url().startsWith(base)?route.continue():route.abort());
+  const page=await ctx.newPage(); const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
+  await page.goto(base+"/#/institute/apply");
+  await page.getByRole("button",{name:"Just me"}).click();
+  await page.getByRole("button",{name:"Continue"}).click();
+  await page.getByRole("button",{name:"Back"}).click();
+  await page.getByRole("button",{name:"My team"}).click();
+  await page.getByRole("spinbutton").fill("6"); await page.getByRole("button",{name:"Continue"}).click();
+  await page.getByRole("textbox").fill("Synthetic dental and medical team"); await page.getByRole("button",{name:"Continue"}).click();
+  await page.getByRole("textbox").fill("Shared clinical assessment"); await page.getByRole("button",{name:"Continue"}).click();
+  await page.getByLabel("Contact email").fill("team@example.invalid"); await page.getByRole("button",{name:"Continue"}).click();
+  await page.getByText("Team of 6",{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.getByRole("button",{name:"Send enquiry"}).click();
+  await page.getByText("Your enquiry is with the Institute team.").waitFor();
+  assert.equal(await page.getByRole("link",{name:"register separately"}).getAttribute("href"),"#/register");
+  const response=await read(inbox,sessions[0]);assert.equal(response.status,200);assert.match(response.headers.get("cache-control")!,/no-store/);
+  const {items}=await response.json();assert.equal(items.length,2);assert.equal(items[0].groupSize,6);assert.equal(items[1].groupSize,null);assert.equal(items[0].requestKey,undefined);
+  assert.equal((sqliteDb.prepare("select count(*) n from users").get() as {n:number}).n,3);
+  await ctx.addCookies([{name:"sid",value:sessions[0],url:base}]);await page.setViewportSize({width:1280,height:900});await page.goto(base+"/#/admin/institute");await page.reload();
+  await page.getByRole("tab",{name:"Enquiries"}).click();await page.getByText("Team of 6 · Group pricing").waitFor();
+  await page.getByText("Shared clinical assessment",{exact:true}).waitFor();
+  assert.match(decodeURIComponent((await page.getByRole("link",{name:"Draft offer by email"}).first().getAttribute("href"))!),/^mailto:team@example\.invalid\?subject=/);
+  assert.deepEqual(errors,[]);await ctx.close();
+  let status=0;for(let i=0;i<15 && status!==429;i++) status=(await submit({})).status;
+  assert.equal(status,429);
+  console.log("PASS: public mobile individual/team routing, validation, review, submission, admin desktop inbox, draft link, registration separation, no duplicate, no new user, role checks, rate limit, no page errors.");
+} finally {await browser.close();server.closeAllConnections();server.close();sqliteDb.close();}

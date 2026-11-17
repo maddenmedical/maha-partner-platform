@@ -26,6 +26,7 @@ import ReferPatient from "@/pages/partner/ReferPatient";
 import Shop from "@/pages/partner/Shop";
 import PartnerVideos from "@/pages/partner/Videos";
 import Institute from "@/pages/partner/Institute";
+import InstituteEnquiry from "@/pages/InstituteEnquiry";
 
 import MyClasses from "@/pages/student/MyClasses";
 import Homework from "@/pages/student/Homework";
@@ -265,6 +266,7 @@ function App() {
                   link partners get in onboarding emails, before they ever sign in. */}
               <Switch>
                 <Route path="/continue-chat/:id/:token" component={ContinueChat} />
+                <Route path="/institute/apply" component={InstituteEnquiry} />
                 <Route path="/install/:platform" component={Install} />
                 <Route path="/install" component={Install} />
                 {/* Reachable regardless of auth/bootstrap state — this link is on the
