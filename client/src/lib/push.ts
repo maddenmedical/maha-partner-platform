@@ -62,13 +62,16 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 // Requests notification permission, subscribes to push via the registered
 // service worker, and posts the subscription to the backend. Throws on failure
 // so callers can surface the reason to the user.
-export async function subscribeToPush(): Promise<void> {
+export async function subscribeToPush(destination="/api/push/subscribe"): Promise<void> {
   if (!isPushSupported()) throw new Error("Push is not supported in this browser.");
 
   const permission = await Notification.requestPermission();
   if (permission !== "granted") throw new Error("Notification permission was not granted.");
 
-  const registration = await navigator.serviceWorker.ready;
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  const registration = await Promise.race([navigator.serviceWorker.ready,new Promise<never>((_,reject)=>{
+    timer=setTimeout(()=>reject(new Error("MAHA could not start phone notifications. Reopen the installed app and try again.")),12000);
+  })]).finally(()=>clearTimeout(timer));
 
   const keyRes = await apiRequest("GET", "/api/push/vapid-public-key");
   const { publicKey } = await keyRes.json();
@@ -82,5 +85,5 @@ export async function subscribeToPush(): Promise<void> {
     });
   }
 
-  await apiRequest("POST", "/api/push/subscribe", subscription.toJSON());
+  await apiRequest("POST", destination, subscription.toJSON());
 }

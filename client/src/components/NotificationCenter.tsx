@@ -8,6 +8,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { setPendingThreadId } from "@/lib/chatNav";
 
 type Notice = { id: string; title: string; body: string; url: string; critical: boolean; createdAt: number };
 type Summary = { count: number; criticalCount: number; firstCritical?: Notice; items: Notice[] };
@@ -21,6 +22,8 @@ function useNotifications() {
 }
 function destination(url: string) {
   const target = new URL(url, window.location.href);
+  const thread=Number(target.searchParams.get("thread"));
+  if(target.hash==="#/chat" && Number.isSafeInteger(thread) && thread>0) {setPendingThreadId(thread);return "/chat";}
   return target.hash.startsWith("#/") ? target.hash.slice(1) + target.search : "/";
 }
 export function NotificationBell() {

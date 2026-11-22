@@ -15,6 +15,7 @@ import ForgotPassword from "@/pages/auth/ForgotPassword";
 import ResetPassword from "@/pages/auth/ResetPassword";
 import Install from "@/pages/Install";
 import ContinueChat from "@/pages/ContinueChat";
+import { GuestLaunch } from "@/components/chat/GuestLaunch";
 import { PrivacyPolicyPage, TermsOfUsePage } from "@/pages/legal/LegalDocumentPage";
 
 import { MobileAppLayout, type TabItem } from "@/components/layout/MobileAppLayout";
@@ -246,6 +247,7 @@ function RootRouter() {
     return (
       <Switch>
         <Route path="/register" component={Register} />
+        <Route path="/" component={GuestLaunch}/>
         <Route component={Login} />
       </Switch>
     );
@@ -266,6 +268,7 @@ function App() {
                   link partners get in onboarding emails, before they ever sign in. */}
               <Switch>
                 <Route path="/continue-chat/:id/:token" component={ContinueChat} />
+                <Route path="/guest-chat/:id">{params=><ContinueChat params={params} key={params.id}/>}</Route>
                 <Route path="/institute/apply" component={InstituteEnquiry} />
                 <Route path="/install/:platform" component={Install} />
                 <Route path="/install" component={Install} />

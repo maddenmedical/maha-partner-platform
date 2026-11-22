@@ -8,6 +8,12 @@ import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { google } from "googleapis";
 import Database from "better-sqlite3";
+import webpush from "web-push";
+const vapid=webpush.generateVAPIDKeys();
+process.env.VAPID_PUBLIC_KEY=vapid.publicKey;process.env.VAPID_PRIVATE_KEY=vapid.privateKey;
+const notices:{endpoint:string;payload:any}[]=[];
+let mockStatus=201;
+webpush.sendNotification=(async(destination:any,body:any)=>{if(mockStatus!==201)throw Object.assign(new Error("mock provider"),{statusCode:mockStatus});notices.push({endpoint:destination.endpoint,payload:JSON.parse(body)});return {statusCode:201,headers:{},body:""};}) as typeof webpush.sendNotification;
 process.env.SQLITE_DB_PATH = ":memory:";
 process.env.NODE_ENV = "test";
 process.env.GOOGLE_OAUTH_CLIENT_ID = "synthetic";
@@ -56,6 +62,7 @@ for (const [id, role, status, name] of [[1, "admin", "approved", "Dr. QA Admin"]
 const { registerRoutes } = await import("../server/routes");
 const app = express(); app.use(express.json());
 if (process.argv.includes("--serve") && !process.argv.includes("--preview")) app.get("/__qa/last-code", (_req, res) => res.json({ code }));
+if(process.argv.includes("--serve")&&!process.argv.includes("--preview")) app.get("/__qa/notices",(_req,res)=>res.json(notices));
 const previewGuests = new Map<string, string>();
 let previewPath = "";
 if (process.argv.includes("--preview")) app.get("/__qa/guest-demo", (_req, res) => res.json({ path: previewPath }));
@@ -106,6 +113,75 @@ if (serve) {
   }
   console.log(`Synthetic events and chat invitations fixture: ${base}`);
 } else try {
+  {
+    const a=await invite(),b=await invite(),an=await start(a),bn=await start(b),ep=a.endpoint;
+    const point=crypto.createECDH("prime256v1");point.generateKeys();
+    const sub={endpoint:"https://fcm.googleapis.com/fcm/send/synthetic-device-a",keys:{p256dh:point.getPublicKey().toString("base64url"),auth:crypto.randomBytes(16).toString("base64url")}};
+    await request("POST",ep+"/notifications/enable",403,sub,"");
+    for(const endpoint of ["http://fcm.googleapis.com/fcm/send/synthetic-device","https://127.0.0.1/foo","https://fcm.googleapis.com.attacker.invalid/fcm/send/synthetic-device","https://web.push.apple.com@127.0.0.1/x","https://fcm.googleapis.com:9443/fcm/send/synthetic-device","https://fcm.googleapis.com/redirect?to=example.invalid"])await request("POST",ep+"/notifications/enable",400,{...sub,endpoint},an);
+    await request("POST",ep+"/notifications/enable",200,sub,an);
+    await request("POST",b.endpoint+"/notifications/enable",409,sub,bn);
+    await request("POST","/api/push/subscribe",409,sub,"sid=feature-2");
+    await request("POST",ep+"/notifications/check",409,{endpoint:sub.endpoint},an+"; sid=feature-2");
+    const reply=async(i:any,id:string)=>request("POST",`/api/admin/guest-chats/${i.id}/reply`,200,{body:"Private QA content",requestId:id});
+    const rid=crypto.randomUUID();await reply(a,rid);await reply(a,rid);await reply(b,crypto.randomUUID());assert.equal(notices.length,1);
+    assert.deepEqual(notices[0].payload,{guest:a.id,title:"MAHA",body:"MAHA replied. Open your chat.",url:`/#/guest-chat/${a.id}`});
+    const baseline=Date.now(),realNow=Date.now,days=86400000;
+    const adminSession=db.select().from(s.sessions).where(eq(s.sessions.token,"feature-1")).get()!;
+    try{
+      // A new, never-again-opened chat remains eligible for admin replies as
+      // time advances; a sent notification alone cannot extend session state.
+      db.update(s.sessions).set({expiresAt:baseline+2200*days}).where(eq(s.sessions.token,"feature-1")).run();
+      for(const age of [31,90,366,1500]){
+        Date.now=()=>baseline+age*days;
+        const before=notices.length;await reply(a,crypto.randomUUID());assert.equal(notices.length,before+1);
+        await request("POST",ep+"/notifications/check",200,{endpoint:sub.endpoint},an);
+      }
+      const r=await request("POST",ep+"/resume",200,{},an);assert.ok(r.headers.get("set-cookie")?.includes("HttpOnly"));
+      await request("POST",ep+"/message",200,{body:"Returning after years",requestId:crypto.randomUUID()},an);
+      await request("POST",ep+"/device-code",200,{},an);
+      await request("POST",ep+"/start",403,{token:a.token},"");
+    }finally{Date.now=realNow;db.update(s.sessions).set({expiresAt:adminSession.expiresAt}).where(eq(s.sessions.token,"feature-1")).run();}
+    notices.splice(1);
+    db.update(s.guestChatInvites).set({expiresAt:1,guestDurableSince:null,sessionExpiresAt:Date.now()+100000}).where(eq(s.guestChatInvites.id,a.id)).run();
+    await request("GET",ep,403,undefined,"");
+    const legacyRead=await request("GET",ep,200,undefined,an);assert.ok(legacyRead.headers.get("set-cookie")?.includes("HttpOnly"));
+    const upgraded=db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id,a.id)).get()!;assert.ok(upgraded.guestDurableSince);assert.equal(upgraded.sessionExpiresAt,null);
+    const newCode=async()=>(await request("POST",ep+"/device-code",200,{},an)).data.code;
+    const first=await newCode();
+    const second=await newCode();
+    await request("POST","/api/guest-device/move",403,{code:first},"");
+    await request("POST","/api/guest-device/move",409,{code:second},"sid=feature-2");
+    db.update(s.guestChatInvites).set({deviceMoveUntil:1}).where(eq(s.guestChatInvites.id,a.id)).run();
+    await request("POST","/api/guest-device/move",403,{code:second},"");
+    const final=await newCode(),moved=await request("POST","/api/guest-device/move",200,{code:final},"");assert.deepEqual(moved.data,{id:a.id});
+    await request("POST","/api/guest-device/move",403,{code:final},"");
+    await request("GET",ep,403,undefined,an);await request("POST",ep+"/notifications/check",403,{endpoint:sub.endpoint},moved.cookies);
+    await reply(a,crypto.randomUUID());assert.equal(notices.length,1);await request("POST",ep+"/notifications/enable",200,sub,moved.cookies);
+    await request("POST",ep+"/notifications/disable",200,{},moved.cookies);await reply(a,crypto.randomUUID());assert.equal(notices.length,1);
+    db.update(s.guestChatInvites).set({guestPushChangedAt:1}).where(eq(s.guestChatInvites.id,a.id)).run();
+    await request("POST",ep+"/notifications/enable",200,sub,moved.cookies);mockStatus=410;await reply(a,crypto.randomUUID());mockStatus=201;
+    assert.equal((await request("GET",ep,200,undefined,moved.cookies)).data.notifications,false);
+    for(const stop of ["idle","decline","revoke","link"]){
+      const r=await invite(),rc=await start(r);
+      await request("POST",r.endpoint+"/notifications/enable",200,sub,rc);
+      const move=(await request("POST",r.endpoint+"/device-code",200,{},rc)).data;
+      if(stop==="idle")db.update(s.guestChatInvites).set({guestDurableSince:null,sessionExpiresAt:1}).where(eq(s.guestChatInvites.id,r.id)).run();
+      else if(stop==="decline")await request("POST",r.endpoint+"/decline",200,{},rc);
+      else await request("POST",`/api/admin/guest-chats/${r.id}/${stop}`,200,stop==="link"?{userId:3}:{});
+      await request("POST","/api/guest-device/move",403,move,"");
+      await request("POST",r.endpoint+"/notifications/check",403,{endpoint:sub.endpoint},rc);
+      if(stop==="link"){
+        const linked=(await request("POST",r.endpoint+"/resume",200,{},"sid=feature-3")).data;
+        assert.ok(linked.threadId);await request("POST",r.endpoint+"/resume",409,{},"sid=feature-2");
+        await request("POST","/api/push/subscribe",200,sub,"sid=feature-3");
+        await request("POST",`/api/admin/chat/threads/${linked.threadId}/messages`,200,{body:"Synthetic member reply"});
+        assert.equal(notices.filter(n=>!n.payload.guest).length,1);assert.equal(notices.at(-1)!.payload.url,`/?thread=${linked.threadId}#/chat`);
+        await request("POST","/api/push/unsubscribe",200,{endpoint:sub.endpoint},"sid=feature-3");
+      }
+      await request("POST",`/api/admin/guest-chats/${r.id}/reply`,stop==="idle"?200:409,{body:"after stop",requestId:crypto.randomUUID()});
+    }assert.equal(notices.filter(n=>n.payload.guest).length,1);
+  }
   // Additive upgrade preserves a real old-format row and old column reads.
   const oldDb = new Database(":memory:");
   oldDb.exec("CREATE TABLE case_discussions (id INTEGER PRIMARY KEY, topic TEXT NOT NULL, presenter_name TEXT, scheduled_at INTEGER NOT NULL, zoom_link TEXT NOT NULL, notes TEXT, notified_at INTEGER, created_at INTEGER NOT NULL)");

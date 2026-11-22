@@ -6,6 +6,18 @@ self.addEventListener("push", event => {
   try { payload = event.data ? event.data.json() : {}; }
   catch { payload = { title: "MAHA Partner Platform", body: "You have a new notification." }; }
   event.waitUntil((async () => {
+    if(payload.guest){
+      const id=payload.guest;
+      if(typeof id!=="string"||!/^[a-f0-9-]{36}$/.test(id))return;
+      try{
+        const sub=await self.registration.pushManager.getSubscription();
+        if(!sub)return;
+        const auth=await fetch(new URL(`./api/guest-chat/${id}/notifications/check`,self.registration.scope),{method:"POST",credentials:"include",cache:"no-store",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:sub.endpoint})});
+        if(!auth.ok)return;
+        await self.registration.showNotification("MAHA",{body:"MAHA replied. Open your chat.",icon:"./icon-192.png",data:{url:`/#/guest-chat/${id}`}});
+      }catch{/* Off-device, offline, expired or revoked: no chat-specific display. */}
+      return;
+    }
     let count = payload.badgeCount;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);

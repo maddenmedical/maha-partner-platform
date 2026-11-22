@@ -37,6 +37,7 @@ import { notificationSummary, readNotices, readReferralNotice, readChatNotices }
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
+import {activeGuestOwnsEndpoint} from "./guestPush";
 import { getStripe, isStripeConfigured } from "./stripe";
 import { syncLearnDashEnrollment, fetchLearnDashCourses, isLearnDashConfigured } from "./learndash";
 import { runLegacyPartnerImport } from "./migrateLegacyPartners";
@@ -169,8 +170,8 @@ async function notifyOwnerOfAdminReply(thread: { id: number; userId: number; top
     previewTitle: `${msg.senderName} replied in ${thread.topic}`,
     previewBody: bodyPreview,
     genericTitle: "New reply in your chat",
-    genericBody: thread.topic,
-    url: "/chat",
+    genericBody: "Open MAHA to read the reply.",
+    url: `/?thread=${thread.id}#/chat`,
   });
 }
 
@@ -3726,6 +3727,7 @@ export async function registerRoutes(
   app.post("/api/push/subscribe", requireAuth, async (req: AuthedRequest, res) => {
     const parsed = pushSubscribeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid subscription" });
+    if(activeGuestOwnsEndpoint(parsed.data.endpoint))return res.status(409).json({message:"Turn off reply notifications in the existing guest chat before enrolling this browser for another account."});
     const sub = await storage.upsertPushSubscription({
       userId: req.user!.id,
       endpoint: parsed.data.endpoint,

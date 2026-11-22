@@ -26,6 +26,7 @@ export interface ReplyContext {
 }
 
 interface ChatComposerProps {
+  initialText?:string;
   uploadUrl: string;
   threadId: number;
   onSend: (payload: { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string; replyToMessageId?: number }) => Promise<unknown> | unknown;
@@ -60,9 +61,9 @@ interface ChatComposerProps {
 // Voice notes are always recorded as real audio via MediaRecorder and sent as
 // a normal audio attachment the recipient can play back -- no speech-to-text,
 // no transcription. Server-side transcription (Whisper) is out of scope.
-export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", disableAttachments, replyingTo, onCancelReply, mentionThreads = [], onResolveMention, placeholder, maxLength, accept, maxFileBytes, disabled, maxRecordingSeconds }: ChatComposerProps) {
+export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefix = "chat", disableAttachments, replyingTo, onCancelReply, mentionThreads = [], onResolveMention, placeholder, maxLength, accept, maxFileBytes, disabled, maxRecordingSeconds,initialText="" }: ChatComposerProps) {
   const { toast } = useToast();
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialText);
   const [uploading, setUploading] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [recording, setRecording] = useState(false);
@@ -244,6 +245,7 @@ export function ChatComposer({ uploadUrl, threadId, onSend, sending, testIdPrefi
   return (
     <form
       onSubmit={handleSubmit}
+      data-draft-media-busy={uploading || recording || sending}
       className="flex flex-col gap-2 border-t border-border pt-3"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >

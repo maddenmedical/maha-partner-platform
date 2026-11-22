@@ -1,5 +1,13 @@
 # MAHA event update checks
 
+## WhatsApp invitation continuity
+- Chat before registration. After the first outgoing guest message, offer a nonblocking reminder. After “Not now” it returns after 10 minutes on the clock while visible, five further outgoing messages, or reopening the chat. Stop after registration. Use one existing identity verification and preserve transcript and unsent text.
+- The link can be redeemed within seven days. After authorized start there is no server-side inactivity or absolute lifetime. Verify guest chat and opt-in alerts across 31, 90 and more than 365 days. The scoped device cookie is persistent and renewed on resume or send; a browser may still clear or limit its storage. Valid legacy sessions upgrade on their first authenticated read; expired legacy credentials do not. Remember only the opaque locator. On split-storage phones a deliberate five-minute one-time move code rotates the guest cookie and invalidates old verification and push settings. Loss of all authorized storage without a code requires MAHA’s assistance.
+- A phone-specific install button requests the browser’s actual install dialog where available. Otherwise show brief honest inline instructions. This is the existing installed web app, not an App Store download.
+- Explicit “Notify me when MAHA replies” asks for OS permission before registration. Deliver generic web push only to a live guest opt-in. The worker checks the device session before display; tapping uses no bearer secret. Registration ends the guest binding; a post-save prompt offers optional partner notifications on the same thread. No independent email alert service.
+- Existing signed-in partners explicitly open a fresh personal invitation in their own account. Root launch or a guest notification never implicitly merges an existing guest chat. A previously linked owner can reopen the member thread.
+- Admin reminders are generic manual WhatsApp drafts for still-accessible guest conversations, with no recipient, secret or chat content prefilled. Never contact real recipients during QA.
+
 ## Public Institute enquiry
 - Signed-out deep link opens the guided assessment, not the login screen. Both individual and team paths allow review before submission.
 - A submission appears in Institute > Enquiries for admins; anonymous visitors and members cannot read the inbox. Retrying does not duplicate the enquiry.

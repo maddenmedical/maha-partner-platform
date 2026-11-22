@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus, ArrowLeft, Archive, Undo2, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { consumePendingThreadId } from "@/lib/chatNav";
+import { consumePendingThreadId, takeInvitationDraft } from "@/lib/chatNav";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
@@ -37,6 +37,13 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   const queryClient = useQueryClient();
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
+  const [draft,setDraft]=useState(takeInvitationDraft);
+  useEffect(()=>{if(draft && selectedThread?.id===draft.thread)setDraft(null);},[draft,selectedThread?.id]);
+  useEffect(()=>{
+    const open=()=>{const id=consumePendingThreadId();if(id)setPendingSelectId(id);};
+    window.addEventListener("maha-open-chat-thread",open);
+    return ()=>window.removeEventListener("maha-open-chat-thread",open);
+  },[]);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newChatStep, setNewChatStep] = useState<"choose" | "pick-referral" | "topic">("choose");
   const [newPatientDialogOpen, setNewPatientDialogOpen] = useState(false);
@@ -333,7 +340,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
 
         <div className="flex-1 min-w-0 hidden sm:flex">
           {selectedThread ? (
-            <ThreadDetail thread={selectedThread} onSelectSurvivor={(id) => setPendingSelectId(id)} />
+            <ThreadDetail key={selectedThread.id} thread={selectedThread} initialText={draft?.thread===selectedThread.id?draft.text:""} onSelectSurvivor={(id) => setPendingSelectId(id)} />
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
               Select a chat, or start a new one, to view messages
@@ -352,7 +359,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
                 {selectedThread.topic}
               </span>
             </div>
-            <ThreadDetail thread={selectedThread} onSelectSurvivor={(id) => setPendingSelectId(id)} />
+            <ThreadDetail key={selectedThread.id} thread={selectedThread} initialText={draft?.thread===selectedThread.id?draft.text:""} onSelectSurvivor={(id) => setPendingSelectId(id)} />
           </div>
         )}
       </div>
@@ -360,7 +367,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   );
 }
 
-function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelectSurvivor: (id: number) => void }) {
+function ThreadDetail({ thread, onSelectSurvivor,initialText }: { thread: ThreadRow; onSelectSurvivor: (id: number) => void;initialText?:string }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -571,6 +578,7 @@ function ThreadDetail({ thread, onSelectSurvivor }: { thread: ThreadRow; onSelec
       </div>
 
       <ChatComposer
+        initialText={initialText}
         key={thread.id}
         uploadUrl="/api/chat/upload"
         threadId={thread.id}

@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { Bell, X, Share, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { isPushSupported, subscribeToPush } from "@/lib/push";
+import { isPushSupported, subscribeToPush, isIos, isStandalone } from "@/lib/push";
+import { isInvitationSaved, clearInvitationSaved } from "@/lib/chatNav";
+import { InvitationInstall } from "@/components/chat/InvitationInstall";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth, type AuthUser } from "@/context/AuthContext";
@@ -42,6 +44,40 @@ function hasStyleWeakCategory(user: AuthUser): boolean {
 }
 
 export function PushPrompt() {
+  const {user}=useAuth();
+  const [finished,setFinished]=useState(false);
+  if (finished) return null;
+  if(isInvitationSaved(user?.id)) return <SavedChatPrompt onClose={()=>{clearInvitationSaved();setFinished(true);}}/>;
+  return <StandardPushPrompt/>;
+}
+function SavedChatPrompt({onClose}:{onClose:()=>void}) {
+  const {user,updateUser}=useAuth();
+  const [busy,setBusy]=useState(false),[note,setNote]=useState("");
+  const unsupported=!isPushSupported() || (isIos()&&!isStandalone());
+  const denied=!unsupported && Notification.permission==="denied";
+  async function enable() {
+    if(busy || !user)return;
+    setBusy(true);
+    try {
+      await subscribeToPush();
+      if(!user.notifyChatEnabled) {
+        await apiRequest("PATCH","/api/notifications/preferences",{category:"chat",enabled:true});
+        updateUser({notifyChatEnabled:true});
+      }
+      setNote("Reply notifications are enabled on this device.");
+    }catch(e){setNote(e instanceof Error?e.message:"Could not enable notifications. Your chat is still saved.");}
+    finally{setBusy(false);}
+  }
+  return <aside data-testid="saved-chat-notifications" aria-label="Saved chat options" className="fixed z-40 inset-x-3 top-3 mx-auto max-w-md rounded-lg border bg-card p-4 shadow-md space-y-2">
+    <p className="text-sm font-semibold">Your conversation is saved in Chat.</p>
+    <p className="text-xs text-muted-foreground">If the installed app asks you to sign in, use the verified partner email. Choose “Forgot password?” if you have not set a password.</p>
+    <p className="text-xs text-muted-foreground">{unsupported ? (isIos() ? "For reply alerts on iPhone, add MAHA to the Home Screen, open it there and enable notifications in Account." : "If this browser does not support alerts, open MAHA in your device browser or installed app and enable notifications in Account.") : denied ? "Notifications are blocked on this device. Allow them in your browser settings, then enable notifications in Account." : "Turn on notifications for MAHA chat replies on this device."}</p>
+    {note && <p className="text-xs" role="status">{note}</p>}
+    <div className="flex items-center gap-3 flex-wrap">{!unsupported&&!denied&&!note.startsWith("Reply notifications are enabled")&&<Button size="sm" disabled={busy} onClick={enable}>{busy?"Enabling…":"Enable reply notifications"}</Button>}
+      <InvitationInstall/><Button variant="ghost" size="sm" onClick={onClose}>Continue chatting</Button></div>
+  </aside>;
+}
+function StandardPushPrompt() {
   const { toast } = useToast();
   const { user, markInstallBannerDismissed, markPushNudgePrompted } = useAuth();
   const { canInstallNative, isIosInstallable, promptInstall } = useInstallPrompt();

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import type { AdminChatRecipient } from "@shared/schema";
 import { InvitationConversation } from "./InvitationConversation";
 type Invitation = { id: string; label: string; topic: string; unread: boolean; messageCount: number;
+  canRemind:boolean; guestAccessEnded:boolean;
   linkedThreadId: number | null; intendedUserId: number | null; declinedAt: number | null; revokedAt: number | null };
 export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => void }) {
   const [open, setOpen] = useState(false), [create, setCreate] = useState(false), [busy, setBusy] = useState(false);
@@ -77,6 +78,12 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
         <p className="text-sm text-muted-foreground">{fresh?.topic}</p>
         <p className="rounded border p-2 text-xs text-muted-foreground">Guest messages before verification are not proof of identity. Retained conversations are visible to admins, including when a guest declines registration.</p>
         <InvitationConversation key={selected.id} inviteId={selected.id} admin closed={!!fresh?.declinedAt || !!fresh?.revokedAt || !!fresh?.linkedThreadId} />
+        {fresh?.canRemind && <div className="rounded-md border p-3 space-y-1">
+          <Button variant="outline" size="sm" asChild><a target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"
+            href={`https://wa.me/?text=${encodeURIComponent("MAHA has replied. Please open your MAHA chat on the device where you keep it to read the reply.")}`}>Remind via WhatsApp</a></Button>
+          <p className="text-xs text-muted-foreground">Choose the original recipient in WhatsApp, review the draft, then send it yourself. No phone number or chat content is shared by MAHA.</p>
+        </div>}
+        {fresh?.guestAccessEnded && !fresh.linkedThreadId && !fresh.declinedAt && !fresh.revokedAt && <p className="text-sm text-muted-foreground">Temporary guest access has ended. Contact the recipient in your original WhatsApp conversation or issue a new invitation.</p>}
         {fresh?.linkedThreadId ? <Button onClick={() => { setOpen(false); onOpenChat(fresh.linkedThreadId!); }}>Open linked member chat</Button> : <>
           {!linking ? <Button variant="outline" onClick={() => { setLinking(true); setPartner(null); setSearch(""); }}>Connect to a partner account</Button> : <div className="rounded border p-3 space-y-3">
             {choosePartner}<p className="text-sm">Confirm the identity first. This will give the selected partner access to all messages in this conversation and end guest access.</p>

@@ -13,10 +13,14 @@ import { uploadToDrive, streamFromDriveRanged } from "./googleDrive";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { sendEmail } from "./email";
 import { notifyUsers } from "./push";
+import {clearGuestPush,enrollGuest,notifyGuest} from "./guestPush";
+import {activeGuest} from "./guestAccess";
 
 const hash = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
 const secret = () => crypto.randomBytes(32).toString("hex");
 const HOUR = 3600000;
+// Browser storage only; never used to compute server authorization.
+const DEVICE_COOKIE_LIFETIME=400*24*HOUR;
 type Invite = typeof invites.$inferSelect;
 type GuestNextStep = "sign-in" | "review-in-chat" | "check-email";
 const fail = (status: number, message: string, nextStep?: GuestNextStep): never => { throw Object.assign(new Error(message), { status, nextStep }); };
@@ -86,11 +90,19 @@ function cookie(res: Response, id: string, token: string, expires: number) {
 function checkGuest(req: any): Invite {
   const invite = find(String(req.params.id));
   const token = parse(req.headers.cookie || "")[cookieName(invite.id)];
-  if (invite.revokedAt || invite.declinedAt || invite.linkedThreadId || !token || !invite.sessionHash ||
-    hash(token) !== invite.sessionHash || (invite.sessionExpiresAt ?? 0) <= Date.now()) {
+  if (!activeGuest(invite)||!token||hash(token)!==invite.sessionHash) {
     fail(403, "Guest access has ended. Please contact MAHA to recover this conversation.");
   }
+  if(invite.guestDurableSince==null)touchGuest(req,req.res,invite);
   return invite;
+}
+function touchGuest(req:any,res:Response,invite:Invite) {
+  if(invite.guestDurableSince==null){
+    invite.guestDurableSince=Date.now();
+    db.update(invites).set({guestDurableSince:invite.guestDurableSince,sessionExpiresAt:null}).where(eq(invites.id,invite.id)).run();
+    invite.sessionExpiresAt=null;
+  }
+  if(!res.locals.guestCookieRenewed){cookie(res,invite.id,parse(req.headers.cookie||"")[cookieName(invite.id)]!,Date.now()+DEVICE_COOKIE_LIFETIME);res.locals.guestCookieRenewed=true;}
 }
 function activePartner(id: number) {
   const user = db.select().from(users).where(eq(users.id, id)).get();
@@ -152,7 +164,7 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
         userName: mark.actorKey === "guest" ? "Guest (before account verification)" : mark.actorName, createdAt: mark.createdAt }).run();
     }
     db.update(invites).set({ linkedUserId: userId, linkedThreadId: thread.id, linkedBy, linkedAt: now,
-      sessionHash: null, verificationHash: null }).where(eq(invites.id, inviteId)).run();
+      sessionHash: null, verificationHash: null,deviceMoveHash:null,deviceMoveUntil:null,...clearGuestPush }).where(eq(invites.id, inviteId)).run();
     return thread.id;
   });
 }
@@ -199,6 +211,10 @@ function inspectFile(file: Express.Multer.File) {
 export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandler, requireAdmin: RequestHandler,
   optionalUser: (req: any) => Promise<any>, setSession: (res: Response, token: string, expiresAt: number) => void) {
   const admin = [requireAuth, requireAdmin];
+  app.use("/api/guest-chat/:id",async(req,res,next)=>{
+    if(req.path==="/start"||req.path==="/keep"||req.path==="/resume")return next();
+    try{if(await optionalUser(req))return res.status(409).set("Cache-Control","no-store").json({message:"Use your signed-in account, or sign out to return to a guest chat."});next();}catch(e){next(e);}
+  });
   for (const isAdmin of [false, true]) {
     const prefix = isAdmin ? "/api/admin/guest-chats/:id" : "/api/guest-chat/:id";
     const guards = isAdmin ? admin : [];
@@ -281,9 +297,11 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.get("/api/admin/guest-chats", ...admin, safe(async (_req, res) => {
     const list = db.select().from(invites).orderBy(desc(invites.createdAt)).all();
-    res.json(list.map(({ id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt, adminReadAt }) => {
+    res.json(list.map(i => {const { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt, adminReadAt }=i;
       const conversation = rows(id); const last = conversation.at(-1);
       return { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt,
+        canRemind: activeGuest(i) && last?.senderRole==="admin" && !last.deletedAt && conversation.some(m=>m.senderRole==="guest"),
+        guestAccessEnded: !!openedAt && !activeGuest(i),
         unread: !!last && last.senderRole === "guest" && last.createdAt > (adminReadAt ?? 0), messageCount: conversation.length };
     }));
   }));
@@ -307,12 +325,12 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.post("/api/admin/guest-chats/:id/reply", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
-    send(req, invite, true);
+    if(send(req, invite, true))await notifyGuest(invite);
     res.json({ ok: true });
   }));
   app.post("/api/admin/guest-chats/:id/revoke", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
-    db.update(invites).set({ revokedAt: Date.now(), sessionHash: null, verificationHash: null }).where(eq(invites.id, invite.id)).run();
+    db.update(invites).set({ revokedAt: Date.now(), sessionHash: null, verificationHash: null,deviceMoveHash:null,deviceMoveUntil:null,...clearGuestPush }).where(eq(invites.id, invite.id)).run();
     res.json({ ok: true });
   }));
   app.post("/api/admin/guest-chats/:id/link", ...admin, safe(async (req, res) => {
@@ -323,32 +341,80 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   // A GET never redeems an invitation: WhatsApp previews/link scanners cannot
   // consume it. Only an explicit Start chat action claims a browser session.
   app.post("/api/guest-chat/:id/start", safe(async (req, res) => {
+    const user = await optionalUser(req);
     const invite = find(req.params.id);
     const { token } = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) }).parse(req.body);
-    if (hash(token) !== invite.tokenHash || invite.revokedAt || invite.declinedAt || invite.expiresAt < Date.now()) fail(403, "This invitation is no longer available. Please ask MAHA for a new link.");
-    const user = await optionalUser(req);
+    if (hash(token) !== invite.tokenHash || invite.revokedAt || invite.declinedAt) fail(403, "This invitation is no longer available. Please ask MAHA for a new link.");
+    const old = parse(req.headers.cookie || "")[cookieName(invite.id)];
+    const alreadyHere=!!old && invite.sessionHash===hash(old!) && activeGuest(invite);
+    if(invite.expiresAt<Date.now() && !alreadyHere)fail(403,"This invitation is no longer available. Please ask MAHA for a new link.");
+    if(user && invite.openedAt && invite.linkedUserId!==user.id)fail(403,"This guest chat is already on a device. Open it there and choose Register & keep this chat.");
     if (user && user.role === "partner" && user.status === "approved" && !user.archivedAt &&
       (!invite.intendedUserId || invite.intendedUserId === user.id || invite.linkedUserId === user.id)) {
       return res.json({ threadId: linkChat(invite.id, user.id) });
     }
     if (invite.linkedThreadId) fail(403, "This conversation has been saved to a partner account. Sign in to that account to continue.");
-    const old = parse(req.headers.cookie || "")[cookieName(invite.id)];
-    if (old && invite.sessionHash === hash(old) && (invite.sessionExpiresAt ?? 0) > Date.now()) return res.json({ ok: true });
+    if(user)fail(403,"This invitation is not for this signed-in account. Use the intended partner account or a separate browser.");
+    if (alreadyHere) {touchGuest(req,res,invite);return res.json({ok:true});}
     if (invite.openedAt) fail(403, "This invitation has already been opened on another browser. Ask MAHA for help recovering the conversation.");
     const session = secret(), now = Date.now();
-    const redeemed = db.update(invites).set({ openedAt: now, sessionHash: hash(session), sessionExpiresAt: now + 24 * HOUR })
+    const redeemed = db.update(invites).set({ openedAt: now, sessionHash: hash(session), sessionExpiresAt:null,guestDurableSince:now })
       .where(and(eq(invites.id, invite.id), isNull(invites.openedAt), isNull(invites.linkedThreadId), isNull(invites.revokedAt))).run();
     if (!redeemed.changes) fail(409, "This invitation was already opened. Please use the browser where you started.");
-    cookie(res, invite.id, session, now + 24 * HOUR);
+    cookie(res, invite.id, session, now + DEVICE_COOKIE_LIFETIME);
     res.json({ ok: true });
+  }));
+  // Read-only locators never authenticate. Only the original HttpOnly guest
+  // cookie or a freshly issued single-use transfer can open this conversation.
+  app.post("/api/guest-chat/:id/resume",safe(async(req,res)=>{
+    const member=await optionalUser(req);
+    if(member){const prior=find(String(req.params.id));if(prior.linkedThreadId&&prior.linkedUserId===member.id&&member.role==="partner")return res.json({threadId:prior.linkedThreadId});fail(409,"Use your own account, or sign out before opening a guest conversation.");}
+    const i=checkGuest(req);touchGuest(req,res,i);res.set("Cache-Control","no-store").json({ok:true});
+  }));
+  app.post("/api/guest-chat/:id/device-code",safe(async(req,res)=>{
+    if(!req.is("application/json"))fail(415,"Open this action in the chat.");
+    if(await optionalUser(req))fail(409,"Use the chat in your account.");
+    const i=checkGuest(req),now=Date.now();
+    const code=crypto.randomBytes(10).toString("hex").toUpperCase(); // 80 bits, never an invite token
+    db.update(invites).set({deviceMoveHash:hash(`move:${code}`),deviceMoveUntil:now+5*60000}).where(eq(invites.id,i.id)).run();
+    res.set("Cache-Control","no-store").json({code:code.match(/.{4}/g)!.join("-")});
+  }));
+  const attempts=new Map<string,number>();let attemptWindow=0,attemptTotal=0;
+  app.post("/api/guest-device/move",safe(async(req,res)=>{
+    if(!req.is("application/json"))fail(415,"Use the MAHA app to enter the code.");
+    if(await optionalUser(req))fail(409,"Sign out before moving a guest chat.");
+    const now=Date.now(),ip=(process.env.RENDER && req.get("x-forwarded-for")?.split(",").pop()?.trim())||req.socket.remoteAddress||"unknown";
+    if(now>=attemptWindow){attempts.clear();attemptTotal=0;attemptWindow=now+5*60000;}
+    if((attempts.get(ip)||0)>=15 || attemptTotal>=600)fail(429,"Too many attempts. Try again in five minutes.");
+    attempts.set(ip,(attempts.get(ip)||0)+1);attemptTotal++;
+    const raw=z.string().max(40).parse(req.body.code).replace(/[\s-]/g,"").toUpperCase();
+    const digest=hash(`move:${raw}`);
+    const i=/^[A-F0-9]{20}$/.test(raw) ? db.select().from(invites).where(eq(invites.deviceMoveHash,digest)).get():undefined;
+    if(!i||!activeGuest(i,now)||(i.deviceMoveUntil??0)<=now)
+      fail(403,"This code cannot be used. Request a fresh code in the original chat.");
+    const session=secret(),expires=now+DEVICE_COOKIE_LIFETIME;
+    const updated=db.update(invites).set({sessionHash:hash(session),guestDurableSince:now,sessionExpiresAt:null,deviceMoveHash:null,deviceMoveUntil:null,verificationHash:null,...clearGuestPush})
+      .where(and(eq(invites.id,i!.id),eq(invites.deviceMoveHash,digest))).run();
+    if(!updated.changes)fail(403,"This code has already been used.");
+    cookie(res,i!.id,session,expires);res.set("Cache-Control","no-store").json({id:i!.id});
+  }));
+  for(const mode of ["enable","disable","check"])app.post(`/api/guest-chat/:id/notifications/${mode}`,safe(async(req,res)=>{
+    if(!req.is("application/json"))fail(415,"Open this action in your chat.");
+    if(await optionalUser(req))fail(409,"Use notifications in your signed-in account.");
+    const i=checkGuest(req);
+    if(mode==="enable")enrollGuest(i,req.body);
+    if(mode==="disable")db.update(invites).set({...clearGuestPush,guestPushChangedAt:Date.now()}).where(eq(invites.id,i.id)).run();
+    if(mode==="check"&&(!i.guestPushEndpoint||req.body.endpoint!==i.guestPushEndpoint))fail(403,"Notifications are off.");
+    res.json({ok:true});
   }));
   app.get("/api/guest-chat/:id", safe(async (req, res) => {
     const invite = checkGuest(req);
-    res.json({ topic: invite.topic, messages: present(invite.id, "guest", false), expiresAt: invite.sessionExpiresAt });
+    res.set("Cache-Control","private, no-store").json({ topic: invite.topic, messages: present(invite.id, "guest", false), expiresAt: invite.sessionExpiresAt,notifications:!!invite.guestPushEndpoint });
   }));
   app.post("/api/guest-chat/:id/message", safe(async (req, res) => {
     const invite = checkGuest(req);
     if (!send(req, invite, false)) return res.json({ ok: true });
+    touchGuest(req,res,invite);
     const admins = await storage.listAdmins();
     void notifyUsers(admins.map(a => a.id), "chat", {
       previewTitle: "New invitation chat message", previewBody: "Open Chat invitations to reply.",
@@ -358,7 +424,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.post("/api/guest-chat/:id/decline", safe(async (req, res) => {
     const invite = checkGuest(req);
-    db.update(invites).set({ declinedAt: Date.now(), sessionHash: null, verificationHash: null }).where(eq(invites.id, invite.id)).run();
+    db.update(invites).set({ declinedAt: Date.now(), sessionHash: null, verificationHash: null,deviceMoveHash:null,deviceMoveUntil:null,...clearGuestPush }).where(eq(invites.id, invite.id)).run();
     cookie(res, invite.id, "", 0);
     res.json({ ok: true });
   }));

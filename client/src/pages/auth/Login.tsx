@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { EnterGuestCode } from "@/components/chat/EnterGuestCode";
 import { AlertCircle, Loader2, ScanFace } from "lucide-react";
 import { browserSupportsWebAuthn, loginWithPasskey, platformAuthLabelShort } from "@/lib/webauthn";
 // Client-provided brand photography: a MAHA clinician greeting a partner-clinic
@@ -134,6 +135,7 @@ export default function Login() {
           <p className="text-base lg:text-xl text-muted-foreground text-center">Partner Platform — sign in to your account</p>
         </CardHeader>
         <CardContent className="p-8 lg:p-12 pt-4 lg:pt-6">
+          <div className="mb-4"><EnterGuestCode/></div>
           <form onSubmit={handleSubmit} className="flex flex-col gap-5 lg:gap-6">
             <div className="flex flex-col gap-2 lg:gap-3">
               <Label htmlFor="email" className="text-base lg:text-lg">Email</Label>

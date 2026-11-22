@@ -33,7 +33,7 @@ const LAST_UPDATED = CURRENT_LEGAL_VERSION;
 
 export const PRIVACY_POLICY: LegalDocument = {
   title: "Privacy Policy",
-  updated: LAST_UPDATED,
+  updated: `${LAST_UPDATED}; private guest chat notice updated 22 November 2026`,
   intro: [
     "This Privacy Policy explains how we collect, use and protect personal data through the MAHA Partner Platform (the \"Platform\") — the registration, referral, chat, shop and education features used by partner clinics and Institute students.",
     "It is separate from, and specific to, this Platform. It does not cover the general maha.clinic website or patients who interact directly with MAHA outside the Platform — see the general MAHA Privacy Policy at maha.clinic/privacy-policy for that.",
@@ -117,7 +117,9 @@ export const PRIVACY_POLICY: LegalDocument = {
     {
       heading: "9. Cookies",
       paragraphs: [
-        "The Platform uses a single strictly-necessary session cookie so you stay signed in. We do not use advertising, analytics or tracking cookies.",
+        "The Platform uses a strictly necessary account session cookie to keep members signed in. We do not use advertising, analytics or tracking cookies.",
+        "Private invitation chats (guest notice, 22 November 2026): starting a chat sets a separate necessary cookie scoped to that invitation. If you choose to remember the chat, the app also stores a chat identifier on your device, not message text. MAHA does not expire an opened guest chat for inactivity. Browsers can limit or clear device storage; moving the chat ends access on the old device. Ending access or saving the chat to a partner account ends the guest session. Ending guest access does not erase the conversation retained by MAHA.",
+        "If you choose reply notifications, MAHA stores the device’s push subscription for that guest chat. Your browser’s push service delivers a generic alert without message content. You can turn these alerts off in the chat. Moving or ending guest access, or saving the chat to an account, ends the guest notification subscription.",
       ],
     },
     {
