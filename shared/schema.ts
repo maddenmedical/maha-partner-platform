@@ -977,6 +977,9 @@ export const guestChatInvites = sqliteTable("guest_chat_invites", {
   sessionHash: text("session_hash"),
   sessionExpiresAt: integer("session_expires_at"),
   guestDurableSince: integer("guest_durable_since"),
+  sharedLinkKey: text("shared_link_key"), // server-only; rotate on every enable
+  sharedLinkChangedAt: integer("shared_link_changed_at"),
+  sharedLinkChangedBy: integer("shared_link_changed_by"),
   deviceMoveHash:text("device_move_hash"),
   deviceMoveUntil:integer("device_move_until"),
   guestPushEndpoint:text("guest_push_endpoint"),
@@ -1013,6 +1016,7 @@ export const guestChatMessages = sqliteTable("guest_chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   inviteId: text("invite_id").notNull(),
   senderId: integer("sender_id"),
+  sharedActor: text("shared_actor"), // opaque per-browser attribution, never a member ID
   senderName: text("sender_name").notNull(),
   senderRole: text("sender_role").notNull(),
   body: text("body").notNull(),

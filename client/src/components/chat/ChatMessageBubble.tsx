@@ -67,6 +67,8 @@ export interface Reaction {
 }
 
 export interface ChatMessageWithMeta extends ChatMessage {
+  sharedAuthor?:boolean;
+  mineBySharedBrowser?:boolean;
   flaggedByMe?: boolean;
   reactions?: Reaction[];
   senderPhotoUrl?: string | null;

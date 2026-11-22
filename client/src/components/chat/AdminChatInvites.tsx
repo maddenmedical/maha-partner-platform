@@ -11,7 +11,7 @@ import { InvitationConversation, InvitationFilters, useInvitationFilters } from 
 import {AttachmentNote,ChatTools,useChatViewport} from "./ChatFrame";
 import {InvitationInstall} from "./InvitationInstall";
 type Invitation = { id: string; label: string; topic: string; unread: boolean; messageCount: number;
-  canRemind:boolean; guestAccessEnded:boolean; openedAt:number|null;
+  canRemind:boolean; guestAccessEnded:boolean; openedAt:number|null; linkSharing:boolean;
   linkedThreadId: number | null; intendedUserId: number | null; declinedAt: number | null; revokedAt: number | null };
 export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => void }) {
   const [open, setOpen] = useState(false), [create, setCreate] = useState(false), [busy, setBusy] = useState(false);
@@ -89,7 +89,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
             href={`https://wa.me/?text=${encodeURIComponent("MAHA has replied. Please open your MAHA chat on the device where you keep it to read the reply.")}`}>Remind via WhatsApp</a></Button>
           <p className="text-xs text-muted-foreground">Choose the original recipient in WhatsApp, review the draft, then send it yourself. No phone number or chat content is shared by MAHA.</p>
         </div>}
-        {fresh?.openedAt&&!fresh.linkedThreadId&&!fresh.declinedAt&&!fresh.revokedAt&&<details className="text-sm">
+        {fresh?.openedAt&&!fresh.linkSharing&&!fresh.linkedThreadId&&!fresh.declinedAt&&!fresh.revokedAt&&<details className="text-sm">
           <summary className="cursor-pointer font-medium">Restore access to this same chat</summary>
           <div className="space-y-2 pt-2"><p>Ask the original recipient to reopen their personal link, choose Restore this chat, and give you the matching code in your existing, independently verified WhatsApp conversation. Never approve a code from a new contact or from the link alone.</p>
           <Label htmlFor="restore-match">Matching code from the verified recipient</Label><Input id="restore-match" autoComplete="off" maxLength={18} value={restoreCode} onChange={e=>{setRestoreCode(e.target.value);setVerified(false);setApproved(false);}}/>
@@ -98,7 +98,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
           {approved&&<p role="status">Approved. The recipient can reopen this same chat on the browser that requested the code.</p>}</div>
         </details>}
         {fresh?.linkedThreadId ? <Button onClick={() => { setOpen(false); onOpenChat(fresh.linkedThreadId!); }}>Open linked member chat</Button> : <>
-          {!linking ? <Button variant="outline" onClick={() => { setLinking(true); setPartner(null); setSearch(""); }}>Connect to a partner account</Button> : <div className="rounded border p-3 space-y-3">
+          {fresh?.linkSharing?<p className="text-sm">Turn off link sharing before connecting this conversation to a partner.</p>:!linking ? <Button variant="outline" onClick={() => { setLinking(true); setPartner(null); setSearch(""); }}>Connect to a partner account</Button> : <div className="rounded border p-3 space-y-3">
             {choosePartner}<p className="text-sm">Confirm the identity first. This will give the selected partner access to all messages in this conversation and end guest access.</p>
             <Button disabled={busy || !partner} onClick={() => act(async () => {
               const response = await apiRequest("POST", `/api/admin/guest-chats/${selected.id}/link`, { userId: partner!.id });
@@ -113,10 +113,12 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
       </div> : <div className="space-y-3">
         <Button onClick={() => { setCreate(true); setSelected(null); setPartner(null); setSearch(""); setLabel(""); setError(""); }}>New WhatsApp invitation</Button>
         {invites.isLoading ? <p>Loading invitations…</p> : !invites.data?.length ? <p className="text-sm text-muted-foreground">No invitations yet.</p> : invites.data.map(i =>
-          <button key={i.id} className="block w-full rounded-lg border p-3 text-left hover:bg-muted" onClick={() => { setSelected(i); setLinking(false); }}>
+          <div key={i.id} className="rounded-lg border p-3"><button className="block w-full text-left hover:bg-muted" onClick={() => { setSelected(i); setLinking(false); }}>
             <span className="font-medium">{i.label}{i.unread ? " · New message" : ""}</span><span className="block text-sm text-muted-foreground">{i.topic}</span>
             <span className="text-xs text-muted-foreground">{i.linkedThreadId ? "Linked to member" : i.declinedAt ? "Declined registration · retained" : i.revokedAt ? "Revoked · retained" : "Awaiting account verification"} · {i.messageCount} messages</span>
-          </button>)}
+          </button>{i.openedAt&&!i.linkedThreadId&&!i.declinedAt&&!i.revokedAt&&<details className="mt-2 text-sm"><summary>Link access: {i.linkSharing?"Anyone with the link":"Private"}</summary>
+            <p className="my-2">Anyone with the link can read the entire existing conversation, including files, and reply without proving their identity. Turning sharing off ends shared browser access.</p>
+            <Button size="sm" variant="outline" disabled={busy} onClick={()=>act(async()=>{await apiRequest("POST",`/api/admin/guest-chats/${i.id}/link-sharing`,{enabled:!i.linkSharing,confirmExposure:!i.linkSharing});})}>{i.linkSharing?"Turn off shared access":"Allow anyone with this link to read and reply"}</Button></details>}</div>)}
       </div>}
       {error && !selected && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </DialogContent>

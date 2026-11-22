@@ -31,6 +31,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
   const [arrival,setArrival]=useState<"checking"|"start"|"restore"|"sign-in"|"sign-out"|"unavailable">(params.token?"checking":"start");
   const [matchCode,setMatchCode]=useState(""),[until,setUntil]=useState(0);
   const [toolsOpen,setToolsOpen]=useState(false);
+  const [shared,setShared]=useState(false);
   useChatViewport(started&&!closed);
   const attempted = useRef(false);
   const emailInput = useRef<HTMLInputElement>(null);
@@ -102,6 +103,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
       void action(async()=>{
         try{
           const r=await apiRequest("POST",`${endpoint}/return`,{token:params.token});const result=await r.json();
+          if(result.state==="shared"){queryClient.removeQueries({queryKey:[endpoint],exact:true});setShared(true);setStarted(true);return;}
           if(result.state==="member"){forgetGuest(params.id);setPendingThreadId(result.threadId);navigate("/chat",{replace:true});return;}
           if(result.state==="guest"){navigate(`/guest-chat/${params.id}`,{replace:true});return;}
           if(result.state==="restore"&&result.code){setMatchCode(result.code);setUntil(result.until);}
@@ -140,7 +142,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
         <p className="text-sm text-muted-foreground">You have not created an account. You can ask MAHA to connect this conversation to your account if you register later.</p>
       </div> : (!started&&!params.token || started&&chat.isError) ? <div className="rounded-lg border bg-card p-5 space-y-3">
         <h2 className="font-medium">{busy||bootstrapping?"Opening your chat…":"Return to your conversation"}</h2>
-        {!busy&&!bootstrapping&&<><p className="text-sm">Open your original WhatsApp link and choose Restore this chat if this browser needs verification. If you moved the chat, open it in the new app. If you registered, sign in to your account.</p>
+        {shared?<p>This shared chat is unavailable. Reopen the original link or contact MAHA.</p>:!busy&&!bootstrapping&&<><p className="text-sm">Open your original WhatsApp link and choose Restore this chat if this browser needs verification. If you moved the chat, open it in the new app. If you registered, sign in to your account.</p>
           <a className="underline text-sm" href="#/login">Sign in or enter a device code</a>
           <Button size="sm" variant="ghost" onClick={()=>{forgetGuest(params.id);navigate("/login");}}>Forget this chat on this device</Button></>}
       </div> : !started&&params.token&&arrival!=="start" ? <section className="rounded-lg border bg-card p-5 space-y-4">
@@ -164,7 +166,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
       </div> : <>
         <header className="flex items-center gap-2 border-b px-3 py-1.5 shrink-0">
           <div className="mr-auto min-w-0"><p className="text-[10px] font-semibold tracking-widest text-primary">MAHA</p><h1 className="truncate text-base font-semibold">{chat.data?.topic || "Chat with MAHA"}</h1></div>
-          <ChatTools label="Chat options" open={toolsOpen} onOpenChange={v=>{setToolsOpen(v);if(!v)setKeep(false);}}>
+          {shared?<ChatTools label="Chat options"><InvitationFilters filters={filters}/><AttachmentNote/></ChatTools>:<ChatTools label="Chat options" open={toolsOpen} onOpenChange={v=>{setToolsOpen(v);if(!v)setKeep(false);}}>
         {!keep ? <div className="space-y-3">
           <p className="text-sm">{chat.data?.messages.some(m=>m.senderRole==="guest") ? "Your message is with MAHA. Keep this chat so you can return to the reply after leaving WhatsApp." : "You can chat first, or save this conversation to your partner account now."}</p>
           <GuestAlerts endpoint={endpoint} enabled={!!chat.data?.notifications}/>
@@ -213,16 +215,16 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
             await apiRequest("POST", `${endpoint}/decline`); forgetGuest(params.id);setClosed(true);
           })}>End guest access without registering</Button>
         </details>
-        </ChatTools></header>
-        <div className="chat-primary-actions">
+        </ChatTools>}</header>
+        {shared?<p className="shrink-0 border-b px-3 py-1.5 text-xs">Anyone with this link can read and reply. You are replying as a shared link guest.</p>:<div className="chat-primary-actions">
           {(!user||user.role==="partner")&&<Button size="sm" className="chat-register-action" onClick={()=>{setToolsOpen(true);setKeep(true);}}><UserRoundPlus aria-hidden="true"/>{user?"Keep in my account":"Register & keep this chat"}</Button>}
           <InvitationInstall guest/>
-        </div>
-        {!user&&nudge&&!keep&&<aside className="flex items-center gap-2 px-2 pt-1 shrink-0" data-testid="guest-register-nudge">
+        </div>}
+        {!shared&&!user&&nudge&&!keep&&<aside className="flex items-center gap-2 px-2 pt-1 shrink-0" data-testid="guest-register-nudge">
           <span className="text-xs font-medium">Your message is with MAHA. Register to keep your replies.</span>
           <Button size="sm" variant="ghost" onClick={()=>setDismissed({at:Date.now(),count:outgoing})}>Not now</Button></aside>}
         {!keep&&guidance}
-        <div ref={conversation} className="min-h-0 flex flex-1"><InvitationConversation key={params.id} inviteId={params.id} filters={filters}/></div>
+        <div ref={conversation} className="min-h-0 flex flex-1"><InvitationConversation key={params.id} inviteId={params.id} shared={shared} filters={filters}/></div>
       </>}
       {!active && guidance}
     </div>

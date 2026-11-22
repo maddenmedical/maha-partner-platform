@@ -113,6 +113,43 @@ if (serve) {
   }
   console.log(`Synthetic events and chat invitations fixture: ${base}`);
 } else try {
+  // Explicit sharing on one previously opened synthetic invitation only.
+  {
+    const a=await invite(),b=await invite(),ep=a.endpoint,ctrl=`/api/admin/guest-chats/${a.id}`;
+    const enable={enabled:true,confirmExposure:true},off={enabled:false,confirmExposure:false};
+    const set=(body:any,status=200,actor="sid=feature-1")=>request("POST",ctrl+"/link-sharing",status,body,actor);
+    const row=()=>db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id,a.id)).get()!;
+    const visit=(c="")=>request("POST",ep+"/return",200,{token:a.token},c);
+    await set(enable,409);const originalCookie=await start(a);await start(b);
+    const pending=await request("POST",ep+"/restore",200,{token:a.token},"");
+    const move=(await request("POST",ep+"/device-code",200,{},originalCookie)).data.code;
+    db.update(s.guestChatInvites).set({expiresAt:1,sessionExpiresAt:1,guestDurableSince:null}).where(eq(s.guestChatInvites.id,a.id)).run();
+    await set(enable,401,"");await set(enable,403,"sid=feature-2");await set({...enable,confirmExposure:false},409);
+    await set(enable);const baseline=row();
+    const A=await visit(),B=await visit("sid=feature-2");
+    assert.deepEqual(A.data,{state:"shared"});assert.deepEqual(B.data,A.data);assert.notEqual(A.cookies,B.cookies);
+    assert.deepEqual(row(),baseline);await set(enable);assert.deepEqual(row(),baseline);
+    await request("POST",ep+"/return",403,{token:b.token},"");await request("POST",b.endpoint+"/return",403,{token:a.token},"");
+    await request("GET",ep,403,undefined,"");await request("GET",b.endpoint,403,undefined,A.cookies);
+    assert.equal((await request("POST",b.endpoint+"/return",200,{token:b.token},"")).data.state,"restore");
+    await request("POST","/api/guest-device/move",403,{code:move},"");
+    await request("POST",ctrl+"/approve-restore",409,{verifiedOriginalContact:true,code:pending.data.code});
+    for(const c of [A.cookies,B.cookies+"; sid=feature-2",originalCookie])for(const path of ["start","keep","send-code","verify","decline","resume","restore","restore/check","device-code","notifications/enable","notifications/disable"])
+      await request("POST",`${ep}/${path}`,403,{token:a.token},c);
+    await request("POST",ctrl+"/link",409,{userId:2});await request("POST",ctrl+"/revoke",401,{},A.cookies);
+    for(const [cookie,body] of [[A.cookies,"First visitor"],[B.cookies,"Second visitor"]])await request("POST",ep+"/message",200,{body,requestId:crypto.randomUUID()},cookie);
+    for(const [cookie,own] of [[A.cookies,"First visitor"],[B.cookies,"Second visitor"]]){
+      const data=(await request("GET",ep,200,undefined,cookie)).data;
+      assert.equal(data.notifications,false);assert.deepEqual(data.messages.filter((m:any)=>m.mineBySharedBrowser).map((m:any)=>m.body),[own]);
+      assert.equal(data.messages.filter((m:any)=>m.senderName==="Shared link guest").length,2);assert.ok(!JSON.stringify(data).includes(baseline.sharedLinkKey!));
+    }
+    await set(off);for(const c of [A.cookies,B.cookies,A.cookies+"; "+originalCookie])await request("GET",ep,403,undefined,c);
+    await request("POST",ep+"/message",403,{body:"must not change identity",requestId:crypto.randomUUID()},A.cookies+"; "+originalCookie);
+    assert.equal((await visit()).data.state,"restore");assert.equal((await visit(originalCookie)).data.state,"guest");
+    await set(enable);await request("GET",ep,403,undefined,A.cookies);const reopened=await visit();await request("POST",ctrl+"/revoke",200,{});
+    await request("GET",ep,403,undefined,reopened.cookies);await request("POST",ep+"/return",403,{token:a.token},"");await set(enable,409);
+    const linkCtrl=`/api/admin/guest-chats/${b.id}`;await request("POST",linkCtrl+"/link",200,{userId:2});await request("POST",linkCtrl+"/link-sharing",409,enable);
+  }
   // Original URL, never an authenticator for an already-used chat. All data
   // here is synthetic SQLite :memory:; no real identity or notifications.
   {

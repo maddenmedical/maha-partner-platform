@@ -24,8 +24,8 @@ export function InvitationFilters({filters:{search,setSearch,filter,setFilter}}:
     <div className="flex gap-2">{(["starred","files"] as const).map(k=><Button key={k} size="sm" variant={filter===k?"secondary":"outline"} aria-pressed={filter===k} onClick={()=>setFilter(filter===k?"all":k)} data-testid={`button-invitation-${k}`}>{k==="starred"?<><Star/>Starred</>:<><Paperclip/>Files</>}</Button>)}</div>
   </div>;
 }
-export function InvitationConversation({ inviteId, admin = false, closed = false,filters:{search,setSearch,filter,setFilter} }: {
-  inviteId: string; admin?: boolean; closed?: boolean; filters:Filters;
+export function InvitationConversation({ inviteId, admin = false, shared=false, closed = false,filters:{search,setSearch,filter,setFilter} }: {
+  inviteId: string; admin?: boolean; shared?:boolean; closed?: boolean; filters:Filters;
 }) {
   const { user } = useAuth();
   const cache = useQueryClient();
@@ -38,7 +38,8 @@ export function InvitationConversation({ inviteId, admin = false, closed = false
   const [newMessages, setNewMessages] = useState(false);
   const scroll = useRef<HTMLDivElement>(null), following = useRef(true);
   const attempt = useRef<{ key: string; requestId: string } | null>(null);
-  const messages = chat.data?.messages || [];
+  const messages = chat.isError?[]:chat.data?.messages || [];
+  const own=(m:ChatMessageWithMeta)=>admin?m.senderRole==="admin"&&m.senderId===user?.id:shared?!!m.mineBySharedBrowser:m.senderRole==="guest"&&!m.sharedAuthor;
   const readOnly = closed || !!chat.data?.linkedThreadId;
   const shown = messages.filter(m =>
     (filter !== "starred" || m.flaggedByMe) && (filter !== "files" || !!m.attachmentUrl) &&
@@ -86,15 +87,15 @@ export function InvitationConversation({ inviteId, admin = false, closed = false
       </p>}
       {shown.map(m => {
         const original = messages.find(item => item.id === m.replyToMessageId);
-        const isMe = admin ? m.senderRole === "admin" && m.senderId === user?.id : m.senderRole === "guest";
+        const isMe = own(m);
         return <ChatMessageBubble key={m.id} message={m} isMe={isMe} isAdmin={admin} compact disableMp3 linkify
           onToggleFlag={id => toggle(`/messages/${id}/star`)}
           onReact={(id, emoji) => toggle(`/messages/${id}/reaction`, { emoji })}
           onReply={readOnly ? undefined : id => {
             const target = messages.find(item => item.id === id);
-            if (target) setReplying({ id, senderName: target.senderRole === "guest" && !admin ? "You" : target.senderName, snippet: snippet(target).slice(0, 160) });
+            if (target) setReplying({ id, senderName: own(target) ? "You" : target.senderName, snippet: snippet(target).slice(0, 160) });
           }}
-          quoted={original ? { senderName: original.senderRole === "guest" && !admin ? "You" : original.senderName, snippet: snippet(original).slice(0, 160) } : null}
+          quoted={original ? { senderName: own(original) ? "You" : original.senderName, snippet: snippet(original).slice(0, 160) } : null}
           onEdit={admin && isMe && !readOnly ? (id, body) => change("PATCH", `/messages/${id}`, { body }) : undefined}
           onDelete={admin && !readOnly ? setDeleting : undefined} />;
       })}

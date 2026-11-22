@@ -267,7 +267,7 @@ function App() {
               {/* /install is reachable regardless of auth/bootstrap state — it's the
                   link partners get in onboarding emails, before they ever sign in. */}
               <Switch>
-                <Route path="/continue-chat/:id/:token" component={ContinueChat} />
+                <Route path="/continue-chat/:id/:token">{p=><ContinueChat key={p.id+":"+p.token} params={p}/>}</Route>
                 <Route path="/guest-chat/:id">{params=><ContinueChat params={params} key={params.id}/>}</Route>
                 <Route path="/institute/apply" component={InstituteEnquiry} />
                 <Route path="/install/:platform" component={Install} />

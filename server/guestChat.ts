@@ -28,7 +28,27 @@ const find = (id: string) => db.select().from(invites).where(eq(invites.id, id))
 const rows = (id: string) => db.select().from(messages).where(eq(messages.inviteId, id)).orderBy(asc(messages.id)).all();
 const fileRows = (id: string) => db.select().from(files).where(eq(files.inviteId, id)).all();
 const markRows = (id: string) => db.select().from(marks).where(eq(marks.inviteId, id)).all();
-const actor = (req: any, admin: boolean) => admin ? `admin:${req.user.id}` : "guest";
+const actor = (req: any, admin: boolean) => admin ? `admin:${req.user.id}` : req.sharedActor || "guest";
+const sharedName="Shared link guest";
+const sharedCookie=(id:string)=>`maha_share_${id.replace(/-/g,"")}`;
+const sharing=(i:Invite)=>!!(i.sharedLinkKey&&i.openedAt&&!i.revokedAt&&!i.declinedAt&&!i.linkedThreadId);
+const signShare=(i:Invite,nonce:string)=>crypto.createHmac("sha256",i.sharedLinkKey!).update(`${i.id}:${nonce}`).digest("hex");
+function sharedBrowser(req:any,i:Invite){
+  if(!sharing(i))return null;
+  const raw=parse(req.headers.cookie||"")[sharedCookie(i.id)]||"";
+  if(!/^[a-f0-9]{64}\.[a-f0-9]{64}$/.test(raw))return null;
+  const [nonce,sig]=raw.split(".");if(!crypto.timingSafeEqual(Buffer.from(sig,"hex"),Buffer.from(signShare(i,nonce),"hex")))return null;
+  return nonce;
+}
+function openShared(req:any,res:Response,i:Invite){
+  const n=sharedBrowser(req,i)||secret();
+  res.append("Set-Cookie",serialize(sharedCookie(i.id),`${n}.${signShare(i,n)}`,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:`/api/guest-chat/${i.id}`,maxAge:DEVICE_COOKIE_LIFETIME/1000}));
+  res.set("Cache-Control","private, no-store").json({state:"shared"});
+}
+function sharedOperation(method:string,path:string){
+  return method==="GET"&&(path==="/"||/^\/files\/[a-f0-9-]+$/.test(path))||
+    method==="POST"&&(/^\/(message|upload)$/.test(path)||/^\/messages\/\d+\/(star|reaction)$/.test(path));
+}
 function editable(invite: Invite) {
   if (invite.linkedThreadId || invite.declinedAt || invite.revokedAt) fail(409, "This guest session is closed. Open the linked chat or send a new invitation.");
 }
@@ -41,6 +61,7 @@ function present(inviteId: string, actorKey: string, admin: boolean) {
     const file = m.deletedAt ? undefined : attachments.find(f => f.id === m.attachmentId);
     const reactions = allMarks.filter(mark => mark.messageId === m.id && mark.kind === "reaction");
     return { id: m.id, threadId: 0, senderId: m.senderId ?? 0, senderRole: m.senderRole, senderName: m.senderName,
+      sharedAuthor:!!m.sharedActor, mineBySharedBrowser:!!m.sharedActor&&m.sharedActor===actorKey,
       body: m.deletedAt ? "" : m.body, createdAt: m.createdAt, editedAt: m.editedAt, deletedAt: m.deletedAt,
       deletedByName: admin ? m.deletedByName : null, replyToMessageId: m.replyToMessageId,
       attachmentUrl: file ? `${admin ? "/api/admin/guest-chats" : "/api/guest-chat"}/${inviteId}/files/${file.id}` : null,
@@ -61,7 +82,7 @@ function send(req: any, invite: Invite, admin: boolean) {
   const previous = rows(invite.id);
   const retry = previous.find(m => m.requestId === input.requestId);
   if (retry) {
-    if (retry.senderRole !== (admin ? "admin" : "guest") || (admin && retry.senderId !== req.user.id)) fail(409, "Please retry with a new message identifier.");
+    if (retry.senderRole !== (admin ? "admin" : "guest") || (admin && retry.senderId !== req.user.id) || (!admin&&(retry.sharedActor||null)!==(req.sharedActor||null))) fail(409, "Please retry with a new message identifier.");
     return false;
   }
   if (!input.body && !input.attachmentUrl) fail(400, "Write a message or attach a file.");
@@ -76,7 +97,7 @@ function send(req: any, invite: Invite, admin: boolean) {
   }
   if (input.replyToMessageId && messageIn(invite.id, input.replyToMessageId).deletedAt) fail(400, "That message was deleted. Cancel the reply and try again.");
   db.insert(messages).values({ inviteId: invite.id, senderId: admin ? req.user.id : null,
-    senderRole: admin ? "admin" : "guest", senderName: admin ? req.user.name : "Guest (not yet verified)",
+    senderRole: admin ? "admin" : "guest", senderName: admin ? req.user.name : req.sharedActor?sharedName:"Guest (not yet verified)",sharedActor:admin?null:req.sharedActor||null,
     body: input.body, requestId: input.requestId, createdAt: Date.now(),
     attachmentId: file?.id ?? null, replyToMessageId: input.replyToMessageId ?? null }).run();
   return true;
@@ -101,9 +122,9 @@ function original(i:Invite,body:unknown){
 }
 function hasDevice(req:any,i:Invite){
   const key=parse(req.headers.cookie||"")[cookieName(i.id)];
-  return !!(i.openedAt&&!i.revokedAt&&!i.declinedAt&&!i.linkedThreadId&&key&&hash(key)===i.sessionHash);
+  return !!(!i.sharedLinkKey&&i.openedAt&&!i.revokedAt&&!i.declinedAt&&!i.linkedThreadId&&key&&hash(key)===i.sessionHash);
 }
-function repairEligible(i:Invite){editable(i);if(!i.openedAt)fail(409,"This invitation has not been started.");}
+function repairEligible(i:Invite){editable(i);if(i.sharedLinkKey||!i.openedAt)fail(409,"Private browser restoration is not available for this invitation.");}
 function onlyApp(req:any){
   if(!req.is("application/json")||req.get("sec-fetch-site")==="cross-site")fail(415,"Use the personal link in MAHA.");
 }
@@ -113,6 +134,10 @@ function cookie(res: Response, id: string, token: string, expires: number) {
 }
 function checkGuest(req: any): Invite {
   const invite = find(String(req.params.id));
+  if(req.sharedActor){
+    const n=sharedBrowser(req,invite);if(!n||req.sharedActor!==`shared:${hash(n)}`)fail(403,"Shared access has ended.");
+    return invite;
+  }
   const token = parse(req.headers.cookie || "")[cookieName(invite.id)];
   if (!activeGuest(invite)||!token||hash(token)!==invite.sessionHash) {
     fail(403, "Guest access has ended. Please contact MAHA to recover this conversation.");
@@ -121,6 +146,7 @@ function checkGuest(req: any): Invite {
   return invite;
 }
 function touchGuest(req:any,res:Response,invite:Invite) {
+  if(req.sharedActor)return;
   if(invite.guestDurableSince==null){
     invite.guestDurableSince=Date.now();
     db.update(invites).set({guestDurableSince:invite.guestDurableSince,sessionExpiresAt:null}).where(eq(invites.id,invite.id)).run();
@@ -147,6 +173,7 @@ function checkGuestAccount(user: typeof users.$inferSelect) {
 function linkChat(inviteId: string, userId: number, linkedBy: number | null = null) {
   return db.transaction(() => {
     const invite = find(inviteId);
+    if(invite.sharedLinkKey)fail(409,"Turn off shared-link access before connecting a verified account.");
     if (invite.linkedThreadId) {
       if (invite.linkedUserId !== userId) fail(409, "This conversation is already linked to a different account.");
       return invite.linkedThreadId;
@@ -165,9 +192,9 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
     for (const message of transcript) {
       const file = attachments.find(f => f.id === message.attachmentId);
       const transferred = db.insert(chatMessages).values({
-        threadId: thread.id, senderId: message.senderRole === "admin" ? message.senderId! : user.id,
-        senderRole: message.senderRole === "admin" ? "admin" : "partner",
-        senderName: message.senderRole === "admin" ? message.senderName : "Guest (before account verification)",
+        threadId: thread.id, senderId: message.sharedActor?0:message.senderRole === "admin" ? message.senderId! : user.id,
+        senderRole: message.sharedActor?"guest":message.senderRole === "admin" ? "admin" : "partner",
+        senderName: message.sharedActor?sharedName:message.senderRole === "admin" ? message.senderName : "Guest (before account verification)",
         body: message.body, createdAt: message.createdAt, editedAt: message.editedAt,
         deletedAt: message.deletedAt, deletedByName: message.deletedByName,
         attachmentUrl: file ? `/api/files/${file.driveFileId}` : null, attachmentType: file?.type, attachmentName: file?.name,
@@ -180,7 +207,7 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
     }
     for (const mark of markRows(inviteId)) {
       const messageId = mapping.get(mark.messageId);
-      if (!messageId) continue;
+      if (!messageId||mark.actorKey.startsWith("shared:")) continue;
       const markUserId = mark.actorKey === "guest" ? user.id : Number(mark.actorKey.split(":")[1]);
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, markUserId)).get()) continue;
       if (mark.kind === "star") db.insert(chatMessageFlags).values({ messageId, userId: markUserId, createdAt: mark.createdAt }).run();
@@ -236,6 +263,20 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   optionalUser: (req: any) => Promise<any>, setSession: (res: Response, token: string, expiresAt: number) => void) {
   const admin = [requireAuth, requireAdmin];
   app.use("/api/guest-chat/:id",async(req,res,next)=>{
+    // This allowlist never treats a link visitor as the original guest or the
+    // browser's signed-in account. No registration, transfer, decline or push.
+    try{const i=find(req.params.id);if(i.sharedLinkKey){
+      if(req.path==="/return")return next();
+      const n=sharedBrowser(req,i);
+      if(!n||!sharedOperation(req.method,req.path))return res.status(403).set("Cache-Control","no-store").json({message:"This action is unavailable. Open the original invitation."});
+      if(req.method==="POST"&&req.get("sec-fetch-site")==="cross-site")return res.sendStatus(403);
+      (req as any).sharedActor=`shared:${hash(n)}`;return next();
+    }
+    // A browser that also owned the original private session must not silently
+    // switch identities in an open shared composer when sharing is turned off.
+    if(parse(req.headers.cookie||"")[sharedCookie(i.id)]&&req.path!=="/return")
+      return res.status(403).set("Cache-Control","no-store").json({message:"Shared access has ended. Reopen the original invitation."});
+    }catch(e){return res.status(404).set("Cache-Control","no-store").json({message:"Invitation not found."});}
     if(req.path==="/start"||req.path==="/keep"||req.path==="/resume"||req.path==="/return")return next();
     try{if(await optionalUser(req))return res.status(409).set("Cache-Control","no-store").json({message:"Use your signed-in account, or sign out to return to a guest chat."});next();}catch(e){next(e);}
   });
@@ -297,9 +338,10 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
         const old = db.select().from(marks).where(eq(marks.id, id)).get();
         db.transaction(() => {
           if (old) db.delete(marks).where(eq(marks.id, id)).run();
+          if(req.sharedActor&&!old&&markRows(invite.id).length>=3000)fail(429,"Too many reactions or stars in this conversation.");
           if (!old || (kind === "reaction" && old.emoji !== emoji))
             db.insert(marks).values({ id, inviteId: invite.id, messageId: message.id, actorKey,
-              actorName: isAdmin ? req.user.name : "Guest (not yet verified)", kind, emoji, createdAt: Date.now() }).run();
+              actorName: isAdmin ? req.user.name : req.sharedActor?sharedName:"Guest (not yet verified)", kind, emoji, createdAt: Date.now() }).run();
         });
         res.json({ ok: true });
       }));
@@ -324,10 +366,23 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     res.json(list.map(i => {const { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt, adminReadAt }=i;
       const conversation = rows(id); const last = conversation.at(-1);
       return { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt,
+        linkSharing:sharing(i),
         canRemind: activeGuest(i) && last?.senderRole==="admin" && !last.deletedAt && conversation.some(m=>m.senderRole==="guest"),
-        guestAccessEnded: !!openedAt && !activeGuest(i),
+        guestAccessEnded: !!openedAt && !activeGuest(i) && !sharing(i),
         unread: !!last && last.senderRole === "guest" && last.createdAt > (adminReadAt ?? 0), messageCount: conversation.length };
     }));
+  }));
+  app.post("/api/admin/guest-chats/:id/link-sharing",...admin,safe(async(req,res)=>{
+    onlyApp(req);
+    const {enabled,confirmExposure}=z.object({enabled:z.boolean(),confirmExposure:z.boolean()}).strict().parse(req.body);
+    const i=find(req.params.id);if(enabled){editable(i);if(!i.openedAt||!confirmExposure)fail(409,"Confirm that anyone with this existing link may read all prior messages and files and reply.");}
+    if(!!i.sharedLinkKey!==enabled)db.transaction(()=>{
+      const now=Date.now();
+      db.update(invites).set({sharedLinkKey:enabled?secret():null,sharedLinkChangedAt:now,sharedLinkChangedBy:req.user.id,
+        deviceMoveHash:null,deviceMoveUntil:null,verificationHash:null,...clearGuestPush}).where(eq(invites.id,i.id)).run();
+      db.update(repairs).set({until:now}).where(eq(repairs.inviteId,i.id)).run();
+    });
+    res.json({linkSharing:sharing(find(i.id))});
   }));
   app.post("/api/admin/guest-chats", ...admin, safe(async (req, res) => {
     const input = z.object({ label: z.string().trim().min(1).max(120), topic: z.string().trim().min(1).max(160),
@@ -354,7 +409,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.post("/api/admin/guest-chats/:id/revoke", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
-    db.update(invites).set({ revokedAt: Date.now(), sessionHash: null, verificationHash: null,deviceMoveHash:null,deviceMoveUntil:null,...clearGuestPush }).where(eq(invites.id, invite.id)).run();
+    db.update(invites).set({ revokedAt: Date.now(), sharedLinkKey:null,sessionHash: null, verificationHash: null,deviceMoveHash:null,deviceMoveUntil:null,...clearGuestPush }).where(eq(invites.id, invite.id)).run();
     res.json({ ok: true });
   }));
   app.post("/api/admin/guest-chats/:id/link", ...admin, safe(async (req, res) => {
@@ -389,9 +444,13 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     res.json({ ok: true });
   }));
   // Opening an original URL never starts an unclaimed invitation. A used
-  // link is a locator, not proof of the right to read a conversation.
+  // private link is a locator unless an admin explicitly enabled sharing.
   app.post("/api/guest-chat/:id/return",safe(async(req,res)=>{
-    onlyApp(req);const member=await optionalUser(req),i=find(req.params.id);original(i,req.body);
+    onlyApp(req);const initial=find(req.params.id);original(initial,req.body);
+    if(sharing(initial))return openShared(req,res,initial);
+    const member=await optionalUser(req),i=find(req.params.id);original(i,req.body);
+    if(sharing(i))return openShared(req,res,i);
+    if(parse(req.headers.cookie||"")[sharedCookie(i.id)])res.append("Set-Cookie",serialize(sharedCookie(i.id),"",{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:`/api/guest-chat/${i.id}`,maxAge:0}));
     if(i.linkedThreadId){
       if(member?.role==="partner"&&i.linkedUserId===member.id)return res.json({state:"member",threadId:i.linkedThreadId});
       return res.json({state:"sign-in"});
@@ -494,7 +553,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.get("/api/guest-chat/:id", safe(async (req, res) => {
     const invite = checkGuest(req);
-    res.set("Cache-Control","private, no-store").json({ topic: invite.topic, messages: present(invite.id, "guest", false), expiresAt: invite.sessionExpiresAt,notifications:!!invite.guestPushEndpoint });
+    res.set("Cache-Control","private, no-store").json({ topic: invite.topic, messages: present(invite.id, actor(req,false), false), expiresAt:req.sharedActor?null:invite.sessionExpiresAt,notifications:!req.sharedActor&&!!invite.guestPushEndpoint });
   }));
   app.post("/api/guest-chat/:id/message", safe(async (req, res) => {
     const invite = checkGuest(req);
