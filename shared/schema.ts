@@ -977,6 +977,10 @@ export const guestChatInvites = sqliteTable("guest_chat_invites", {
   sessionHash: text("session_hash"),
   sessionExpiresAt: integer("session_expires_at"),
   guestDurableSince: integer("guest_durable_since"),
+  // No database default and no backfill: existing invitations keep their UI.
+  personalNoticeVersion: integer("personal_notice_version"),
+  sharedNoticeAt: integer("shared_notice_at"), // separately authorized display only
+  sharedNoticeBy: integer("shared_notice_by"),
   sharedLinkKey: text("shared_link_key"), // server-only; rotate on every enable
   sharedLinkChangedAt: integer("shared_link_changed_at"),
   sharedLinkChangedBy: integer("shared_link_changed_by"),

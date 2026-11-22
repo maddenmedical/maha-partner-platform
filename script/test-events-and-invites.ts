@@ -51,7 +51,13 @@ globalThis.fetch = (async (_url: any, options: any) => {
 }) as typeof fetch;
 const { db, storage } = await import("../server/storage");
 const s = await import("../shared/schema");
-const { eq } = await import("drizzle-orm");
+const { eq,sql } = await import("drizzle-orm");
+// These synthetic fixtures model already-issued rows (new column = NULL).
+// New-policy tests deliberately omit this switch and use the real issuer.
+if(process.argv.includes("--legacy-invitations")){
+  assert.equal(process.env.SQLITE_DB_PATH,":memory:");
+  db.run(sql.raw("CREATE TRIGGER qa_preexisting AFTER INSERT ON guest_chat_invites BEGIN UPDATE guest_chat_invites SET personal_notice_version=NULL WHERE id=NEW.id; END"));
+}
 const { CURRENT_LEGAL_VERSION } = await import("../shared/legalVersion");
 for (const [id, role, status, name] of [[1, "admin", "approved", "Dr. QA Admin"], [2, "partner", "approved", "Dr. QA Partner"], [3, "partner", "approved", "Dr. Other Partner"], [4, "partner", "pending", "Pending Partner"],
   [5, "partner", "approved", "Archived Partner"], [6, "partner", "rejected", "Inactive Partner"], [7, "student", "approved", "Student Account"]] as const) {
@@ -86,8 +92,8 @@ const serve = process.argv.includes("--serve");
 await new Promise<void>(resolve => server.listen(serve ? Number(process.env.QA_PORT || 5090) : 0, "0.0.0.0", resolve));
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
 let checks = 0;
-async function request(method: string, url: string, expected: number, body?: any, cookie = "sid=feature-1") {
-  const response = await nativeFetch(base + url, { method, headers: { ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(cookie ? { cookie } : {}) },
+async function request(method: string, url: string, expected: number, body?: any, cookie = "sid=feature-1",pageKey?:string) {
+  const response = await nativeFetch(base + url, { method, headers: { ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(cookie ? { cookie } : {}),...(pageKey?{"X-MAHA-Page-Key":pageKey}:{}) },
     body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body) });
   const text = await response.text();
   assert.equal(response.status, expected, `${method} ${url}: ${text}`);
@@ -98,8 +104,9 @@ async function request(method: string, url: string, expected: number, body?: any
 const event = { topic: "QA multi-day symposium", scheduledAt: Date.now() + 86400000, endsAt: Date.now() + 3 * 86400000,
   zoomLink: "https://example.com/symposium", registrationMode: "external" };
 const inviteBody = { label: "Synthetic contact", topic: "Invitation QA", message: "Welcome to this synthetic chat.", intendedUserId: null };
-async function invite(intendedUserId: number | null = null) {
+async function invite(intendedUserId: number | null = null,legacy=true) {
   const result = (await request("POST", "/api/admin/guest-chats", 201, { ...inviteBody, intendedUserId })).data;
+  if(legacy&&!process.argv.includes("--serve"))db.update(s.guestChatInvites).set({personalNoticeVersion:null}).where(eq(s.guestChatInvites.id,result.id)).run();
   return { ...result, token: result.path.split("/").pop(), endpoint: `/api/guest-chat/${result.id}` };
 }
 async function start(i: any) { return (await request("POST", `${i.endpoint}/start`, 200, { token: i.token }, "")).cookies; }
@@ -113,6 +120,29 @@ if (serve) {
   }
   console.log(`Synthetic events and chat invitations fixture: ${base}`);
 } else try {
+  {
+    const a=await invite(null,false),ep=a.endpoint,addr=`/api/admin/guest-chats/${a.id}`,token={token:a.token};
+    const post=(path:string,status:number,data:any={},key?:string)=>request("POST",ep+path,status,data,"",key);
+    assert.deepEqual((await post("/return",200,token)).data,{state:"start",personalNoticeVersion:1});
+    await post("/start",409,token);const started=await post("/start",200,{...token,pageProtocol:1});
+    const k=started.data.pageKey;assert.match(k,/^[0-9a-f]{64}$/);assert.equal(started.cookies,"");
+    assert.deepEqual((await post("/return",200,token)).data,{state:"guest-ended"});
+    await post("/start",403,{...token,pageProtocol:1});await post("/resume",403);
+    assert.deepEqual((await post("/resume",200,{},k)).data,{ok:true,personalNoticeVersion:1});
+    const spoof=`maha_guest_${a.id.replace(/-/g,"")}=${k}`;await request("GET",ep,403,undefined,spoof);
+    await request("GET",ep,200,undefined,"",k);await post("/message",200,{body:"One-page question",requestId:crypto.randomUUID()},k);
+    const file=new FormData();file.append("file",new Blob(["Synthetic note"],{type:"text/plain"}),"note.txt");
+    const f=(await post("/upload",200,file,k)).data;await post("/message",200,{body:"note",requestId:crypto.randomUUID(),attachmentUrl:f.url},k);
+    await request("GET",f.url,403,undefined,spoof);await request("GET",f.url,200,undefined,"",k);
+    for(const denied of ["/restore","/restore/check","/device-code","/notifications/enable"])await post(denied,403,token,k);
+    await request("POST",addr+"/approve-restore",409,{verifiedOriginalContact:true,code:"AAAA-BBBB-CCCC"});
+    const other=await invite(null,false);await request("POST",other.endpoint+"/start",200,{token:other.token,pageProtocol:1},"");await request("GET",other.endpoint,403,undefined,"",k);
+    await post("/end-page",200,{},k);await post("/message",403,{body:"stale",requestId:crypto.randomUUID()},k);await request("GET",f.url,403,undefined,"",k);await post("/verify",403,{},k);
+    await request("POST",addr+"/shared-notice",409,{enabled:true});await request("POST",addr+"/link-sharing",200,{enabled:true,confirmExposure:true});
+    assert.deepEqual((await post("/return",200,token)).data,{state:"shared"});await request("POST",addr+"/shared-notice",401,{enabled:true},"");await request("POST",addr+"/shared-notice",403,{enabled:true},"sid=feature-2");
+    await request("POST",addr+"/shared-notice",200,{enabled:true});assert.deepEqual((await post("/return",200,token)).data,{state:"shared",sharedNotice:true});
+    await request("POST",addr+"/link-sharing",200,{enabled:false,confirmExposure:false});assert.deepEqual((await post("/return",200,token)).data,{state:"guest-ended"});
+  }
   // Explicit sharing on one previously opened synthetic invitation only.
   {
     const a=await invite(),b=await invite(),ep=a.endpoint,ctrl=`/api/admin/guest-chats/${a.id}`;
@@ -290,10 +320,14 @@ if (serve) {
   }
   // Additive upgrade preserves a real old-format row and old column reads.
   const oldDb = new Database(":memory:");
+  oldDb.exec("CREATE TABLE guest_chat_invites (id TEXT PRIMARY KEY, shared_link_key TEXT); INSERT INTO guest_chat_invites VALUES ('old-private',NULL),('old-shared','synthetic-key');");
   oldDb.exec("CREATE TABLE case_discussions (id INTEGER PRIMARY KEY, topic TEXT NOT NULL, presenter_name TEXT, scheduled_at INTEGER NOT NULL, zoom_link TEXT NOT NULL, notes TEXT, notified_at INTEGER, created_at INTEGER NOT NULL)");
   oldDb.prepare("INSERT INTO case_discussions (id, topic, scheduled_at, zoom_link, created_at) VALUES (1, 'Existing event', 1, 'https://example.com', 1)").run();
   const { autoMigrate } = await import("../server/autoMigrate");
   autoMigrate(oldDb);
+  assert.deepEqual(oldDb.prepare("SELECT id,shared_link_key,personal_notice_version,shared_notice_at,shared_notice_by FROM guest_chat_invites ORDER BY id").all(),[
+    {id:"old-private",shared_link_key:null,personal_notice_version:null,shared_notice_at:null,shared_notice_by:null},
+    {id:"old-shared",shared_link_key:"synthetic-key",personal_notice_version:null,shared_notice_at:null,shared_notice_by:null}]);
   assert.equal((oldDb.prepare("SELECT count(*) AS n FROM case_discussions").get() as any).n, 1);
   assert.equal((oldDb.prepare("SELECT topic, registration_mode, ends_at FROM case_discussions").get() as any).registration_mode, "app");
   oldDb.close();

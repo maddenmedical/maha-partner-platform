@@ -3,18 +3,22 @@ import { flushSync } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { navigate } from "wouter/use-hash-location";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import {holdGuestPage,releaseGuestPage} from "@/lib/guestPageKey";
 import { useAuth } from "@/context/AuthContext";
 import { setPendingThreadId, markInvitationSaved, carryInvitationDraft } from "@/lib/chatNav";
 import { InvitationInstall } from "@/components/chat/InvitationInstall";
 import {GuestAlerts} from "@/components/chat/GuestAlerts";
 import {AttachmentNote,ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
-import {UserRoundPlus} from "lucide-react";
+import {TriangleAlert,UserRoundPlus} from "lucide-react";
 import {rememberGuest,forgetGuest,recentGuests} from "@/lib/guestDevice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { InvitationConversation, InvitationFilters, useInvitationFilters } from "@/components/chat/InvitationConversation";
 
+// One explicit Start+Register action, only across the normal in-page route
+// transition; never persist the invitation token or impersonate a member.
+let registrationAfterStart:string|null=null;
 export default function ContinueChat({ params }: { params: { id: string; token?: string } }) {
   const { user, bootstrapping, loginWithUser } = useAuth();
   const filters=useInvitationFilters(params.id);
@@ -28,10 +32,12 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
   const [moveCode,setMoveCode]=useState(""),[copied,setCopied]=useState(false);
   const [dismissed,setDismissed]=useState<{count:number;at:number}|null>(null),[clock,tick]=useState(Date.now);
   const [remember,setRemember]=useState(true);
-  const [arrival,setArrival]=useState<"checking"|"start"|"restore"|"sign-in"|"sign-out"|"unavailable">(params.token?"checking":"start");
+  const [arrival,setArrival]=useState<"checking"|"start"|"restore"|"sign-in"|"sign-out"|"unavailable"|"guest-ended">(params.token?"checking":"start");
   const [matchCode,setMatchCode]=useState(""),[until,setUntil]=useState(0);
   const [toolsOpen,setToolsOpen]=useState(false);
   const [shared,setShared]=useState(false);
+  const [noticeV1,setNoticeV1]=useState(false);
+  const [sharedNotice,setSharedNotice]=useState(false);
   useChatViewport(started&&!closed);
   const attempted = useRef(false);
   const emailInput = useRef<HTMLInputElement>(null);
@@ -43,7 +49,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
     if (error) guidancePanel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [error]);
   const endpoint = `/api/guest-chat/${params.id}`;
-  const chat = useQuery<{ topic: string; notifications:boolean; messages: { id: number; body: string; senderName: string; senderRole: string }[] }>({
+  const chat = useQuery<{ topic: string; notifications:boolean; sharedNotice?:boolean; messages: { id: number; body: string; senderName: string; senderRole: string }[] }>({
     queryKey: [endpoint], enabled: started && !closed, refetchInterval: 4000, retry: false,
   });
   const outgoing=chat.data?.messages.filter(m=>m.senderRole==="guest").length||0;
@@ -64,6 +70,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
     if (busy) return;
     setBusy(true); setError(""); setNextStep(undefined);
     try { await fn(); } catch (err) {
+      if((err as {nextStep?:string}).nextStep==="guest-ended"){setArrival("guest-ended");setError("");return;}
       setError(err instanceof Error ? err.message : "Please try again.");
       setNextStep((err as { nextStep?: string })?.nextStep);
     }
@@ -90,11 +97,11 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
       {nextStep && <Button variant="outline" onClick={returnToConversation}>Continue chatting</Button>}
     </div>
   </div>;
-  async function begin() {
+  async function begin(register=false) {
     await action(async () => {
-      const response = await apiRequest("POST", `${endpoint}/start`, { token: params.token });
+      const response = await apiRequest("POST", `${endpoint}/start`, { token: params.token,...(noticeV1?{pageProtocol:1}:{}) });
       const result = await response.json();
-      if (result.threadId) await openMemberChat(result.threadId); else {if(remember)rememberGuest(params.id);navigate(`/guest-chat/${params.id}`,{replace:true});}
+      if (result.threadId) await openMemberChat(result.threadId); else {registrationAfterStart=register?params.id:null;if(result.pageKey)holdGuestPage(params.id,result.pageKey);else if(remember)rememberGuest(params.id);navigate(`/guest-chat/${params.id}`,{replace:true});}
     });
   }
   useEffect(() => {
@@ -103,18 +110,23 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
       void action(async()=>{
         try{
           const r=await apiRequest("POST",`${endpoint}/return`,{token:params.token});const result=await r.json();
-          if(result.state==="shared"){queryClient.removeQueries({queryKey:[endpoint],exact:true});setShared(true);setStarted(true);return;}
+          if(result.state==="shared"){queryClient.removeQueries({queryKey:[endpoint],exact:true});setSharedNotice(result.sharedNotice===true);setShared(true);setStarted(true);return;}
           if(result.state==="member"){forgetGuest(params.id);setPendingThreadId(result.threadId);navigate("/chat",{replace:true});return;}
           if(result.state==="guest"){navigate(`/guest-chat/${params.id}`,{replace:true});return;}
           if(result.state==="restore"&&result.code){setMatchCode(result.code);setUntil(result.until);}
+          if(result.state==="start")setNoticeV1(result.personalNoticeVersion===1);
           setArrival(result.state);
         }catch(e){setArrival("unavailable");throw e;}
       });
     }else if (!bootstrapping && !params.token && !attempted.current) {
       attempted.current=true;
-      void action(async()=>{const r=await apiRequest("POST",`${endpoint}/resume`,{});const {threadId}=await r.json();if(threadId&&user){forgetGuest(params.id);setPendingThreadId(threadId);navigate("/chat",{replace:true});return;}if(recentGuests().some(g=>g.id===params.id))rememberGuest(params.id);setStarted(true);});
+      void action(async()=>{const r=await apiRequest("POST",`${endpoint}/resume`,{});const {threadId,personalNoticeVersion}=await r.json();if(threadId&&user){forgetGuest(params.id);setPendingThreadId(threadId);navigate("/chat",{replace:true});return;}setNoticeV1(personalNoticeVersion===1);if(recentGuests().some(g=>g.id===params.id))rememberGuest(params.id);setStarted(true);});
     }
   }, [bootstrapping, user?.id]);
+  useEffect(()=>{
+    if(started&&registrationAfterStart===params.id){registrationAfterStart=null;if(noticeV1&&!shared&&!user){setToolsOpen(true);setKeep(true);}}
+  },[started,params.id,noticeV1,shared,user]);
+  useEffect(()=>{if(started&&noticeV1&&!shared&&!params.token)return ()=>{releaseGuestPage(params.id);queryClient.removeQueries({queryKey:[endpoint],exact:true});};},[started,noticeV1,shared,params.id,params.token,endpoint]);
   async function requestRestore(){
     const r=await apiRequest("POST",`${endpoint}/restore`,{token:params.token});const result=await r.json();
     setMatchCode(result.code);setUntil(result.until);
@@ -134,10 +146,23 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
     const timer=setInterval(poll,10000);return()=>{disposed=true;clearInterval(timer);};
   },[matchCode,started,until]);
   const active=started&&!closed&&!chat.isError;
+  const first=!started&&!!params.token&&arrival==="start"&&!bootstrapping;
+  const newPersonal=noticeV1&&!shared&&!user&&(first||active);
   return <main className={active?"guest-chat-frame bg-background text-foreground":"min-h-dvh bg-background text-foreground px-4 py-6"}>
     <div className={active?"mx-auto flex h-full max-w-3xl min-w-0 flex-col overflow-hidden bg-card sm:border-x":"mx-auto flex max-w-2xl min-w-0 flex-col gap-4"}>
+      {(newPersonal||active&&shared&&(chat.data?.sharedNotice??sharedNotice))&&<aside aria-labelledby="invite-access-title" className={`invite-access-notice${first?" rounded-lg":""}`}>
+        <div className="invite-access-copy"><TriangleAlert aria-hidden="true"/><div>
+          {shared&&<p className="mb-2 font-bold">Your link stays open. The warning below applies to new personal invitations.</p>}
+          <h2 id="invite-access-title">Attention: closing this chat will end your guest access.</h2>
+          <p>Register with MAHA Portal before you close this chat. If you leave without registering, you accept losing access to this conversation.</p>
+        </div></div>
+        {newPersonal&&<div className="chat-primary-actions">
+          <Button size="sm" className="chat-register-action" disabled={busy||bootstrapping} onClick={()=>{if(first)void begin(true);else{setToolsOpen(true);setKeep(true);}}}><UserRoundPlus aria-hidden="true"/>Register &amp; keep this chat</Button>
+          {active&&<InvitationInstall/>}
+        </div>}
+      </aside>}
       {!active&&<header className="border-b pb-4"><p className="text-xl font-semibold tracking-widest text-primary">MAHA</p><h1 className="mt-2 text-xl font-semibold">Continue your conversation</h1></header>}
-      {closed ? <div className="rounded-lg border p-5 space-y-3">
+      {arrival==="guest-ended"?<section className="rounded-lg border p-5 space-y-3"><h2 className="font-semibold">Your guest access has ended</h2><p>This chat can no longer be opened as a guest. If you registered, sign in to MAHA Portal to continue.</p><a className="underline" href="#/login">Sign in to MAHA Portal</a></section>:closed ? <div className="rounded-lg border p-5 space-y-3">
         <h2 className="font-semibold">Your conversation is safely retained by MAHA</h2>
         <p className="text-sm text-muted-foreground">You have not created an account. You can ask MAHA to connect this conversation to your account if you register later.</p>
       </div> : (!started&&!params.token || started&&chat.isError) ? <div className="rounded-lg border bg-card p-5 space-y-3">
@@ -161,22 +186,22 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
         <p>Talk to the MAHA team here. No password or account is needed to start.</p>
         <p className="text-sm text-muted-foreground">This invitation opens one private chat on this device. Register to save the conversation to your partner account. Please do not send identifiable patient information before verification.</p>
         <p className="text-xs text-muted-foreground">MAHA retains the conversation even if you do not register. Read the <a className="underline" href="#/legal/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/>Reopen this chat on my device. Uncheck on a shared phone.</label>
-        <Button onClick={begin} disabled={busy || bootstrapping} className="w-full">{busy ? "Opening…" : user?.role==="partner"?"Open in my signed-in partner account":"Start chat"}</Button>
+        {!noticeV1&&<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/>Reopen this chat on my device. Uncheck on a shared phone.</label>}
+        <Button onClick={()=>void begin()} disabled={busy || bootstrapping} className="w-full">{busy ? "Opening…" : user?.role==="partner"?"Open in my signed-in partner account":"Start chat"}</Button>
       </div> : <>
         <header className="flex items-center gap-2 border-b px-3 py-1.5 shrink-0">
           <div className="mr-auto min-w-0"><p className="text-[10px] font-semibold tracking-widest text-primary">MAHA</p><h1 className="truncate text-base font-semibold">{chat.data?.topic || "Chat with MAHA"}</h1></div>
           {shared?<ChatTools label="Chat options"><InvitationFilters filters={filters}/><AttachmentNote/></ChatTools>:<ChatTools label="Chat options" open={toolsOpen} onOpenChange={v=>{setToolsOpen(v);if(!v)setKeep(false);}}>
         {!keep ? <div className="space-y-3">
           <p className="text-sm">{chat.data?.messages.some(m=>m.senderRole==="guest") ? "Your message is with MAHA. Keep this chat so you can return to the reply after leaving WhatsApp." : "You can chat first, or save this conversation to your partner account now."}</p>
-          <GuestAlerts endpoint={endpoint} enabled={!!chat.data?.notifications}/>
+          {!newPersonal&&<GuestAlerts endpoint={endpoint} enabled={!!chat.data?.notifications}/>}
           <InvitationFilters filters={filters}/><AttachmentNote/>
-          <p className="text-xs text-muted-foreground">Already a partner? Use the same email. MAHA does not time out an opened guest chat. If you clear browser data, uninstall the app or lose this device, you may need MAHA’s help to return.</p>
+          {newPersonal?<p className="text-xs text-muted-foreground">Keep this page open until you finish registration. Refreshing or closing it ends guest access. Installation alone does not save this chat.</p>:<><p className="text-xs text-muted-foreground">Already a partner? Use the same email. MAHA does not time out an opened guest chat. If you clear browser data, uninstall the app or lose this device, you may need MAHA’s help to return.</p>
           <details className="text-sm"><summary className="cursor-pointer underline">Move chat to the installed app</summary>
             <p className="my-2">Only needed if the app opens without your chat. On your own phone, get a code here, then choose “Move my guest chat to this app” on the app’s sign-in screen. Moving ends guest access in this browser; send any draft first. Never share the code.</p>
             <Button size="sm" variant="outline" disabled={busy} onClick={()=>action(async()=>{const r=await apiRequest("POST",`${endpoint}/device-code`,{});setMoveCode((await r.json()).code);setCopied(false);})}>{moveCode?"Replace device code":"Get one-time device code"}</Button>
             {moveCode&&<div className="mt-2 space-y-1"><p>Valid for five minutes: <code>{moveCode}</code></p><Button size="sm" variant="outline" onClick={async()=>{try{await navigator.clipboard.writeText(moveCode);setCopied(true);}catch{setError("Select and copy the displayed code.");}}}>{copied?"Copied":"Copy code"}</Button></div>}
-          </details>
+          </details></>}
           <a className="text-xs underline" href="#/login" target="_blank" rel="noopener noreferrer">Use a different account</a>
           {recentGuests().some(g=>g.id===params.id)&&<Button size="sm" variant="ghost" onClick={()=>{forgetGuest(params.id);setRemember(false);}}>Remove from app launch on this device</Button>}
         </div> : <section ref={savePanel} className="rounded-lg border bg-card p-4 space-y-3">
@@ -216,12 +241,12 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
           })}>End guest access without registering</Button>
         </details>
         </ChatTools>}</header>
-        {shared?<p className="shrink-0 border-b px-3 py-1.5 text-xs">Anyone with this link can read and reply. You are replying as a shared link guest.</p>:<div className="chat-primary-actions">
+        {shared?<p className="shrink-0 border-b px-3 py-1.5 text-xs">Anyone with this link can read and reply. You are replying as a shared link guest.</p>:!newPersonal&&<div className="chat-primary-actions">
           {(!user||user.role==="partner")&&<Button size="sm" className="chat-register-action" onClick={()=>{setToolsOpen(true);setKeep(true);}}><UserRoundPlus aria-hidden="true"/>{user?"Keep in my account":"Register & keep this chat"}</Button>}
           <InvitationInstall guest/>
         </div>}
         {!shared&&!user&&nudge&&!keep&&<aside className="flex items-center gap-2 px-2 pt-1 shrink-0" data-testid="guest-register-nudge">
-          <span className="text-xs font-medium">Your message is with MAHA. Register to keep your replies.</span>
+          <span className="text-xs font-medium">{newPersonal?"Your message is with MAHA.":"Your message is with MAHA. Register to keep your replies."}</span>
           <Button size="sm" variant="ghost" onClick={()=>setDismissed({at:Date.now(),count:outgoing})}>Not now</Button></aside>}
         {!keep&&guidance}
         <div ref={conversation} className="min-h-0 flex flex-1"><InvitationConversation key={params.id} inviteId={params.id} shared={shared} filters={filters}/></div>

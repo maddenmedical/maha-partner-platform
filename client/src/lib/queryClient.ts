@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import {pageHeaders} from "./guestPageKey";
 
 export const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
 
@@ -22,7 +23,7 @@ async function throwIfResNotOk(res: Response) {
       try {
         const data = JSON.parse(raw);
         message = data.message || message;
-        if (["sign-in", "review-in-chat", "check-email"].includes(data.nextStep)) nextStep = data.nextStep;
+        if (["sign-in", "review-in-chat", "check-email","guest-ended"].includes(data.nextStep)) nextStep = data.nextStep;
       } catch {
         // Not JSON. This happens when the request never reached our server at
         // all -- e.g. Render/Cloudflare's own edge returning a generic HTML
@@ -44,7 +45,7 @@ export async function apiRequest(
   data?: unknown | undefined,
   isFormData = false,
 ): Promise<Response> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = pageHeaders(url);
   if (data && !isFormData) headers["Content-Type"] = "application/json";
 
   const res = await fetch(`${API_BASE}${url}`, {
@@ -64,7 +65,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, { credentials: "include" });
+    const path=queryKey.join("/");
+    const res = await fetch(`${API_BASE}${path}`, { credentials: "include",headers:pageHeaders(path) });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/queryClient";
 import { openAuthedFile, downloadAuthedFile } from "@/lib/fileAccess";
+import {pageHeaders} from "@/lib/guestPageKey";
 import { Star, FileText, SmilePlus, Download, ListTodo, ArrowUpRightFromSquare, Trash2, Pencil, Check, X, MoreVertical, Reply, CornerUpLeft, Loader2 } from "lucide-react";
 import { useSwipeToReply } from "./useSwipeToReply";
 import { EmojiPicker, QUICK_EMOJIS } from "./EmojiPicker";
@@ -132,7 +133,17 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
   const [editValue, setEditValue] = useState(m.body || "");
   const [saving, setSaving] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
-  const attachmentSrc = m.attachmentUrl ? `${API_BASE}${m.attachmentUrl}` : null;
+  const raw=m.attachmentUrl||"",inlinePageFile=!!pageHeaders(raw)["X-MAHA-Page-Key"]&&["image","audio","video"].includes(m.attachmentType||"");
+  const [protectedBlob,setProtectedBlob]=useState<{raw:string;url:string}|null>(null);
+  useEffect(()=>{
+    if(!inlinePageFile)return;
+    let disposed=false,url="";const abort=new AbortController();
+    void fetch(`${API_BASE}${raw}`,{headers:pageHeaders(raw),credentials:"same-origin",cache:"no-store",signal:abort.signal}).then(async r=>{
+      if(!r.ok)return;const blob=await r.blob();if(!disposed){url=URL.createObjectURL(blob);setProtectedBlob({raw,url});}
+    }).catch(()=>{});
+    return()=>{disposed=true;abort.abort();if(url)URL.revokeObjectURL(url);};
+  },[raw,inlinePageFile]);
+  const attachmentSrc = raw ? inlinePageFile?(protectedBlob?.raw===raw?protectedBlob.url:null):`${API_BASE}${raw}` : null;
   const isDeleted = !!m.deletedAt;
 
   // Long-press-to-open-actions (touch only -- desktop keeps the existing

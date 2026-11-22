@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {once} from "node:events";
 const base="http://127.0.0.1:5097";
-const fixture=spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","script/test-events-and-invites.ts","--serve"],{env:{...process.env,QA_PORT:"5097"},detached:true,stdio:["ignore","pipe","ignore"]});
+const fixture=spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","script/test-events-and-invites.ts","--serve","--legacy-invitations"],{env:{...process.env,QA_PORT:"5097"},detached:true,stdio:["ignore","pipe","ignore"]});
 let browser;
 try{
   while(!String((await once(fixture.stdout,"data"))[0]).includes("Synthetic events and chat invitations fixture")){}

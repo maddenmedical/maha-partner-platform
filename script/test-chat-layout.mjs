@@ -6,7 +6,7 @@ import {randomUUID} from "node:crypto";
 import {mkdir} from "node:fs/promises";
 import assert from "node:assert/strict";
 const base="http://127.0.0.1:5096",proof=process.env.QA_SCREENSHOT_DIR;
-const fixture=spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","script/test-events-and-invites.ts","--serve"],{env:{...process.env,QA_PORT:"5096"},detached:true,stdio:["ignore","pipe","ignore"]});
+const fixture=spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","script/test-events-and-invites.ts","--serve","--legacy-invitations"],{env:{...process.env,QA_PORT:"5096"},detached:true,stdio:["ignore","pipe","ignore"]});
 let browser;
 const examples=["Which materials should I bring to the workshop?","We’ll send the reading list here.","Thank you. I’ll check this chat for updates."];
 try{

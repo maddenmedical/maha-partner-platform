@@ -43,7 +43,7 @@ function sharedBrowser(req:any,i:Invite){
 function openShared(req:any,res:Response,i:Invite){
   const n=sharedBrowser(req,i)||secret();
   res.append("Set-Cookie",serialize(sharedCookie(i.id),`${n}.${signShare(i,n)}`,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:`/api/guest-chat/${i.id}`,maxAge:DEVICE_COOKIE_LIFETIME/1000}));
-  res.set("Cache-Control","private, no-store").json({state:"shared"});
+  res.set("Cache-Control","private, no-store").json({state:"shared",...(i.sharedNoticeAt?{sharedNotice:true}:{})});
 }
 function sharedOperation(method:string,path:string){
   return method==="GET"&&(path==="/"||/^\/files\/[a-f0-9-]+$/.test(path))||
@@ -121,10 +121,10 @@ function original(i:Invite,body:unknown){
   if(hash(token)!==i.tokenHash||i.revokedAt||i.declinedAt)fail(403,"This invitation is not available. Contact MAHA in your original conversation.");
 }
 function hasDevice(req:any,i:Invite){
-  const key=parse(req.headers.cookie||"")[cookieName(i.id)];
+  const key=i.personalNoticeVersion===1?req.get("x-maha-page-key"):parse(req.headers.cookie||"")[cookieName(i.id)];
   return !!(!i.sharedLinkKey&&i.openedAt&&!i.revokedAt&&!i.declinedAt&&!i.linkedThreadId&&key&&hash(key)===i.sessionHash);
 }
-function repairEligible(i:Invite){editable(i);if(i.sharedLinkKey||!i.openedAt)fail(409,"Private browser restoration is not available for this invitation.");}
+function repairEligible(i:Invite){editable(i);if(i.personalNoticeVersion===1||i.sharedLinkKey||!i.openedAt)fail(409,"Private browser restoration is not available for this invitation.");}
 function onlyApp(req:any){
   if(!req.is("application/json")||req.get("sec-fetch-site")==="cross-site")fail(415,"Use the personal link in MAHA.");
 }
@@ -138,6 +138,10 @@ function checkGuest(req: any): Invite {
     const n=sharedBrowser(req,invite);if(!n||req.sharedActor!==`shared:${hash(n)}`)fail(403,"Shared access has ended.");
     return invite;
   }
+  if(invite.personalNoticeVersion===1){
+    if(!hasDevice(req,invite))fail(403,"This guest session has ended. If you registered, sign in to your MAHA Portal account.");
+    return invite;
+  }
   const token = parse(req.headers.cookie || "")[cookieName(invite.id)];
   if (!activeGuest(invite)||!token||hash(token)!==invite.sessionHash) {
     fail(403, "Guest access has ended. Please contact MAHA to recover this conversation.");
@@ -146,7 +150,7 @@ function checkGuest(req: any): Invite {
   return invite;
 }
 function touchGuest(req:any,res:Response,invite:Invite) {
-  if(req.sharedActor)return;
+  if(req.sharedActor||invite.personalNoticeVersion===1)return;
   if(invite.guestDurableSince==null){
     invite.guestDurableSince=Date.now();
     db.update(invites).set({guestDurableSince:invite.guestDurableSince,sessionExpiresAt:null}).where(eq(invites.id,invite.id)).run();
@@ -276,6 +280,8 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     // switch identities in an open shared composer when sharing is turned off.
     if(parse(req.headers.cookie||"")[sharedCookie(i.id)]&&req.path!=="/return")
       return res.status(403).set("Cache-Control","no-store").json({message:"Shared access has ended. Reopen the original invitation."});
+    if(i.personalNoticeVersion===1&&(/^\/(?:notifications\/|restore(?:\/|$)|device-code(?:\/|$))/i).test(req.path))
+      return res.status(403).set("Cache-Control","no-store").json({message:"This personal guest chat is available only in the page where it started."});
     }catch(e){return res.status(404).set("Cache-Control","no-store").json({message:"Invitation not found."});}
     if(req.path==="/start"||req.path==="/keep"||req.path==="/resume"||req.path==="/return")return next();
     try{if(await optionalUser(req))return res.status(409).set("Cache-Control","no-store").json({message:"Use your signed-in account, or sign out to return to a guest chat."});next();}catch(e){next(e);}
@@ -367,8 +373,9 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
       const conversation = rows(id); const last = conversation.at(-1);
       return { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt,
         linkSharing:sharing(i),
+        ...(i.personalNoticeVersion===1?{pageOnly:true}:{}),...(sharing(i)&&i.sharedNoticeAt?{sharedNotice:true}:{}),
         canRemind: activeGuest(i) && last?.senderRole==="admin" && !last.deletedAt && conversation.some(m=>m.senderRole==="guest"),
-        guestAccessEnded: !!openedAt && !activeGuest(i) && !sharing(i),
+        guestAccessEnded: !!openedAt && !activeGuest(i) && !sharing(i) && !(i.personalNoticeVersion===1&&i.sessionHash),
         unread: !!last && last.senderRole === "guest" && last.createdAt > (adminReadAt ?? 0), messageCount: conversation.length };
     }));
   }));
@@ -378,11 +385,17 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     const i=find(req.params.id);if(enabled){editable(i);if(!i.openedAt||!confirmExposure)fail(409,"Confirm that anyone with this existing link may read all prior messages and files and reply.");}
     if(!!i.sharedLinkKey!==enabled)db.transaction(()=>{
       const now=Date.now();
-      db.update(invites).set({sharedLinkKey:enabled?secret():null,sharedLinkChangedAt:now,sharedLinkChangedBy:req.user.id,
+      db.update(invites).set({sharedLinkKey:enabled?secret():null,sharedLinkChangedAt:now,sharedLinkChangedBy:req.user.id,sharedNoticeAt:null,sharedNoticeBy:null,...(i.personalNoticeVersion===1?{sessionHash:null}:{}),
         deviceMoveHash:null,deviceMoveUntil:null,verificationHash:null,...clearGuestPush}).where(eq(invites.id,i.id)).run();
       db.update(repairs).set({until:now}).where(eq(repairs.inviteId,i.id)).run();
     });
     res.json({linkSharing:sharing(find(i.id))});
+  }));
+  app.post("/api/admin/guest-chats/:id/shared-notice",...admin,safe(async(req,res)=>{
+    onlyApp(req);const {enabled}=z.object({enabled:z.boolean()}).strict().parse(req.body),i=find(req.params.id);
+    if(!sharing(i))fail(409,"This notice is available only for an open shared link.");
+    if(!!i.sharedNoticeAt!==enabled)db.update(invites).set({sharedNoticeAt:enabled?Date.now():null,sharedNoticeBy:req.user.id}).where(eq(invites.id,i.id)).run();
+    res.json({sharedNotice:!!find(i.id).sharedNoticeAt,linkSharing:true});
   }));
   app.post("/api/admin/guest-chats", ...admin, safe(async (req, res) => {
     const input = z.object({ label: z.string().trim().min(1).max(120), topic: z.string().trim().min(1).max(160),
@@ -391,7 +404,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     const id = crypto.randomUUID(), token = secret(), now = Date.now();
     db.transaction(() => {
       db.insert(invites).values({ id, tokenHash: hash(token), createdBy: req.user.id, label: input.label,
-        topic: input.topic, intendedUserId: input.intendedUserId, createdAt: now, expiresAt: now + 7 * 24 * HOUR }).run();
+        topic: input.topic, intendedUserId: input.intendedUserId, personalNoticeVersion:1, createdAt: now, expiresAt: now + 7 * 24 * HOUR }).run();
       db.insert(messages).values({ inviteId: id, senderId: req.user.id, senderName: req.user.name,
         senderRole: "admin", body: input.message, requestId: crypto.randomUUID(), createdAt: now }).run();
     });
@@ -435,11 +448,15 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     if (invite.linkedThreadId) fail(403, "This conversation has been saved to a partner account. Sign in to that account to continue.");
     if(user)fail(403,"This invitation is not for this signed-in account. Use the intended partner account or a separate browser.");
     if (alreadyHere) {touchGuest(req,res,invite);return res.json({ok:true});}
-    if (invite.openedAt) fail(403, "This invitation has already been opened on another browser. Ask MAHA for help recovering the conversation.");
+    if (invite.openedAt) fail(403, invite.personalNoticeVersion===1?"Guest access cannot be restarted. If you registered, sign in to MAHA Portal.":"This invitation has already been opened on another browser. Ask MAHA for help recovering the conversation.");
     const session = secret(), now = Date.now();
-    const redeemed = db.update(invites).set({ openedAt: now, sessionHash: hash(session), sessionExpiresAt:null,guestDurableSince:now })
+    // A v1 page key is issued exactly once. It is NEVER in a cookie or URL.
+    // Refuse obsolete clients before consuming their invitation.
+    if(invite.personalNoticeVersion===1&&req.body.pageProtocol!==1)fail(409,"Update or refresh this page before starting your chat.");
+    const redeemed = db.update(invites).set({ openedAt: now, sessionHash: hash(session), sessionExpiresAt:null,guestDurableSince:invite.personalNoticeVersion===1?null:now })
       .where(and(eq(invites.id, invite.id), isNull(invites.openedAt), isNull(invites.linkedThreadId), isNull(invites.revokedAt))).run();
     if (!redeemed.changes) fail(409, "This invitation was already opened. Please use the browser where you started.");
+    if(invite.personalNoticeVersion===1)return res.json({ok:true,pageKey:session});
     cookie(res, invite.id, session, now + DEVICE_COOKIE_LIFETIME);
     res.json({ ok: true });
   }));
@@ -455,11 +472,12 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
       if(member?.role==="partner"&&i.linkedUserId===member.id)return res.json({state:"member",threadId:i.linkedThreadId});
       return res.json({state:"sign-in"});
     }
-    if(!i.openedAt)return res.json({state:"start"});
+    if(!i.openedAt)return res.json({state:"start",...(!member&&i.personalNoticeVersion===1?{personalNoticeVersion:1}:{})});
     if(member)return res.json({state:"sign-out"});
     // Require BOTH original secret and matching current device cookie to
     // rescue a legacy deadline. An old rotated cookie cannot pass this test.
     if(hasDevice(req,i)){touchGuest(req,res,i);return res.json({state:"guest"});}
+    if(i.personalNoticeVersion===1)return res.json({state:"guest-ended"});
     const proof=parse(req.headers.cookie||"")[repairName(i.id)];
     if(proof){const r=db.select().from(repairs).where(eq(repairs.proofHash,hash(proof))).get();
       if(r&&r.inviteId===i.id&&r.until>Date.now()&&((!r.consumedAt&&r.generation===generation(i))||(r.consumedAt&&i.sessionHash===hash(repairSession(proof)))))
@@ -512,8 +530,13 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     const member=await optionalUser(req);
     if(member){const prior=find(String(req.params.id));if(prior.linkedThreadId&&prior.linkedUserId===member.id&&member.role==="partner")return res.json({threadId:prior.linkedThreadId});fail(409,"Use your own account, or sign out before opening a guest conversation.");}
     const i=find(String(req.params.id));
-    if(!hasDevice(req,i))fail(403,"Use your original WhatsApp invitation to restore this chat.");
-    touchGuest(req,res,i);res.set("Cache-Control","no-store").json({ok:true});
+    if(!hasDevice(req,i)){if(i.personalNoticeVersion===1) return res.status(403).json({message:"This guest session has ended.",nextStep:"guest-ended"});fail(403,"Use your original WhatsApp invitation to restore this chat.");}
+    touchGuest(req,res,i);res.set("Cache-Control","no-store").json({ok:true,...(i.personalNoticeVersion===1?{personalNoticeVersion:1}:{})});
+  }));
+  app.post("/api/guest-chat/:id/end-page",safe(async(req,res)=>{
+    onlyApp(req);const i=checkGuest(req);if(i.personalNoticeVersion!==1||req.sharedActor)fail(403,"Not available.");
+    db.update(invites).set({sessionHash:null,verificationHash:null}).where(and(eq(invites.id,i.id),eq(invites.sessionHash,i.sessionHash!))).run();
+    res.json({ok:true});
   }));
   app.post("/api/guest-chat/:id/device-code",safe(async(req,res)=>{
     if(!req.is("application/json"))fail(415,"Open this action in the chat.");
@@ -553,7 +576,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.get("/api/guest-chat/:id", safe(async (req, res) => {
     const invite = checkGuest(req);
-    res.set("Cache-Control","private, no-store").json({ topic: invite.topic, messages: present(invite.id, actor(req,false), false), expiresAt:req.sharedActor?null:invite.sessionExpiresAt,notifications:!req.sharedActor&&!!invite.guestPushEndpoint });
+    res.set("Cache-Control","private, no-store").json({ topic: invite.topic, messages: present(invite.id, actor(req,false), false), ...(req.sharedActor?{sharedNotice:!!invite.sharedNoticeAt}:{}),expiresAt:req.sharedActor?null:invite.sessionExpiresAt,notifications:!req.sharedActor&&!!invite.guestPushEndpoint });
   }));
   app.post("/api/guest-chat/:id/message", safe(async (req, res) => {
     const invite = checkGuest(req);

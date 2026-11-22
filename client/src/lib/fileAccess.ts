@@ -1,10 +1,11 @@
 const API_BASE = "__PORT_5001__".startsWith("__") ? "" : "__PORT_5001__";
+import {pageHeaders} from "./guestPageKey";
 
 // Files are served by an authenticated proxy that requires the session
 // cookie, so a plain <a href> can't reach them cleanly. This fetches the file
 // with the cookie included and opens it in a new tab via a blob URL.
 export async function openAuthedFile(url: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${url}`, { credentials: "include" });
+  const res = await fetch(`${API_BASE}${url}`, { credentials: "include",headers:pageHeaders(url) });
   if (!res.ok) {
     let message = "Could not open file";
     try {
@@ -34,7 +35,7 @@ export async function openAuthedFile(url: string): Promise<void> {
 // Same authenticated-fetch approach as openAuthedFile, but always forces a
 // save-as download with the given filename instead of opening a viewer tab.
 export async function downloadAuthedFile(url: string, filename: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${url}`, { credentials: "include" });
+  const res = await fetch(`${API_BASE}${url}`, { credentials: "include",headers:pageHeaders(url) });
   if (!res.ok) {
     let message = "Could not download file";
     try {
