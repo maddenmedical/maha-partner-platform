@@ -5,9 +5,9 @@ import multer from "multer";
 import path from "node:path";
 import { parse, serialize } from "cookie";
 import { z } from "zod";
-import { and, eq, desc, asc, isNull, sql } from "drizzle-orm";
+import { and, eq, desc, asc, isNull, lt, gt, sql } from "drizzle-orm";
 import { db, storage } from "./storage";
-import { guestChatInvites as invites, guestChatMessages as messages, guestChatFiles as files, guestChatMarks as marks,
+import { guestChatInvites as invites, guestChatRecoveries as repairs, guestChatMessages as messages, guestChatFiles as files, guestChatMarks as marks,
   users, chatThreads, chatMessages, chatMessageFlags, chatMessageReactions, uploadedFiles, sessions } from "@shared/schema";
 import { uploadToDrive, streamFromDriveRanged } from "./googleDrive";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
@@ -83,6 +83,30 @@ function send(req: any, invite: Invite, admin: boolean) {
 }
 const accountByEmail = (email: string) => db.select().from(users).where(sql`lower(${users.email}) = ${email.toLowerCase()}`).get();
 const cookieName = (id: string) => `maha_guest_${id.replace(/-/g, "")}`;
+const repairName=(id:string)=>`maha_repair_${id.replace(/-/g,"")}`;
+const REPAIR_WINDOW=20*60000;
+const repairCode=(proof:string,id:string)=>hash(`match:${id}:${proof}`).slice(0,12).toUpperCase();
+const generation=(i:Invite)=>hash(`device:${i.id}:${i.openedAt}:${i.sessionHash??""}`);
+const repairSession=(proof:string)=>hash(`recovered-session:${proof}`);
+function limitRepair(req:any,kind:string,max:number){
+  const now=Date.now(),key=`${kind}:${req.ip||req.socket.remoteAddress}`;
+  if(now>=repairWindow){repairWindow=now+10*60000;repairRates.clear();repairTotal=0;}
+  if(repairTotal>=2400||(repairRates.get(key)||0)>=max)fail(429,"Too many requests. Please try again in ten minutes.");
+  repairTotal++;repairRates.set(key,(repairRates.get(key)||0)+1);
+}
+const repairRates=new Map<string,number>();let repairWindow=0,repairTotal=0;
+function original(i:Invite,body:unknown){
+  const {token}=z.object({token:z.string().regex(/^[a-f0-9]{64}$/)}).parse(body);
+  if(hash(token)!==i.tokenHash||i.revokedAt||i.declinedAt)fail(403,"This invitation is not available. Contact MAHA in your original conversation.");
+}
+function hasDevice(req:any,i:Invite){
+  const key=parse(req.headers.cookie||"")[cookieName(i.id)];
+  return !!(i.openedAt&&!i.revokedAt&&!i.declinedAt&&!i.linkedThreadId&&key&&hash(key)===i.sessionHash);
+}
+function repairEligible(i:Invite){editable(i);if(!i.openedAt)fail(409,"This invitation has not been started.");}
+function onlyApp(req:any){
+  if(!req.is("application/json")||req.get("sec-fetch-site")==="cross-site")fail(415,"Use the personal link in MAHA.");
+}
 function cookie(res: Response, id: string, token: string, expires: number) {
   res.append("Set-Cookie", serialize(cookieName(id), token, { httpOnly: true, secure: process.env.NODE_ENV === "production",
     sameSite: "lax", path: `/api/guest-chat/${id}`, expires: new Date(expires) }));
@@ -212,7 +236,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   optionalUser: (req: any) => Promise<any>, setSession: (res: Response, token: string, expiresAt: number) => void) {
   const admin = [requireAuth, requireAdmin];
   app.use("/api/guest-chat/:id",async(req,res,next)=>{
-    if(req.path==="/start"||req.path==="/keep"||req.path==="/resume")return next();
+    if(req.path==="/start"||req.path==="/keep"||req.path==="/resume"||req.path==="/return")return next();
     try{if(await optionalUser(req))return res.status(409).set("Cache-Control","no-store").json({message:"Use your signed-in account, or sign out to return to a guest chat."});next();}catch(e){next(e);}
   });
   for (const isAdmin of [false, true]) {
@@ -345,9 +369,9 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     const invite = find(req.params.id);
     const { token } = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) }).parse(req.body);
     if (hash(token) !== invite.tokenHash || invite.revokedAt || invite.declinedAt) fail(403, "This invitation is no longer available. Please ask MAHA for a new link.");
-    const old = parse(req.headers.cookie || "")[cookieName(invite.id)];
-    const alreadyHere=!!old && invite.sessionHash===hash(old!) && activeGuest(invite);
-    if(invite.expiresAt<Date.now() && !alreadyHere)fail(403,"This invitation is no longer available. Please ask MAHA for a new link.");
+    const alreadyHere=hasDevice(req,invite);
+    const owner=!!(invite.linkedThreadId&&user?.role==="partner"&&invite.linkedUserId===user.id);
+    if(invite.expiresAt<Date.now() && !alreadyHere && !owner)fail(403,"This invitation is no longer available. Please use your original link to restore an opened chat.");
     if(user && invite.openedAt && invite.linkedUserId!==user.id)fail(403,"This guest chat is already on a device. Open it there and choose Register & keep this chat.");
     if (user && user.role === "partner" && user.status === "approved" && !user.archivedAt &&
       (!invite.intendedUserId || invite.intendedUserId === user.id || invite.linkedUserId === user.id)) {
@@ -364,12 +388,73 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     cookie(res, invite.id, session, now + DEVICE_COOKIE_LIFETIME);
     res.json({ ok: true });
   }));
+  // Opening an original URL never starts an unclaimed invitation. A used
+  // link is a locator, not proof of the right to read a conversation.
+  app.post("/api/guest-chat/:id/return",safe(async(req,res)=>{
+    onlyApp(req);const member=await optionalUser(req),i=find(req.params.id);original(i,req.body);
+    if(i.linkedThreadId){
+      if(member?.role==="partner"&&i.linkedUserId===member.id)return res.json({state:"member",threadId:i.linkedThreadId});
+      return res.json({state:"sign-in"});
+    }
+    if(!i.openedAt)return res.json({state:"start"});
+    if(member)return res.json({state:"sign-out"});
+    // Require BOTH original secret and matching current device cookie to
+    // rescue a legacy deadline. An old rotated cookie cannot pass this test.
+    if(hasDevice(req,i)){touchGuest(req,res,i);return res.json({state:"guest"});}
+    const proof=parse(req.headers.cookie||"")[repairName(i.id)];
+    if(proof){const r=db.select().from(repairs).where(eq(repairs.proofHash,hash(proof))).get();
+      if(r&&r.inviteId===i.id&&r.until>Date.now()&&((!r.consumedAt&&r.generation===generation(i))||(r.consumedAt&&i.sessionHash===hash(repairSession(proof)))))
+        return res.json({state:"restore",code:repairCode(proof,i.id).match(/.{4}/g)!.join("-"),until:r.until});}
+    return res.json({state:"restore"});
+  }));
+  app.post("/api/guest-chat/:id/restore",safe(async(req,res)=>{
+    onlyApp(req);const i=find(req.params.id);original(i,req.body);repairEligible(i);
+    const now=Date.now(),existing=parse(req.headers.cookie||"")[repairName(i.id)];
+    const prior=existing?db.select().from(repairs).where(eq(repairs.proofHash,hash(existing))).get():null;
+    const show=(proof:string,until:number)=>res.json({code:repairCode(proof,i.id).match(/.{4}/g)!.join("-"),until});
+    if(prior&&existing&&prior.inviteId===i.id&&prior.generation===generation(i)&&!prior.consumedAt&&prior.until>now)return show(existing,prior.until);
+    limitRepair(req,"create",12);
+    db.delete(repairs).where(and(lt(repairs.requestedAt,now-24*HOUR),isNull(repairs.approvedAt))).run();
+    db.delete(repairs).where(lt(repairs.requestedAt,now-90*24*HOUR)).run();
+    if(db.select({n:sql<number>`count(*)`}).from(repairs).where(and(eq(repairs.inviteId,i.id),gt(repairs.requestedAt,now-HOUR))).get()!.n>=12)fail(429,"Too many restore requests for this chat. Please contact MAHA in your original WhatsApp conversation.");
+    const proof=secret(),until=now+REPAIR_WINDOW,code=repairCode(proof,i.id);
+    db.insert(repairs).values({proofHash:hash(proof),codeHash:hash(`verify:${i.id}:${code}`),inviteId:i.id,generation:generation(i),requestedAt:now,until}).run();
+    res.append("Set-Cookie",serialize(repairName(i.id),proof,{path:`/api/guest-chat/${i.id}`,httpOnly:true,sameSite:"strict",secure:process.env.NODE_ENV==="production",expires:new Date(until)}));
+    return show(proof,until);
+  }));
+  app.post("/api/admin/guest-chats/:id/approve-restore",...admin,safe(async(req,res)=>{
+    onlyApp(req);limitRepair(req,"approve",24);const i=find(req.params.id);repairEligible(i);
+    const {code}=z.object({verifiedOriginalContact:z.literal(true),code:z.string().max(24)}).parse(req.body);
+    const normalized=code.replace(/[\s-]/g,"").toUpperCase();
+    const row=db.select().from(repairs).where(and(eq(repairs.inviteId,i.id),eq(repairs.codeHash,hash(`verify:${i.id}:${normalized}`)),eq(repairs.generation,generation(i)),gt(repairs.until,Date.now()),isNull(repairs.consumedAt))).get();
+    if(!row)fail(409,"No matching current request for this conversation. Recheck the code with the original recipient.");
+    if(!row!.approvedAt)db.update(repairs).set({approvedAt:Date.now(),approvedBy:req.user.id}).where(eq(repairs.proofHash,row!.proofHash)).run();
+    res.json({ok:true});
+  }));
+  app.post("/api/guest-chat/:id/restore/check",safe(async(req,res)=>{
+    onlyApp(req);const i=find(req.params.id);original(i,req.body);repairEligible(i);
+    const proof=parse(req.headers.cookie||"")[repairName(i.id)],now=Date.now();
+    if(!proof)fail(403,"Start a restore request in this browser.");
+    const row=db.select().from(repairs).where(eq(repairs.proofHash,hash(proof!))).get();
+    if(!row||row.inviteId!==i.id||row.until<=now)fail(409,"This restore request has ended. Request a new code in this browser.");
+    const session=repairSession(proof!);
+    if(row!.consumedAt&&i.sessionHash===hash(session)){cookie(res,i.id,session,now+DEVICE_COOKIE_LIFETIME);return res.json({state:"guest"});}
+    if(row!.consumedAt||row!.generation!==generation(i))fail(409,"Chat access changed. This restore request is no longer valid.");
+    if(!row!.approvedAt)return res.json({state:"pending"});
+    db.transaction(()=>{
+      db.update(invites).set({sessionHash:hash(session),guestDurableSince:now,sessionExpiresAt:null,deviceMoveHash:null,deviceMoveUntil:null,verificationHash:null,...clearGuestPush}).where(eq(invites.id,i.id)).run();
+      db.update(repairs).set({consumedAt:now}).where(eq(repairs.proofHash,row!.proofHash)).run();
+    });
+    cookie(res,i.id,session,now+DEVICE_COOKIE_LIFETIME);res.json({state:"guest"});
+  }));
   // Read-only locators never authenticate. Only the original HttpOnly guest
   // cookie or a freshly issued single-use transfer can open this conversation.
   app.post("/api/guest-chat/:id/resume",safe(async(req,res)=>{
     const member=await optionalUser(req);
     if(member){const prior=find(String(req.params.id));if(prior.linkedThreadId&&prior.linkedUserId===member.id&&member.role==="partner")return res.json({threadId:prior.linkedThreadId});fail(409,"Use your own account, or sign out before opening a guest conversation.");}
-    const i=checkGuest(req);touchGuest(req,res,i);res.set("Cache-Control","no-store").json({ok:true});
+    const i=find(String(req.params.id));
+    if(!hasDevice(req,i))fail(403,"Use your original WhatsApp invitation to restore this chat.");
+    touchGuest(req,res,i);res.set("Cache-Control","no-store").json({ok:true});
   }));
   app.post("/api/guest-chat/:id/device-code",safe(async(req,res)=>{
     if(!req.is("application/json"))fail(415,"Open this action in the chat.");

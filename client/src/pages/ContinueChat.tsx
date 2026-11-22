@@ -28,6 +28,8 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
   const [moveCode,setMoveCode]=useState(""),[copied,setCopied]=useState(false);
   const [dismissed,setDismissed]=useState<{count:number;at:number}|null>(null),[clock,tick]=useState(Date.now);
   const [remember,setRemember]=useState(true);
+  const [arrival,setArrival]=useState<"checking"|"start"|"restore"|"sign-in"|"sign-out"|"unavailable">(params.token?"checking":"start");
+  const [matchCode,setMatchCode]=useState(""),[until,setUntil]=useState(0);
   const [toolsOpen,setToolsOpen]=useState(false);
   useChatViewport(started&&!closed);
   const attempted = useRef(false);
@@ -91,15 +93,44 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
     await action(async () => {
       const response = await apiRequest("POST", `${endpoint}/start`, { token: params.token });
       const result = await response.json();
-      if (result.threadId) await openMemberChat(result.threadId); else {if(remember)rememberGuest(params.id);history.replaceState(history.state,"",`#/guest-chat/${params.id}`);setStarted(true);}
+      if (result.threadId) await openMemberChat(result.threadId); else {if(remember)rememberGuest(params.id);navigate(`/guest-chat/${params.id}`,{replace:true});}
     });
   }
   useEffect(() => {
-    if (!bootstrapping && !params.token && !attempted.current) {
+    if(!bootstrapping&&params.token&&!attempted.current){
+      attempted.current=true;
+      void action(async()=>{
+        try{
+          const r=await apiRequest("POST",`${endpoint}/return`,{token:params.token});const result=await r.json();
+          if(result.state==="member"){forgetGuest(params.id);setPendingThreadId(result.threadId);navigate("/chat",{replace:true});return;}
+          if(result.state==="guest"){navigate(`/guest-chat/${params.id}`,{replace:true});return;}
+          if(result.state==="restore"&&result.code){setMatchCode(result.code);setUntil(result.until);}
+          setArrival(result.state);
+        }catch(e){setArrival("unavailable");throw e;}
+      });
+    }else if (!bootstrapping && !params.token && !attempted.current) {
       attempted.current=true;
       void action(async()=>{const r=await apiRequest("POST",`${endpoint}/resume`,{});const {threadId}=await r.json();if(threadId&&user){forgetGuest(params.id);setPendingThreadId(threadId);navigate("/chat",{replace:true});return;}if(recentGuests().some(g=>g.id===params.id))rememberGuest(params.id);setStarted(true);});
     }
   }, [bootstrapping, user?.id]);
+  async function requestRestore(){
+    const r=await apiRequest("POST",`${endpoint}/restore`,{token:params.token});const result=await r.json();
+    setMatchCode(result.code);setUntil(result.until);
+  }
+  async function checkRestore(){
+    const r=await apiRequest("POST",`${endpoint}/restore/check`,{token:params.token});const result=await r.json();
+    if(result.state==="guest"){if(remember)rememberGuest(params.id);setMatchCode("");navigate(`/guest-chat/${params.id}`,{replace:true});}
+    else setNextStep("waiting-for-verification");
+  }
+  useEffect(()=>{
+    if(!matchCode||started)return;
+    let disposed=false,checking=false;
+    const poll=async()=>{if(disposed||checking||document.visibilityState==="hidden")return;
+      if(Date.now()>=until){setMatchCode("");setError("The matching code expired, not your chat. Request a new code here.");return;}
+      checking=true;try{await checkRestore();}catch(e){if(!disposed){setMatchCode("");setError(e instanceof Error?e.message:"Please try again.");}}finally{checking=false;}
+    };
+    const timer=setInterval(poll,10000);return()=>{disposed=true;clearInterval(timer);};
+  },[matchCode,started,until]);
   const active=started&&!closed&&!chat.isError;
   return <main className={active?"guest-chat-frame bg-background text-foreground":"min-h-dvh bg-background text-foreground px-4 py-6"}>
     <div className={active?"mx-auto flex h-full max-w-3xl min-w-0 flex-col overflow-hidden bg-card sm:border-x":"mx-auto flex max-w-2xl min-w-0 flex-col gap-4"}>
@@ -109,10 +140,22 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
         <p className="text-sm text-muted-foreground">You have not created an account. You can ask MAHA to connect this conversation to your account if you register later.</p>
       </div> : (!started&&!params.token || started&&chat.isError) ? <div className="rounded-lg border bg-card p-5 space-y-3">
         <h2 className="font-medium">{busy||bootstrapping?"Opening your chat…":"Return to your conversation"}</h2>
-        {!busy&&!bootstrapping&&<><p className="text-sm">If you moved the chat, open it in the new app. If your original browser still has access, use its device code here. For expired or ended access, ask MAHA for a new invitation. If you registered, sign in to your account.</p>
+        {!busy&&!bootstrapping&&<><p className="text-sm">Open your original WhatsApp link and choose Restore this chat if this browser needs verification. If you moved the chat, open it in the new app. If you registered, sign in to your account.</p>
           <a className="underline text-sm" href="#/login">Sign in or enter a device code</a>
           <Button size="sm" variant="ghost" onClick={()=>{forgetGuest(params.id);navigate("/login");}}>Forget this chat on this device</Button></>}
-      </div> : !started ? <div className="rounded-lg border bg-card p-5 space-y-4">
+      </div> : !started&&params.token&&arrival!=="start" ? <section className="rounded-lg border bg-card p-5 space-y-4">
+        {arrival==="checking"?<h2>Opening your chat…</h2>:arrival==="restore"?<>
+          <h2 className="font-semibold">Restore this chat</h2>
+          <p>This is your original conversation. This browser needs to be verified before it can show your messages. You do not need to register.</p>
+          {!matchCode?<Button disabled={busy} onClick={()=>action(requestRestore)}>Restore this chat</Button>:<>
+            <p>Send this matching code to MAHA in your existing WhatsApp conversation. Ask MAHA to verify your identity there. The code alone cannot open the chat.</p>
+            <p className="text-xl font-semibold tracking-wider" aria-label="Matching code">{matchCode}</p>
+            <p className="text-sm">Keep this page open. After MAHA confirms, your messages will open here and the previous guest device will lose access. The code lasts 20 minutes; the conversation does not expire.</p>
+            <Button variant="outline" disabled={busy} onClick={()=>action(checkRestore)}>Check approval</Button>
+            {nextStep==="waiting-for-verification"&&<p role="status">Waiting for MAHA to verify this browser.</p>}
+          </>}
+        </>:arrival==="sign-in"?<><h2 className="font-semibold">Your chat is saved to a partner account</h2><a className="underline" href="#/login">Sign in to the linked account</a></>:arrival==="sign-out"?<><h2 className="font-semibold">This chat is not linked to the signed-in account</h2><p>Sign out or reopen your personal link in a separate browser. Do not use someone else’s account.</p></>:<><h2 className="font-semibold">This invitation could not be opened</h2><p>Check the link or contact MAHA in your original WhatsApp conversation.</p><Button variant="outline" onClick={()=>location.reload()}>Try again</Button></>}
+      </section> : !started ? <div className="rounded-lg border bg-card p-5 space-y-4">
         <p>Talk to the MAHA team here. No password or account is needed to start.</p>
         <p className="text-sm text-muted-foreground">This invitation opens one private chat on this device. Register to save the conversation to your partner account. Please do not send identifiable patient information before verification.</p>
         <p className="text-xs text-muted-foreground">MAHA retains the conversation even if you do not register. Read the <a className="underline" href="#/legal/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>

@@ -11,7 +11,7 @@ import { InvitationConversation, InvitationFilters, useInvitationFilters } from 
 import {AttachmentNote,ChatTools,useChatViewport} from "./ChatFrame";
 import {InvitationInstall} from "./InvitationInstall";
 type Invitation = { id: string; label: string; topic: string; unread: boolean; messageCount: number;
-  canRemind:boolean; guestAccessEnded:boolean;
+  canRemind:boolean; guestAccessEnded:boolean; openedAt:number|null;
   linkedThreadId: number | null; intendedUserId: number | null; declinedAt: number | null; revokedAt: number | null };
 export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => void }) {
   const [open, setOpen] = useState(false), [create, setCreate] = useState(false), [busy, setBusy] = useState(false);
@@ -22,6 +22,8 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
   const [url, setUrl] = useState(""), [error, setError] = useState("");
   const [linking, setLinking] = useState(false), [copied, setCopied] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [restoreCode,setRestoreCode]=useState(""),[verified,setVerified]=useState(false),[approved,setApproved]=useState(false);
+  useEffect(()=>{setRestoreCode("");setVerified(false);setApproved(false);},[selected?.id,open]);
   const filters=useInvitationFilters(selected?.id);
   useChatViewport(open&&!!selected&&!create&&!url);
   useEffect(() => {
@@ -58,7 +60,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
     <DialogContent ref={dialogRef} tabIndex={-1} className={selected&&!create&&!url?"chat-invite-modal":"w-[calc(100%-2rem)] max-w-2xl max-h-[90dvh] overflow-y-auto rounded-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10"}>
       <DialogHeader className={selected&&!create&&!url?"sr-only":""}><DialogTitle>Chat invitations</DialogTitle><DialogDescription>Move a WhatsApp conversation into MAHA. New guests chat first and keep their conversation by verifying their account.</DialogDescription></DialogHeader>
       {url ? <div className="space-y-4">
-        <p className="text-sm">Share this personal invitation only with the intended recipient. It is valid for 7 days and can start a guest session on one browser. Copy it now; it is not shown again after you leave this screen.</p>
+        <p className="text-sm">Share this personal invitation only with the intended recipient. First use must be within 7 days. Once started, this same link can reopen or securely restore the existing chat. Copy it now; it is not shown again after you leave this screen.</p>
         <Label htmlFor="chat-invite-link">Invitation link</Label><Input id="chat-invite-link" readOnly value={url} onFocus={e => e.target.select()} />
         <div className="flex flex-wrap gap-2">
           <Button asChild><a href={`https://wa.me/?text=${encodeURIComponent(`Please continue our conversation in MAHA. You can start chatting here without creating a password: ${url}`)}`} target="_blank" rel="noopener noreferrer">Share via WhatsApp</a></Button>
@@ -87,7 +89,14 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
             href={`https://wa.me/?text=${encodeURIComponent("MAHA has replied. Please open your MAHA chat on the device where you keep it to read the reply.")}`}>Remind via WhatsApp</a></Button>
           <p className="text-xs text-muted-foreground">Choose the original recipient in WhatsApp, review the draft, then send it yourself. No phone number or chat content is shared by MAHA.</p>
         </div>}
-        {fresh?.guestAccessEnded && !fresh.linkedThreadId && !fresh.declinedAt && !fresh.revokedAt && <p className="text-sm text-muted-foreground">Temporary guest access has ended. Contact the recipient in your original WhatsApp conversation or issue a new invitation.</p>}
+        {fresh?.openedAt&&!fresh.linkedThreadId&&!fresh.declinedAt&&!fresh.revokedAt&&<details className="text-sm">
+          <summary className="cursor-pointer font-medium">Restore access to this same chat</summary>
+          <div className="space-y-2 pt-2"><p>Ask the original recipient to reopen their personal link, choose Restore this chat, and give you the matching code in your existing, independently verified WhatsApp conversation. Never approve a code from a new contact or from the link alone.</p>
+          <Label htmlFor="restore-match">Matching code from the verified recipient</Label><Input id="restore-match" autoComplete="off" maxLength={18} value={restoreCode} onChange={e=>{setRestoreCode(e.target.value);setVerified(false);setApproved(false);}}/>
+          <label className="flex gap-2"><input type="checkbox" checked={verified} onChange={e=>setVerified(e.target.checked)}/>I verified the original recipient independently and matched their code. When claimed, this gives that browser the entire chat and replaces the previous guest device.</label>
+          <Button disabled={busy||!verified||!/^[a-f0-9]{12}$/i.test(restoreCode.replace(/[\s-]/g,""))} onClick={()=>act(async()=>{await apiRequest("POST",`/api/admin/guest-chats/${selected.id}/approve-restore`,{code:restoreCode,verifiedOriginalContact:true});setApproved(true);setRestoreCode("");setVerified(false);})}>Approve this browser</Button>
+          {approved&&<p role="status">Approved. The recipient can reopen this same chat on the browser that requested the code.</p>}</div>
+        </details>}
         {fresh?.linkedThreadId ? <Button onClick={() => { setOpen(false); onOpenChat(fresh.linkedThreadId!); }}>Open linked member chat</Button> : <>
           {!linking ? <Button variant="outline" onClick={() => { setLinking(true); setPartner(null); setSearch(""); }}>Connect to a partner account</Button> : <div className="rounded border p-3 space-y-3">
             {choosePartner}<p className="text-sm">Confirm the identity first. This will give the selected partner access to all messages in this conversation and end guest access.</p>

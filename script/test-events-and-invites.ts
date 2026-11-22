@@ -113,6 +113,75 @@ if (serve) {
   }
   console.log(`Synthetic events and chat invitations fixture: ${base}`);
 } else try {
+  // Original URL, never an authenticator for an already-used chat. All data
+  // here is synthetic SQLite :memory:; no real identity or notifications.
+  {
+    const a=await invite(),endpoint=a.endpoint,token={token:a.token},admin=`/api/admin/guest-chats/${a.id}/approve-restore`;
+    const post=(route:string,status:number,cookie="",data:any=token)=>request("POST",endpoint+route,status,data,cookie);
+    assert.deepEqual((await post("/return",200)).data,{state:"start"});
+    assert.equal(db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id,a.id)).get()!.openedAt,null);
+    const originalCookie=await start(a),orig=db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id,a.id)).get()!;
+    await post("/message",200,originalCookie,{requestId:crypto.randomUUID(),body:"Synthetic message kept through restoration"});
+    const messageIds=(await request("GET",endpoint,200,undefined,originalCookie)).data.messages.map((m:any)=>m.id);
+    for(const days of [8,31,366]){
+      db.update(s.guestChatInvites).set({expiresAt:Date.now()-days*86400000,sessionExpiresAt:Date.now()-days*86400000,guestDurableSince:null}).where(eq(s.guestChatInvites.id,a.id)).run();
+      assert.deepEqual((await post("/return",200)).data,{state:"restore"});
+      await request("GET",endpoint,403,undefined,"");
+      if(days===31)assert.deepEqual((await post("/resume",200,originalCookie,{})).data,{ok:true});
+      assert.deepEqual((await post("/return",200,originalCookie)).data,{state:"guest"});
+      assert.deepEqual((await request("GET",endpoint,200,undefined,originalCookie)).data.messages.map((m:any)=>m.id),messageIds);
+    }
+    await post("/return",403,"",{token:"0".repeat(64)});
+    assert.deepEqual((await post("/return",200,"sid=feature-2")).data,{state:"sign-out"});
+    await post("/start",403,"sid=feature-2");await post("/restore",409,"sid=feature-2");
+    const locked=await post("/restore",200),forwarded=await post("/restore",200);
+    assert.notEqual(locked.cookies,forwarded.cookies);assert.notEqual(locked.data.code,forwarded.data.code);
+    assert.deepEqual((await post("/restore",200,locked.cookies)).data,locked.data);
+    assert.equal((await post("/return",200,locked.cookies)).data.code,locked.data.code);
+    await request("GET",endpoint,403,undefined,locked.cookies);await post("/restore/check",403);
+    await request("POST",admin,401,{verifiedOriginalContact:true,code:locked.data.code},"");
+    await request("POST",admin,403,{verifiedOriginalContact:true,code:locked.data.code},"sid=feature-2");
+    await request("POST",admin,400,{verifiedOriginalContact:false,code:locked.data.code});
+    await request("POST",admin,409,{verifiedOriginalContact:true,code:"AAAA-BBBB-CCCC"});
+    assert.deepEqual((await post("/restore/check",200,locked.cookies)).data,{state:"pending"});
+    const approve=(code:string)=>request("POST",admin,200,{verifiedOriginalContact:true,code});
+    await approve(locked.data.code);await approve(locked.data.code);
+    assert.deepEqual((await post("/restore/check",200,forwarded.cookies)).data,{state:"pending"});
+    const recovered=await post("/restore/check",200,locked.cookies);assert.deepEqual(recovered.data,{state:"guest"});
+    assert.equal((await post("/restore/check",200,locked.cookies)).cookies,recovered.cookies);
+    assert.deepEqual((await request("GET",endpoint,200,undefined,recovered.cookies)).data.messages.map((m:any)=>m.id),messageIds);
+    await request("GET",endpoint,403,undefined,originalCookie);await post("/restore/check",409,forwarded.cookies);
+    assert.deepEqual((await post("/return",200,recovered.cookies)).data,{state:"guest"});
+    assert.deepEqual((await post("/return",200,originalCookie)).data,{state:"restore"});
+    assert.equal(db.select().from(s.guestChatInvites).where(eq(s.guestChatInvites.id,a.id)).get()!.tokenHash,orig.tokenHash);
+    const wait=await post("/restore",200);await approve(wait.data.code);
+    const move=(await post("/device-code",200,recovered.cookies,{})).data;
+    const moved=await request("POST","/api/guest-device/move",200,move,"");
+    await post("/restore/check",409,wait.cookies);await post("/restore/check",409,locked.cookies);
+    assert.deepEqual((await post("/return",200,moved.cookies)).data,{state:"guest"});
+    const lapsed=await post("/restore",200);
+    db.update(s.guestChatRecoveries).set({until:1}).where(eq(s.guestChatRecoveries.inviteId,a.id)).run();
+    await post("/restore/check",409,lapsed.cookies);await request("POST",admin,409,{verifiedOriginalContact:true,code:lapsed.data.code});
+    for(const mode of ["link","decline","revoke"]){
+      const b=await invite(),device=await start(b),t={token:b.token};
+      db.update(s.guestChatInvites).set({expiresAt:1}).where(eq(s.guestChatInvites.id,b.id)).run();
+      const r=await request("POST",b.endpoint+"/restore",200,t,"");
+      await request("POST",`/api/admin/guest-chats/${b.id}/approve-restore`,200,{code:r.data.code,verifiedOriginalContact:true});
+      if(mode==="decline")await request("POST",b.endpoint+"/decline",200,{},device);
+      else await request("POST",`/api/admin/guest-chats/${b.id}/${mode}`,200,mode==="link"?{userId:2}:{});
+      await request("POST",b.endpoint+"/restore/check",mode==="link"?409:403,t,r.cookies);
+      if(mode==="link"){
+        const linked=await request("POST",b.endpoint+"/return",200,t,"sid=feature-2");
+        assert.ok(linked.data.threadId);assert.equal(linked.data.state,"member");
+        assert.equal((await request("POST",b.endpoint+"/start",200,t,"sid=feature-2")).data.threadId,linked.data.threadId);
+        assert.deepEqual((await request("POST",b.endpoint+"/return",200,t,"sid=feature-3")).data,{state:"sign-in"});
+      }else{await request("POST",b.endpoint+"/return",403,t,device);await request("POST",b.endpoint+"/restore",403,t,"");}
+    }
+    // Recovery is throttled per source and per invitation. Existing pending
+    // requests remain usable; unverified requests never displace the owner.
+    let limited=false;for(let k=0;k<16;k++){const res=await nativeFetch(base+endpoint+"/restore",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(token)}); if(res.status===429){limited=true;break;}assert.equal(res.status,200);}
+    assert.ok(limited);await request("GET",endpoint,200,undefined,moved.cookies);
+  }
   {
     const a=await invite(),b=await invite(),an=await start(a),bn=await start(b),ep=a.endpoint;
     const point=crypto.createECDH("prime256v1");point.generateKeys();

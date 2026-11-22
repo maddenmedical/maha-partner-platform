@@ -996,6 +996,19 @@ export const guestChatInvites = sqliteTable("guest_chat_invites", {
   verificationAttempts: integer("verification_attempts").notNull().default(0),
   verificationSends: integer("verification_sends").notNull().default(0),
 });
+// An approval is bound to one browser, one invitation, and the device
+// authorization that existed when the request was made. No transcript copy.
+export const guestChatRecoveries = sqliteTable("guest_chat_recoveries", {
+  proofHash: text("proof_hash").primaryKey(),
+  inviteId: text("invite_id").notNull(),
+  codeHash: text("code_hash").notNull(),
+  generation: text("generation").notNull(),
+  requestedAt: integer("requested_at").notNull(),
+  until: integer("until").notNull(),
+  approvedBy: integer("approved_by"),
+  approvedAt: integer("approved_at"),
+  consumedAt: integer("consumed_at"),
+});
 export const guestChatMessages = sqliteTable("guest_chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   inviteId: text("invite_id").notNull(),
