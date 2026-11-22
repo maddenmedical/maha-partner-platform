@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import type { AdminChatRecipient } from "@shared/schema";
-import { InvitationConversation } from "./InvitationConversation";
+import { InvitationConversation, InvitationFilters, useInvitationFilters } from "./InvitationConversation";
+import {AttachmentNote,ChatTools,useChatViewport} from "./ChatFrame";
+import {InvitationInstall} from "./InvitationInstall";
 type Invitation = { id: string; label: string; topic: string; unread: boolean; messageCount: number;
   canRemind:boolean; guestAccessEnded:boolean;
   linkedThreadId: number | null; intendedUserId: number | null; declinedAt: number | null; revokedAt: number | null };
@@ -20,6 +22,8 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
   const [url, setUrl] = useState(""), [error, setError] = useState("");
   const [linking, setLinking] = useState(false), [copied, setCopied] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const filters=useInvitationFilters(selected?.id);
+  useChatViewport(open&&!!selected&&!create&&!url);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       dialogRef.current?.focus({ preventScroll: true });
@@ -51,8 +55,8 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
   </div>;
   return <Dialog open={open} onOpenChange={setOpen}>
     <Button variant="outline" className="min-h-11" onClick={() => setOpen(true)}>Chat invitations{unread > 0 ? ` (${unread} new)` : ""}</Button>
-    <DialogContent ref={dialogRef} tabIndex={-1} className="w-[calc(100%-2rem)] max-w-2xl max-h-[90dvh] overflow-y-auto rounded-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10">
-      <DialogHeader><DialogTitle>Chat invitations</DialogTitle><DialogDescription>Move a WhatsApp conversation into MAHA. New guests chat first and keep their conversation by verifying their account.</DialogDescription></DialogHeader>
+    <DialogContent ref={dialogRef} tabIndex={-1} className={selected&&!create&&!url?"chat-invite-modal":"w-[calc(100%-2rem)] max-w-2xl max-h-[90dvh] overflow-y-auto rounded-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10"}>
+      <DialogHeader className={selected&&!create&&!url?"sr-only":""}><DialogTitle>Chat invitations</DialogTitle><DialogDescription>Move a WhatsApp conversation into MAHA. New guests chat first and keep their conversation by verifying their account.</DialogDescription></DialogHeader>
       {url ? <div className="space-y-4">
         <p className="text-sm">Share this personal invitation only with the intended recipient. It is valid for 7 days and can start a guest session on one browser. Copy it now; it is not shown again after you leave this screen.</p>
         <Label htmlFor="chat-invite-link">Invitation link</Label><Input id="chat-invite-link" readOnly value={url} onFocus={e => e.target.select()} />
@@ -72,12 +76,12 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
           const response = await apiRequest("POST", "/api/admin/guest-chats", { label, topic, message, intendedUserId: partner?.id ?? null });
           const result = await response.json(); setUrl(`${window.location.origin}${window.location.pathname}${result.path.slice(1)}`); setCopied(false);
         })}>Create invitation link</Button><Button variant="ghost" disabled={busy} onClick={() => setCreate(false)}>Cancel</Button></div>
-      </div> : selected ? <div className="space-y-3">
-        <Button variant="ghost" onClick={() => { setSelected(null); setLinking(false); }}>Back to invitations</Button>
-        <h3 className="font-semibold">{fresh?.label}</h3>
-        <p className="text-sm text-muted-foreground">{fresh?.topic}</p>
+      </div> : selected ? <div className="min-h-0 flex flex-1 flex-col overflow-hidden">
+        <header className="flex items-center gap-1 border-b pl-1 pr-12 py-1 shrink-0">
+        <Button variant="ghost" size="sm" aria-label="Back to invitations" onClick={() => { setSelected(null); setLinking(false); }}>Back</Button>
+        <div className="mr-auto min-w-0"><h3 className="font-semibold truncate">{fresh?.label}</h3><p className="text-xs text-muted-foreground truncate">{fresh?.topic}</p></div>
+        <InvitationInstall/><ChatTools label="Invitation options"><InvitationFilters filters={filters}/><AttachmentNote/>
         <p className="rounded border p-2 text-xs text-muted-foreground">Guest messages before verification are not proof of identity. Retained conversations are visible to admins, including when a guest declines registration.</p>
-        <InvitationConversation key={selected.id} inviteId={selected.id} admin closed={!!fresh?.declinedAt || !!fresh?.revokedAt || !!fresh?.linkedThreadId} />
         {fresh?.canRemind && <div className="rounded-md border p-3 space-y-1">
           <Button variant="outline" size="sm" asChild><a target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"
             href={`https://wa.me/?text=${encodeURIComponent("MAHA has replied. Please open your MAHA chat on the device where you keep it to read the reply.")}`}>Remind via WhatsApp</a></Button>
@@ -94,6 +98,9 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
           </div>}
           {!fresh?.revokedAt && <details className="text-sm"><summary className="cursor-pointer">End invitation access</summary><p className="my-2">This disables the link and guest access. The conversation stays available to admins.</p><Button variant="outline" disabled={busy} onClick={() => act(async () => { await apiRequest("POST", `/api/admin/guest-chats/${selected.id}/revoke`); })}>Revoke invitation</Button></details>}
         </>}
+        </ChatTools></header>
+        {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
+        <InvitationConversation key={selected.id} inviteId={selected.id} filters={filters} admin closed={!!fresh?.declinedAt || !!fresh?.revokedAt || !!fresh?.linkedThreadId} />
       </div> : <div className="space-y-3">
         <Button onClick={() => { setCreate(true); setSelected(null); setPartner(null); setSearch(""); setLabel(""); setError(""); }}>New WhatsApp invitation</Button>
         {invites.isLoading ? <p>Loading invitations…</p> : !invites.data?.length ? <p className="text-sm text-muted-foreground">No invitations yet.</p> : invites.data.map(i =>
@@ -102,7 +109,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
             <span className="text-xs text-muted-foreground">{i.linkedThreadId ? "Linked to member" : i.declinedAt ? "Declined registration · retained" : i.revokedAt ? "Revoked · retained" : "Awaiting account verification"} · {i.messageCount} messages</span>
           </button>)}
       </div>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && !selected && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </DialogContent>
   </Dialog>;
 }

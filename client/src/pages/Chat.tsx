@@ -18,6 +18,8 @@ import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus,
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId, takeInvitationDraft } from "@/lib/chatNav";
 import { ChatComposer } from "@/components/chat/ChatComposer";
+import {ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
+import {InvitationInstall} from "@/components/chat/InvitationInstall";
 import { ChatMessageBubble, type ChatMessageWithMeta } from "@/components/chat/ChatMessageBubble";
 import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { ReferralFormDialog } from "@/components/chat/ReferralFormDialog";
@@ -36,6 +38,7 @@ interface ThreadRow extends ChatThread {
 export default function Chat({ label = "Chat with MAHA Team" }: { label?: string }) {
   const queryClient = useQueryClient();
   const [selectedThread, setSelectedThread] = useState<ThreadRow | null>(null);
+  useChatViewport(!!selectedThread);
   const [pendingSelectId, setPendingSelectId] = useState<number | null>(() => consumePendingThreadId());
   const [draft,setDraft]=useState(takeInvitationDraft);
   useEffect(()=>{if(draft && selectedThread?.id===draft.thread)setDraft(null);},[draft,selectedThread?.id]);
@@ -141,7 +144,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   }
 
   return (
-    <div className="p-4 flex flex-col h-[calc(100dvh-8.5rem)] md:h-[calc(100dvh-9.5rem)] max-w-5xl mx-auto">
+    <div className="member-chat-layout p-4 flex flex-col flex-1 min-h-0 w-full max-w-5xl mx-auto">
       <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold" data-testid="text-chat-title">{label}</h1>
@@ -349,17 +352,8 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
         </div>
 
         {selectedThread && (
-          <div className="sm:hidden fixed inset-0 z-20 bg-background flex flex-col">
-            <div className="flex items-center gap-2 p-3 border-b border-border">
-              <Button variant="ghost" size="sm" onClick={() => setSelectedThread(null)} data-testid="button-close-thread-mobile">
-                Back
-              </Button>
-              <span className="flex items-center gap-1.5 text-sm font-medium truncate">
-                {selectedThread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                {selectedThread.topic}
-              </span>
-            </div>
-            <ThreadDetail key={selectedThread.id} thread={selectedThread} initialText={draft?.thread===selectedThread.id?draft.text:""} onSelectSurvivor={(id) => setPendingSelectId(id)} />
+          <div className="mobile-chat-viewport sm:hidden fixed inset-0 bg-background flex flex-col">
+            <ThreadDetail onBack={()=>setSelectedThread(null)} key={selectedThread.id} thread={selectedThread} initialText={draft?.thread===selectedThread.id?draft.text:""} onSelectSurvivor={(id) => setPendingSelectId(id)} />
           </div>
         )}
       </div>
@@ -367,7 +361,7 @@ export default function Chat({ label = "Chat with MAHA Team" }: { label?: string
   );
 }
 
-function ThreadDetail({ thread, onSelectSurvivor,initialText }: { thread: ThreadRow; onSelectSurvivor: (id: number) => void;initialText?:string }) {
+function ThreadDetail({ thread, onSelectSurvivor,initialText,onBack }: { thread: ThreadRow; onSelectSurvivor: (id: number) => void;initialText?:string;onBack?:()=>void }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -462,7 +456,7 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText }: { thread: Thread
   });
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const log=bottomRef.current?.parentElement;if(log)log.scrollTop=log.scrollHeight;
   }, [messages?.length]);
 
   const filteredMessages = (messages || []).filter((m) => {
@@ -472,11 +466,12 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText }: { thread: Thread
   });
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
-      <div className="hidden sm:flex items-center gap-1.5 border-b border-border pb-2 -mt-1">
+    <div className="chat-detail-pane flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-3 gap-2">
+      <header className="flex items-center gap-1.5 border-b border-border pb-1 shrink-0">
+        {onBack&&<Button variant="ghost" size="sm" onClick={onBack} data-testid="button-close-thread-mobile">Back</Button>}
         {thread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-        <span className="text-sm font-medium truncate">{thread.topic}</span>
-      </div>
+        <span className="mr-auto text-sm font-medium truncate">{thread.topic}</span>
+        <InvitationInstall/><ChatTools label="Conversation options">
 
       {!!thread.archivedAt && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2" data-testid="banner-thread-archived">
@@ -541,7 +536,8 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText }: { thread: Thread
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
+      </ChatTools></header>
+      <div role="log" aria-label="Messages" className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
           <>
             <Skeleton className="h-12 w-2/3 rounded-lg skeleton-shimmer self-start" />

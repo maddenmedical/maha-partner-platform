@@ -254,3 +254,28 @@ h1, h2, h3,
 .font-display {
   font-family: var(--font-serif);
 }
+/* Conversation-only chrome. The composer is the last visible row; scrolling
+   happens in the transcript, or inside an explicitly opened tools panel. */
+.chat-tools { width:min(23rem,calc(100vw - 1rem)); max-height:min(var(--radix-popover-content-available-height,80dvh),calc(var(--chat-vh,100dvh) - 3rem)); overflow:auto; overscroll-behavior:contain; z-index:60; }
+.guest-chat-frame {position:fixed; inset-inline:0; top:var(--chat-top,0px); height:var(--chat-vh,100dvh); overflow:hidden; padding-top:env(safe-area-inset-top,0px);}
+.chat-detail-pane {min-height:0;overflow:hidden;}
+body:has(.guest-chat-frame,.chat-invite-modal,.chat-detail-pane) .global-push-prompt {display:none;}
+.chat-install-action {background:hsl(var(--chart-2));color:hsl(var(--background));border:1px solid currentColor;}
+.chat-install-action,.chat-register-action {min-height:2.5rem;padding-inline:.7rem;font-size:.8rem;line-height:1.15;white-space:normal;}
+.chat-install-action svg,.chat-register-action svg {width:1rem;height:1rem;flex:none;}
+.chat-detail-pane header .chat-install-action,.chat-invite-modal header .chat-install-action {flex:none;white-space:nowrap;}
+.chat-primary-actions {display:flex;align-items:center;gap:.4rem;padding:.35rem .5rem;flex:none;}
+.chat-primary-actions:empty {display:none;}
+main:has(>.member-chat-layout),main:has(>.admin-chat-layout) {display:flex;flex-direction:column;overflow:hidden;}
+main:has(>.member-chat-layout) {padding-bottom:calc(4rem + env(safe-area-inset-bottom,0px));}
+.chat-detail-pane form,.invitation-chat form {flex:none;}
+.guest-chat-frame form,.chat-invite-modal form {padding-bottom:max(.5rem,env(safe-area-inset-bottom,0px));}
+.chat-invite-modal[data-state] {display:flex; flex-direction:column; gap:0; width:min(48rem,96vw); max-width:none; height:min(54rem,90dvh); padding:0; overflow:hidden;}
+.chat-invite-modal>button:last-child {top:.95rem;}
+@media(max-width:639px){
+  .chat-invite-modal[data-state],.mobile-chat-viewport {top:var(--chat-top,0px); height:var(--chat-vh,100dvh); bottom:auto; padding-top:env(safe-area-inset-top,0px);}
+  .chat-invite-modal[data-state] {left:0; width:100%; max-width:none; max-height:none; transform:none; border:0; border-radius:0; animation:none;}
+  .mobile-chat-viewport {z-index:35; overflow:hidden; padding-bottom:env(safe-area-inset-bottom,0px);}
+  .mobile-chat-viewport .chat-detail-pane {border:0;border-radius:0;padding:.5rem;gap:.375rem;}
+  body:has(.mobile-chat-viewport) nav[aria-label="Primary"] {display:none;}
+}

@@ -174,7 +174,7 @@ function StandardPushPrompt() {
   if (!visible) return null;
 
   return (
-    <div className="fixed top-3 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
+    <div className="global-push-prompt fixed top-3 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
       <div
         className="pointer-events-auto w-full max-w-md rounded-lg border border-card-border bg-card shadow-lg p-4 flex items-start gap-3"
         data-testid="banner-push-prompt"

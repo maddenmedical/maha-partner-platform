@@ -12,15 +12,26 @@ type Conversation = { messages: ChatMessageWithMeta[]; linkedThreadId?: number |
 type Payload = { body: string; attachmentUrl?: string; attachmentType?: string; attachmentName?: string; replyToMessageId?: number };
 
 // The same controls on both sides, but every request stays invitation-scoped.
-export function InvitationConversation({ inviteId, admin = false, closed = false }: {
-  inviteId: string; admin?: boolean; closed?: boolean;
+export function useInvitationFilters(id?:string){
+  const [search,setSearch]=useState(""),[filter,setFilter]=useState<"all"|"starred"|"files">("all");
+  useEffect(()=>{setSearch("");setFilter("all");},[id]);
+  return {search,setSearch,filter,setFilter};
+}
+type Filters=ReturnType<typeof useInvitationFilters>;
+export function InvitationFilters({filters:{search,setSearch,filter,setFilter}}:{filters:Filters}){
+  return <div className="space-y-2">
+    <div className="relative"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4"/><Input aria-label="Search this conversation" placeholder="Search this chat" value={search} onChange={e=>setSearch(e.target.value)} className="pl-9" data-testid="input-invitation-search"/></div>
+    <div className="flex gap-2">{(["starred","files"] as const).map(k=><Button key={k} size="sm" variant={filter===k?"secondary":"outline"} aria-pressed={filter===k} onClick={()=>setFilter(filter===k?"all":k)} data-testid={`button-invitation-${k}`}>{k==="starred"?<><Star/>Starred</>:<><Paperclip/>Files</>}</Button>)}</div>
+  </div>;
+}
+export function InvitationConversation({ inviteId, admin = false, closed = false,filters:{search,setSearch,filter,setFilter} }: {
+  inviteId: string; admin?: boolean; closed?: boolean; filters:Filters;
 }) {
   const { user } = useAuth();
   const cache = useQueryClient();
   const endpoint = `${admin ? "/api/admin/guest-chats" : "/api/guest-chat"}/${inviteId}`;
   const queryKey = admin ? ["/api/admin/guest-chats", inviteId] : [endpoint];
   const chat = useQuery<Conversation>({ queryKey, refetchInterval: 4000, retry: false });
-  const [search, setSearch] = useState(""), [filter, setFilter] = useState<"all" | "starred" | "files">("all");
   const [replying, setReplying] = useState<ReplyContext | null>(null);
   const [sending, setSending] = useState(false), [error, setError] = useState("");
   const [deleting, setDeleting] = useState<number | null>(null), [working, setWorking] = useState(false);
@@ -60,29 +71,15 @@ export function InvitationConversation({ inviteId, admin = false, closed = false
       attempt.current = null; following.current = true; requestAnimationFrame(latest);
     } finally { setSending(false); }
   }
-  return <section aria-label={admin ? "Guest conversation" : "Conversation"} className="min-w-0 space-y-3">
-    <div className="flex min-w-0 flex-wrap gap-2">
-      <div className="relative min-w-0 flex-1 basis-36">
-        <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-        <Input aria-label="Search this conversation" placeholder="Search this chat" value={search}
-          onChange={e => setSearch(e.target.value)} className="pl-9" data-testid="input-invitation-search" />
-      </div>
-      <Button variant={filter === "starred" ? "secondary" : "outline"} aria-pressed={filter === "starred"}
-        onClick={() => setFilter(filter === "starred" ? "all" : "starred")} data-testid="button-invitation-starred">
-        <Star className="mr-1.5 h-4 w-4" />Starred
-      </Button>
-      <Button variant={filter === "files" ? "secondary" : "outline"} aria-pressed={filter === "files"}
-        onClick={() => setFilter(filter === "files" ? "all" : "files")} data-testid="button-invitation-files">
-        <Paperclip className="mr-1.5 h-4 w-4" />Files
-      </Button>
-    </div>
+  return <section aria-label={admin ? "Guest conversation" : "Conversation"} className="invitation-chat flex flex-1 min-h-0 min-w-0 flex-col gap-2 px-2 pt-2 sm:px-4 overflow-hidden">
+    {(search||filter!=="all")&&<Button size="sm" variant="outline" className="self-start" onClick={()=>{setSearch("");setFilter("all");}}>Clear {filter==="all"?"search":filter+" filter"}</Button>}
     {chat.error && <div role="alert" className="rounded border p-3 text-sm">
       <p>{chat.error.message}</p>
       <Button variant="outline" onClick={() => chat.refetch()}>Try again</Button>
     </div>}
     <div ref={scroll} role="log" aria-label="Messages" tabIndex={0} data-testid="invitation-messages"
       onScroll={() => { const el = scroll.current; if (el) following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
-      className="flex min-h-48 max-h-[45dvh] min-w-0 flex-col gap-4 overflow-y-auto rounded-lg border bg-card p-3 sm:p-4">
+      className="flex flex-1 min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain bg-muted/20 px-2 py-3 sm:p-4">
       {chat.isLoading && <p className="text-sm">Loading conversation…</p>}
       {!chat.isLoading && !shown.length && <p className="text-sm text-muted-foreground">
         {search || filter !== "all" ? "No matching messages. Try another search or filter." : "Your conversation starts here."}
@@ -116,12 +113,11 @@ export function InvitationConversation({ inviteId, admin = false, closed = false
         <Button variant="outline" disabled={working} onClick={() => setDeleting(null)}>Cancel</Button>
       </div>
     </div>}
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!readOnly && <ChatComposer uploadUrl={`${endpoint}/upload`} threadId={0} onSend={send}
       sending={sending} disabled={!!chat.error || chat.isLoading} testIdPrefix={admin ? "invite-admin" : "invite-guest"}
       replyingTo={replying} onCancelReply={() => setReplying(null)} placeholder="Write a message…"
       maxLength={5000} maxFileBytes={20 * 1024 * 1024} maxRecordingSeconds={180}
       accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.mp3,.m4a,.wav,.ogg" />}
-    {!readOnly && <p className="text-xs text-muted-foreground">Photos, documents, video and voice notes · up to 20 MB per file. Please avoid identifiable patient information before verification.</p>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </section>;
 }

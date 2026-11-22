@@ -7,14 +7,17 @@ import { useAuth } from "@/context/AuthContext";
 import { setPendingThreadId, markInvitationSaved, carryInvitationDraft } from "@/lib/chatNav";
 import { InvitationInstall } from "@/components/chat/InvitationInstall";
 import {GuestAlerts} from "@/components/chat/GuestAlerts";
+import {AttachmentNote,ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
+import {UserRoundPlus} from "lucide-react";
 import {rememberGuest,forgetGuest,recentGuests} from "@/lib/guestDevice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { InvitationConversation } from "@/components/chat/InvitationConversation";
+import { InvitationConversation, InvitationFilters, useInvitationFilters } from "@/components/chat/InvitationConversation";
 
 export default function ContinueChat({ params }: { params: { id: string; token?: string } }) {
   const { user, bootstrapping, loginWithUser } = useAuth();
+  const filters=useInvitationFilters(params.id);
   const [started, setStarted] = useState(false), [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [nextStep, setNextStep] = useState<string | undefined>();
@@ -25,6 +28,8 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
   const [moveCode,setMoveCode]=useState(""),[copied,setCopied]=useState(false);
   const [dismissed,setDismissed]=useState<{count:number;at:number}|null>(null),[clock,tick]=useState(Date.now);
   const [remember,setRemember]=useState(true);
+  const [toolsOpen,setToolsOpen]=useState(false);
+  useChatViewport(started&&!closed);
   const attempted = useRef(false);
   const emailInput = useRef<HTMLInputElement>(null);
   const conversation = useRef<HTMLDivElement>(null);
@@ -62,8 +67,7 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
     finally { setBusy(false); }
   }
   function returnToConversation() {
-    setKeep(false); setError(""); setNextStep(undefined);
-    conversation.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setKeep(false);setToolsOpen(false); setError(""); setNextStep(undefined);
     conversation.current?.querySelector("textarea")?.focus({ preventScroll: true });
   }
   function checkPendingMedia() {
@@ -96,9 +100,10 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
       void action(async()=>{const r=await apiRequest("POST",`${endpoint}/resume`,{});const {threadId}=await r.json();if(threadId&&user){forgetGuest(params.id);setPendingThreadId(threadId);navigate("/chat",{replace:true});return;}if(recentGuests().some(g=>g.id===params.id))rememberGuest(params.id);setStarted(true);});
     }
   }, [bootstrapping, user?.id]);
-  return <main className="min-h-dvh bg-background text-foreground px-4 py-6">
-    <div className="mx-auto flex max-w-2xl min-w-0 flex-col gap-4">
-      <header className="border-b pb-4"><p className="text-xl font-semibold tracking-widest text-primary">MAHA</p><h1 className="mt-2 text-xl font-semibold">Continue your conversation</h1></header>
+  const active=started&&!closed&&!chat.isError;
+  return <main className={active?"guest-chat-frame bg-background text-foreground":"min-h-dvh bg-background text-foreground px-4 py-6"}>
+    <div className={active?"mx-auto flex h-full max-w-3xl min-w-0 flex-col overflow-hidden bg-card sm:border-x":"mx-auto flex max-w-2xl min-w-0 flex-col gap-4"}>
+      {!active&&<header className="border-b pb-4"><p className="text-xl font-semibold tracking-widest text-primary">MAHA</p><h1 className="mt-2 text-xl font-semibold">Continue your conversation</h1></header>}
       {closed ? <div className="rounded-lg border p-5 space-y-3">
         <h2 className="font-semibold">Your conversation is safely retained by MAHA</h2>
         <p className="text-sm text-muted-foreground">You have not created an account. You can ask MAHA to connect this conversation to your account if you register later.</p>
@@ -114,15 +119,13 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/>Reopen this chat on my device. Uncheck on a shared phone.</label>
         <Button onClick={begin} disabled={busy || bootstrapping} className="w-full">{busy ? "Opening…" : user?.role==="partner"?"Open in my signed-in partner account":"Start chat"}</Button>
       </div> : <>
-        {nudge&&!keep&&<aside className="sticky top-1 z-10 rounded-lg border bg-card p-3 shadow-sm flex flex-wrap items-center gap-2" data-testid="guest-register-nudge">
-          <span className="text-sm flex-1 min-w-40">Keep your replies in a partner account.</span><Button size="sm" onClick={()=>setKeep(true)}>Register &amp; keep this chat</Button>
-          <Button size="sm" variant="ghost" onClick={()=>setDismissed({at:Date.now(),count:outgoing})}>Not now</Button></aside>}
-        <h2 className="font-medium">{chat.data?.topic || "Chat with MAHA"}</h2>
-        <div className="flex gap-2 flex-wrap items-start"><InvitationInstall/><GuestAlerts endpoint={endpoint} enabled={!!chat.data?.notifications}/></div>
-        <div ref={conversation}><InvitationConversation key={params.id} inviteId={params.id} /></div>
-        {!keep ? <div className="rounded-lg border bg-card p-4 space-y-3">
+        <header className="flex items-center gap-2 border-b px-3 py-1.5 shrink-0">
+          <div className="mr-auto min-w-0"><p className="text-[10px] font-semibold tracking-widest text-primary">MAHA</p><h1 className="truncate text-base font-semibold">{chat.data?.topic || "Chat with MAHA"}</h1></div>
+          <ChatTools label="Chat options" open={toolsOpen} onOpenChange={v=>{setToolsOpen(v);if(!v)setKeep(false);}}>
+        {!keep ? <div className="space-y-3">
           <p className="text-sm">{chat.data?.messages.some(m=>m.senderRole==="guest") ? "Your message is with MAHA. Keep this chat so you can return to the reply after leaving WhatsApp." : "You can chat first, or save this conversation to your partner account now."}</p>
-          {!nudge&&<Button className="w-full" onClick={() => setKeep(true)}>Register &amp; keep this chat</Button>}
+          <GuestAlerts endpoint={endpoint} enabled={!!chat.data?.notifications}/>
+          <InvitationFilters filters={filters}/><AttachmentNote/>
           <p className="text-xs text-muted-foreground">Already a partner? Use the same email. MAHA does not time out an opened guest chat. If you clear browser data, uninstall the app or lose this device, you may need MAHA’s help to return.</p>
           <details className="text-sm"><summary className="cursor-pointer underline">Move chat to the installed app</summary>
             <p className="my-2">Only needed if the app opens without your chat. On your own phone, get a code here, then choose “Move my guest chat to this app” on the app’s sign-in screen. Moving ends guest access in this browser; send any draft first. Never share the code.</p>
@@ -167,8 +170,18 @@ export default function ContinueChat({ params }: { params: { id: string; token?:
             await apiRequest("POST", `${endpoint}/decline`); forgetGuest(params.id);setClosed(true);
           })}>End guest access without registering</Button>
         </details>
+        </ChatTools></header>
+        <div className="chat-primary-actions">
+          {(!user||user.role==="partner")&&<Button size="sm" className="chat-register-action" onClick={()=>{setToolsOpen(true);setKeep(true);}}><UserRoundPlus aria-hidden="true"/>{user?"Keep in my account":"Register & keep this chat"}</Button>}
+          <InvitationInstall guest/>
+        </div>
+        {!user&&nudge&&!keep&&<aside className="flex items-center gap-2 px-2 pt-1 shrink-0" data-testid="guest-register-nudge">
+          <span className="text-xs font-medium">Your message is with MAHA. Register to keep your replies.</span>
+          <Button size="sm" variant="ghost" onClick={()=>setDismissed({at:Date.now(),count:outgoing})}>Not now</Button></aside>}
+        {!keep&&guidance}
+        <div ref={conversation} className="min-h-0 flex flex-1"><InvitationConversation key={params.id} inviteId={params.id} filters={filters}/></div>
       </>}
-      {(!started || !keep || closed) && guidance}
+      {!active && guidance}
     </div>
   </main>;
 }

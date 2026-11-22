@@ -33,6 +33,8 @@ import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { AdminNewChat } from "@/components/chat/AdminNewChat";
 import { AdminChatInvites } from "@/components/chat/AdminChatInvites";
+import {ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
+import {InvitationInstall} from "@/components/chat/InvitationInstall";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
 import type { Referral, User } from "@shared/schema";
 
@@ -70,6 +72,7 @@ export default function AdminChatInbox() {
   const [view, setView] = useState<"active" | "archived" | "team">("active");
   const [deleteThreadId, setDeleteThreadId] = useState<number | null>(null);
   const [staffSelection, setStaffSelection] = useState<StaffSelection>(null);
+  useChatViewport(!!selectedThread||!!staffSelection);
 
   const { data: threads, isLoading } = useQuery<ThreadRow[]>({
     queryKey: ["/api/admin/chat/threads"],
@@ -121,7 +124,7 @@ export default function AdminChatInbox() {
   }, [pendingSelectId, threads]);
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-6.5rem)] max-w-5xl -m-1">
+    <div className="admin-chat-layout flex flex-col flex-1 min-h-0 max-w-5xl -m-1">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <AdminNewChat onStarted={(id) => {
           setView("active");
@@ -300,23 +303,13 @@ export default function AdminChatInbox() {
       </div>
 
       {selectedThread && (
-        <div className="sm:hidden fixed inset-0 z-20 bg-background flex flex-col">
-          <div className="flex items-center gap-2 p-3 border-b border-border">
-            <Button variant="ghost" size="sm" onClick={() => setSelectedThread(null)} data-testid="button-close-thread-mobile">Back</Button>
-            <span className="flex items-center gap-2 text-sm font-medium truncate">
-              <UserAvatar photoUrl={selectedThread.userPhotoUrl} name={selectedThread.userName || "?"} size="sm" />
-              <span className="flex items-center gap-1.5 min-w-0">
-                {selectedThread.kind === "referral" && <Stethoscope className="h-3.5 w-3.5 text-primary shrink-0" />}
-                <span className="truncate">{selectedThread.userName}</span>
-              </span>
-            </span>
-          </div>
+        <div className="mobile-chat-viewport sm:hidden fixed inset-0 bg-background flex flex-col">
           <ThreadDetail thread={selectedThread} allThreads={threads} onSelectSurvivor={(id) => setPendingSelectId(id)} onCloseThread={() => setSelectedThread(null)} />
         </div>
       )}
 
       {view === "team" && staffSelection && (
-        <div className="sm:hidden fixed inset-0 z-20 bg-background flex flex-col">
+        <div className="mobile-chat-viewport sm:hidden fixed inset-0 bg-background flex flex-col">
           <StaffChatDetail selection={staffSelection} onClose={() => setStaffSelection(null)} showBackButton />
         </div>
       )}
@@ -442,6 +435,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
   });
 
   const [deleteThreadOpen, setDeleteThreadOpen] = useState(false);
+  const [detailsOpen,setDetailsOpen]=useState(false);
   const deleteThreadMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/admin/chat/threads/${thread.id}`),
     onSuccess: () => {
@@ -494,7 +488,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
   const otherAdmins = (admins || []).filter((a) => a.id !== user?.id);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const log=bottomRef.current?.parentElement;if(log)log.scrollTop=log.scrollHeight;
   }, [messages?.length]);
 
   const filteredMessages = (messages || []).filter((m) => {
@@ -504,8 +498,11 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
   });
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
-      <div className="flex items-center justify-between gap-2">
+    <div className="chat-detail-pane flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-3 gap-2">
+      <header className="flex items-center gap-1 shrink-0 border-b pb-1">
+        <Button variant="ghost" size="sm" className="sm:hidden" onClick={onCloseThread} data-testid="button-close-thread-mobile">Back</Button>
+        <span className="truncate text-sm font-semibold mr-auto">{thread.userName||thread.topic}</span>
+        <InvitationInstall/>
         <div className="flex items-center gap-2 min-w-0">
           {!!thread.archivedAt && (
             <Badge variant="outline" className="text-xs shrink-0 no-default-hover-elevate no-default-active-elevate" data-testid="badge-thread-archived">
@@ -518,35 +515,11 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
             </span>
           )}
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" data-testid="button-thread-menu" aria-label="Chat options">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => archiveMutation.mutate(!thread.archivedAt)} data-testid="menu-item-toggle-archive">
-              {thread.archivedAt ? (
-                <>
-                  <ArchiveRestore className="h-4 w-4 mr-2" /> Unarchive chat
-                </>
-              ) : (
-                <>
-                  <Archive className="h-4 w-4 mr-2" /> Archive chat
-                </>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => setDeleteThreadOpen(true)}
-              className="text-destructive focus:text-destructive"
-              data-testid="menu-item-delete-thread"
-            >
-              <Trash2 className="h-4 w-4 mr-2" /> Delete chat
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      <ChatTools label="Conversation details" open={detailsOpen} onOpenChange={setDetailsOpen}>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={()=>archiveMutation.mutate(!thread.archivedAt)} data-testid="menu-item-toggle-archive">{thread.archivedAt?<ArchiveRestore/>:<Archive/>}{thread.archivedAt?"Unarchive chat":"Archive chat"}</Button>
+        <Button variant="ghost" size="sm" className="text-destructive" onClick={()=>{setDetailsOpen(false);setDeleteThreadOpen(true);}} data-testid="menu-item-delete-thread"><Trash2/>Delete chat</Button>
       </div>
-
       <ReferralLinkPanel
         thread={thread}
         role="admin"
@@ -585,7 +558,8 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
+      </ChatTools></header>
+      <div role="log" aria-label="Messages" className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
           <Skeleton className="h-12 w-2/3 rounded-lg skeleton-shimmer" />
         ) : !messages || messages.length === 0 ? (
@@ -931,11 +905,11 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
   });
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const log=bottomRef.current?.parentElement;if(log)log.scrollTop=log.scrollHeight;
   }, [messages.length]);
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-4 gap-3">
+    <div className="chat-detail-pane flex-1 flex flex-col min-w-0 min-h-0 border border-card-border rounded-lg bg-card p-3 gap-2">
       <div className="flex items-center gap-2 shrink-0 pb-1 border-b border-border">
         {showBackButton && (
           <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-close-staff-chat-mobile">Back</Button>
@@ -949,10 +923,10 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
           <span className="flex items-center gap-2 text-sm font-medium">
             <Users className="h-4 w-4 text-primary" /> Staff Room
           </span>
-        )}
+        )}<div className="ml-auto"><InvitationInstall/></div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
+      <div role="log" aria-label="Messages" className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
         {isLoading ? (
           <>
             <Skeleton className="h-12 w-2/3 rounded-lg skeleton-shimmer self-start" />
