@@ -3,6 +3,11 @@ import { flushSync } from "react-dom";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { navigate } from "wouter/use-hash-location";
+import { adminChatDestination } from "@shared/adminChatTarget";
+
+function afterSignIn(role: string) {
+  return role === "admin" ? adminChatDestination(new URL(location.href)) || "/" : "/";
+}
 
 export type AuthUser = {
   id: number;
@@ -141,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // page, or a stale deep link from a previous session) may not exist as a
       // route in the freshly-mounted role-specific app shell. Reset to the
       // home tab so a successful login never lands on a 404.
-      navigate("/", { replace: true });
+      navigate(afterSignIn(data.user.role), { replace: true });
     } finally {
       setLoading(false);
     }
@@ -150,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithUser = useCallback((authUser: AuthUser) => {
     setPendingState(null);
     setUser(authUser);
-    navigate("/", { replace: true });
+    navigate(afterSignIn(authUser.role), { replace: true });
   }, []);
 
   const viewAsMember = useCallback(async (userId: number) => {

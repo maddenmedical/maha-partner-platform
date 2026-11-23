@@ -33,6 +33,10 @@ import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { AdminNewChat } from "@/components/chat/AdminNewChat";
 import { AdminChatInvites } from "@/components/chat/AdminChatInvites";
+import { InvitationConversation, useInvitationFilters } from "@/components/chat/InvitationConversation";
+import { adminChatDestination } from "@shared/adminChatTarget";
+import { navigate as navigateToChat } from "wouter/use-hash-location";
+import { Redirect } from "wouter";
 import {ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
 import {InvitationInstall} from "@/components/chat/InvitationInstall";
 import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from "@/lib/chatMentions";
@@ -62,6 +66,38 @@ interface ThreadRow {
 interface AdminReferralRow extends Referral {
   partnerId: number;
   chatThreadId: number | null;
+}
+
+// An alert is a route, not transient sidebar state. Authenticated recipient
+// lists resolve the label and permission before mounting any message/composer.
+export function AdminAlertConversation({kind,id}:{kind:string;id:string}) {
+  const {user}=useAuth();
+  const valid=!!adminChatDestination(new URL(location.href)) && user?.role==="admin";
+  const api=kind==="invitation"?"/api/admin/guest-chats":kind==="dm"?"/api/admin/staff-chat/dm/threads":"/api/admin/chat/threads";
+  const list=useQuery<Array<ThreadRow & {label?:string;linkedThreadId?:number;revokedAt?:number;declinedAt?:number;otherAdminName?:string}>>({
+    queryKey:["admin-alert-target",user?.id,api,id],
+    queryFn:async()=>(await apiRequest("GET",api)).json(),enabled:valid&&kind!=="room",retry:1,staleTime:0
+  });
+  const row=list.data?.find(x=>String(x.id)===id);
+  const filters=useInvitationFilters(id);
+  useEffect(()=>{
+    const url=new URL(location.href);
+    if(url.searchParams.has("thread")){url.searchParams.delete("thread");history.replaceState(history.state,"",url);}
+  },[]);
+  const back=()=>navigateToChat("/admin/chat");
+  useChatViewport(valid);
+  if(!valid || (kind!=="room" && !list.isPending && !row))
+    return <div role="alert">This conversation is unavailable for this account. <Button onClick={back}>Chat Inbox</Button></div>;
+  if(kind!=="room"&&!row)return <p role="status">Opening this conversation…</p>;
+  const member=(value:number)=>navigateToChat(`/admin/chat/thread/${value}`);
+  if(kind==="invitation"&&row?.linkedThreadId)return <Redirect to={`/admin/chat/thread/${row.linkedThreadId}`} replace/>;
+  return <div className="admin-chat-layout chat-detail-pane flex flex-col flex-1 min-h-0 overflow-hidden" data-testid="alert-conversation">
+    <Button variant="ghost" size="sm" className="self-start" onClick={back}>Back to Chat Inbox</Button>
+    {kind==="invitation" ? <><h2 className="font-semibold">{row?.label || "Invitation chat"}</h2>
+      <InvitationConversation inviteId={id} admin closed={!!row?.declinedAt||!!row?.revokedAt} filters={filters}/></>
+    : kind==="thread" ? <ThreadDetail thread={row!} allThreads={list.data} onSelectSurvivor={member} onCloseThread={back}/>
+    : <StaffChatDetail selection={kind==="room"?{kind:"room"}:{kind:"dm",threadId:Number(id),otherAdminName:row?.otherAdminName||"Staff conversation"}} onClose={back}/>}
+  </div>;
 }
 
 export default function AdminChatInbox() {

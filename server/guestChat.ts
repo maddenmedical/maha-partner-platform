@@ -13,6 +13,7 @@ import { uploadToDrive, streamFromDriveRanged } from "./googleDrive";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { sendEmail } from "./email";
 import { notifyUsers } from "./push";
+import { readAdminConversationNotices } from "./notificationStore";
 import {clearGuestPush,enrollGuest,notifyGuest} from "./guestPush";
 import {activeGuest} from "./guestAccess";
 
@@ -413,6 +414,7 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   app.get("/api/admin/guest-chats/:id", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
     db.update(invites).set({ adminReadAt: Date.now() }).where(eq(invites.id, invite.id)).run();
+    readAdminConversationNotices(req.user.id,`/admin/chat/invitation/${invite.id}`);
     res.json({ messages: present(invite.id, actor(req, true), true), linkedThreadId: invite.linkedThreadId });
   }));
   app.post("/api/admin/guest-chats/:id/reply", ...admin, safe(async (req, res) => {
@@ -583,9 +585,15 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     if (!send(req, invite, false)) return res.json({ ok: true });
     touchGuest(req,res,invite);
     const admins = await storage.listAdmins();
+    const intended=invite.intendedUserId ? await storage.getUser(invite.intendedUserId) : null;
+    const previewTitle=intended?.name.trim() ? `Invitation for ${intended.name.trim()}` : `Invitation chat ${invite.id.slice(0,6).toUpperCase()}`;
     void notifyUsers(admins.map(a => a.id), "chat", {
-      previewTitle: "New invitation chat message", previewBody: "Open Chat invitations to reply.",
-      genericTitle: "New invitation chat message", genericBody: "Open Chat invitations to reply.", url: "/admin/chat",
+      // The internal contact label is not verified guest identity and can be
+      // free text. Show it only inside the authenticated admin inbox.
+      inboxTitle: invite.label.trim() ? `Invitation chat: ${invite.label.trim()}` : "Invitation chat",
+      previewTitle, previewBody: "Open this conversation to reply.",
+      genericTitle: "New invitation chat message", genericBody: "Open this conversation to reply.",
+      url: `/admin/chat/invitation/${invite.id}`,
     }).catch(() => {});
     res.json({ ok: true });
   }));

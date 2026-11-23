@@ -43,7 +43,8 @@ import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminVideos from "@/pages/admin/AdminVideos";
 import AdminInstitute from "@/pages/admin/AdminInstitute";
-import AdminChatInbox from "@/pages/admin/AdminChatInbox";
+import AdminChatInbox, { AdminAlertConversation } from "@/pages/admin/AdminChatInbox";
+import { adminChatDestination } from "@shared/adminChatTarget";
 import AdminCommunity from "@/pages/admin/AdminCommunity";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminPartners from "@/pages/admin/AdminPartners";
@@ -154,6 +155,12 @@ function StudentApp() {
   );
 }
 
+function AdminInboxLanding() {
+  const target=adminChatDestination(new URL(location.href));
+  return target ? <Redirect to={target} replace/> :
+    <AdminLayout title={ADMIN_TITLES["/admin/chat"]}><AdminChatInbox /></AdminLayout>;
+}
+
 function AdminApp() {
   return (
     <Switch>
@@ -178,8 +185,11 @@ function AdminApp() {
       <Route path="/admin/institute">
         <AdminLayout title={ADMIN_TITLES["/admin/institute"]}><AdminInstitute /></AdminLayout>
       </Route>
+      <Route path="/admin/chat/:kind/:id">{p =>
+        <AdminLayout title="Chat"><AdminAlertConversation key={`${p.kind}/${p.id}`} kind={p.kind} id={p.id}/></AdminLayout>
+      }</Route>
       <Route path="/admin/chat">
-        <AdminLayout title={ADMIN_TITLES["/admin/chat"]}><AdminChatInbox /></AdminLayout>
+        <AdminInboxLanding/>
       </Route>
       <Route path="/admin/community">
         <AdminLayout title={ADMIN_TITLES["/admin/community"]}><AdminCommunity /></AdminLayout>

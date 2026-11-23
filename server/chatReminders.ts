@@ -59,8 +59,7 @@ async function runReminders(now: number) {
       if (!currentEpisode || currentEpisode.first.id !== episode.first.id) break;
 
       const origin = (process.env.APP_BASE_URL || "https://maha-partner-platform.onrender.com").replace(/\/$/, "");
-      const route = episode.fromAdmin ? "/chat" : "/admin/chat";
-      const href = `${origin}/?thread=${thread.id}#${route}`.replace(/"/g, "&quot;");
+      const href = `${origin}/${episode.fromAdmin ? `?thread=${thread.id}#/chat` : `admin/#/admin/chat/thread/${thread.id}`}`.replace(/"/g, "&quot;");
       // Stable content is intentional: retries use the same provider
       // idempotency key, even if the recipient has opened the thread since.
       const html = `<div style="font-family:Arial,sans-serif;max-width:560px">

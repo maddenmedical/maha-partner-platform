@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 process.env.SQLITE_DB_PATH = ":memory:";
 process.env.NODE_ENV = "test";
 process.env.RESEND_API_KEY = "fixture-not-a-key";
@@ -228,6 +229,42 @@ else {
     check((await restored.json()).notifyEnhancedVisibility === true, "partner can re-enable enhanced visibility");
     await notifyUsers([3], "chat", { genericTitle: "New message", genericBody: "Sign in", previewTitle: "", previewBody: "" });
     check(pushes.at(-1).payload.requireInteraction === true, "re-enabled enhanced visibility requests ordinary push retention");
+    const wanted=3, labels=["Unverified test contact A","Unverified test contact B"];
+    const inviteIds=[randomUUID(),randomUUID()];
+    db.update(s.users).set({notifyChatEnabled:true,notifyChatStyle:"preview",notifyStaffEnabled:true}).where(eq(s.users.id,1)).run();
+    db.update(s.users).set({notifyChatEnabled:true,notifyChatStyle:"silent"}).where(eq(s.users.id,2)).run();
+    for(const id of [1,2])await storage.upsertPushSubscription({userId:id,endpoint:`https://push.example.invalid/target-${id}`,p256dh:"mock",auth:"mock",createdAt:now});
+    for(const [index,id] of inviteIds.entries()){
+      const key=randomUUID(), sha=(x:string)=>createHash("sha256").update(x).digest("hex");
+      db.insert(s.guestChatInvites).values({id,tokenHash:sha(randomUUID()),createdBy:1,intendedUserId:index?null:wanted,label:labels[index],topic:"PRIVATE CASE TOPIC",createdAt:now,openedAt:now,expiresAt:now+60000,sessionHash:sha(key),personalNoticeVersion:1}).run();
+      const res=await nativeFetch(`${base}/api/guest-chat/${id}/message`,{method:"POST",headers:{"Content-Type":"application/json","x-maha-page-key":key},body:JSON.stringify({requestId:randomUUID(),body:"PRIVATE CASE TEXT"})});
+      check(res.ok,"real guest message fixture accepted");
+      const path=`/admin/#/admin/chat/invitation/${id}`, notices=notificationSummary(1).items;
+      check(notices.some(n=>n.url===path&&n.title.includes(labels[index])),"ledger contains exact invitation and private admin contact label");
+      const alert=pushes.find(p=>p.payload.url===path&&p.sub.endpoint.endsWith("target-1"))?.payload;
+      const quiet=pushes.find(p=>p.payload.url===path&&p.sub.endpoint.endsWith("target-2"))?.payload;
+      check(alert && (index ? alert.title.includes(id.slice(0,6).toUpperCase()):alert.title.includes("Dr. QA 3"))&&!/PRIVATE|Unverified/.test(JSON.stringify(alert)),"Preview identifies intended contact or neutral chat reference, no internal label or message text");
+      check(quiet?.silent&&quiet.title==="New invitation chat message","Quiet conceals identity and preserves exact destination");
+      for(const mode of ["warm","cold","guest-page"]){
+        const handlers:any={},calls:string[]=[];let pending:any,shown:any;
+        const client={url:mode==="guest-page"?"https://example.invalid/#/guest-chat/fixture":"https://example.invalid/admin/#/admin/home",postMessage(){},async focus(){},async navigate(u:string){calls.push("navigate "+u);return this;}};
+        const self={location:{origin:"https://example.invalid"},navigator:{},registration:{scope:"https://example.invalid/",async showNotification(_:string,o:any){shown=o;}},clients:{async matchAll(){return mode==="cold"?[]:[client];},async openWindow(u:string){calls.push("open "+u);}},addEventListener(k:string,f:any){handlers[k]=f;}};
+        vm.runInNewContext(readFileSync("client/public/sw.js","utf8"),{self,URL,Number,AbortController,setTimeout,clearTimeout,fetch:async()=>({ok:true,json:async()=>({count:2})})});
+        handlers.push({data:{json:()=>alert},waitUntil:(p:any)=>{pending=p;}});await pending;
+        handlers.notificationclick({notification:{data:shown.data,close(){}},waitUntil:(p:any)=>{pending=p;}});await pending;
+        check(calls.join("")===`${mode==="warm"?"navigate":"open"} https://example.invalid${path}`,`worker ${mode}: tapped push opens only its intended conversation`);
+      }
+    }
+    await api("GET",`/api/admin/guest-chats/${inviteIds[1]}`);
+    check(notificationSummary(1).items.some(n=>n.url.endsWith(inviteIds[0]))&&!notificationSummary(1).items.some(n=>n.url.endsWith(inviteIds[1]))&&notificationSummary(2).items.some(n=>n.url.endsWith(inviteIds[1])),"reading invitation clears only selected conversation for reading admin");
+    check((await api("GET",`/api/admin/guest-chats/${inviteIds[0]}`,"qa-3")).status===403,"partner denied admin invitation");
+    const thread=await storage.createThread(3,"partner","PRIVATE TOPIC");
+    await api("POST",`/api/chat/threads/${thread.id}/messages`,"qa-3",{body:"PRIVATE CASE TEXT"});
+    const match=pushes.find(p=>p.payload.url===`/admin/#/admin/chat/thread/${thread.id}`&&p.sub.endpoint.endsWith("target-1"));
+    check(match?.payload.title.includes("Dr. QA 3")&&!/PRIVATE/.test(JSON.stringify(match.payload)),"real member-to-admin alert has exact route and no case details");
+    const dm=await storage.getOrCreateStaffDmThread(1,2);
+    await api("POST",`/api/admin/staff-chat/dm/threads/${dm.id}/messages`,"qa-2",{body:"PRIVATE STAFF CONTENT"});
+    check(notificationSummary(1).items.some(n=>n.url===`/admin/#/admin/chat/dm/${dm.id}`&&n.title.includes("Dr. QA 2"))&&!notificationSummary(2).items.some(n=>n.url===`/admin/#/admin/chat/dm/${dm.id}`),"private staff alert has exact conversation and only other admin recipient");
     console.log(`ALL ${checks} NOTIFICATION CHECKS PASSED`);
   } finally {
     server.closeAllConnections();

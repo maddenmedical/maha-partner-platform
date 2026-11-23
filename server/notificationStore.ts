@@ -31,6 +31,11 @@ export function readReferralNotice(userId: number, referralId: number) {
   db.update(appNotifications).set({ readAt: Date.now() })
     .where(and(eq(appNotifications.userId, userId), eq(appNotifications.id, `referral:${referralId}:${userId}`))).run();
 }
+export function readAdminConversationNotices(userId:number,path:string) {
+  db.update(appNotifications).set({readAt:Date.now()}).where(and(
+    eq(appNotifications.userId,userId),inArray(appNotifications.url,[`/admin/#${path}`,`/#${path}`]),
+    inArray(appNotifications.category,["chat","staff"]),isNull(appNotifications.readAt))).run();
+}
 export function readChatNotices(userId: number, threadId: number, messageIds: number[]) {
   if (!messageIds.length) return;
   db.update(appNotifications).set({ readAt: Date.now() }).where(and(

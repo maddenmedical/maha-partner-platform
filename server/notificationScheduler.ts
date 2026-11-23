@@ -104,13 +104,15 @@ export function startNotificationScheduler(storage: IStorage) {
         // The dedicated referral alert replaces the auto-created chat alert.
         if (thread.kind === "referral") continue;
         const starter = await storage.getUser(thread.userId);
+        const origin=(process.env.APP_BASE_URL || "https://maha-partner-platform.onrender.com").replace(/\/$/,"");
+        const chatUrl=escapeHtml(`${origin}/admin/#/admin/chat/thread/${thread.id}`);
         const html = `
           <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
             <h2>New chat started</h2>
-            <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b> (${escapeHtml(thread.userRole)}) started a new chat: <b>${escapeHtml(thread.topic)}</b>.</p>
-            <p style="font-size:13px;color:#666;">Reply from the admin chat inbox in the Partner Platform.</p>
+            <p><b>${escapeHtml(starter?.name || "A " + thread.userRole)}</b> started a new chat.</p>
+            <p><a href="${chatUrl}">Open this conversation</a></p>
           </div>`;
-        const chatResults = await sendEmail(CHAT_RECIPIENTS, `New chat started: ${thread.topic}`, html);
+        const chatResults = await sendEmail(CHAT_RECIPIENTS, "New MAHA chat", html);
         if (chatResults.some((r) => r.to === "partner@maha.clinic" && r.ok)) {
           await storage.markChatThreadsNotified([thread.id], Date.now());
         }

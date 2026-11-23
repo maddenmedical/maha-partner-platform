@@ -38,7 +38,7 @@ try {
   check(mail.length === 2 && mail.every(m => m.to[0].startsWith("admin")), "unanswered partner message reminds admins, not its sender");
   check(db.select().from(s.chatReminderDeliveries).all().filter(d => d.acceptedAt).length === 1, "partial admin acceptance saved independently");
   check(mail.every(m => !/PRIVATE/.test(JSON.stringify(m)) && m.from.includes("partner@maha.clinic") &&
-    m.html.includes(`?thread=${thread.id}#/admin/chat`) && m.requestHeaders["Idempotency-Key"]), "private content excluded; correct sender, conversation link and idempotency");
+    m.html.includes(`#/admin/chat/thread/${thread.id}`) && m.requestHeaders["Idempotency-Key"]), "private content excluded; correct sender, conversation link and idempotency");
   await message(thread.id, 3, now + 10);
   await deliverChatReminders(now + 20);
   check(mail.length === 2, "same-side follow-up neither resets clock nor duplicates accepted reminder");

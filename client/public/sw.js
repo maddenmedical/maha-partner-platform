@@ -47,7 +47,10 @@ self.addEventListener("notificationclick", event => {
     if (target.origin !== self.location.origin) return;
     for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
       if (new URL(client.url).origin === target.origin && "focus" in client) {
-        await client.navigate(target.href); await client.focus(); return;
+        // Do not replace an open guest document: some guest credentials live
+        // only for the lifetime of that page.
+        if (/^#\/(?:continue-chat|guest-chat)\//.test(new URL(client.url).hash)) continue;
+        try { const next=await client.navigate(target.href); if(next!==null){await (next||client).focus(); return;} } catch {}
       }
     }
     await self.clients.openWindow(target.href);

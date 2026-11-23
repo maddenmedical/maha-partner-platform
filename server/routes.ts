@@ -33,7 +33,7 @@ import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
-import { notificationSummary, readNotices, readReferralNotice, readChatNotices } from "./notificationStore";
+import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices } from "./notificationStore";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
@@ -148,14 +148,14 @@ async function notifyAdminsOfNewMessage(thread: { id: number; topic: string }, m
   const admins = await storage.listAdmins();
   const adminIds = admins.map((a) => a.id);
   if (!adminIds.length) return;
-  const bodyPreview = (msg.body || "[attachment]").slice(0, 120);
   await notifyUsers(adminIds, "chat", {
     threadId: thread.id, messageId: msg.id,
-    previewTitle: `${msg.senderName}: ${thread.topic}`,
-    previewBody: bodyPreview,
+    inboxTitle: msg.senderName.trim() ? `Chat from ${msg.senderName}` : "New chat message",
+    previewTitle: msg.senderName.trim() ? `Chat from ${msg.senderName}` : "New chat message",
+    previewBody: "Open this conversation to reply.",
     genericTitle: "New chat message",
-    genericBody: `${thread.topic}`,
-    url: "/admin/chat",
+    genericBody: "Open this conversation to reply.",
+    url: `/admin/chat/thread/${thread.id}`,
   });
 }
 
@@ -2511,10 +2511,11 @@ export async function registerRoutes(
     if (adminIds.length) {
       await notifyUsers(adminIds, "chat", {
         previewTitle: `${req.user!.name} requested to reopen a chat`,
-        previewBody: thread.topic,
+        inboxTitle: `${req.user!.name} requested to reopen a chat`,
+        previewBody: "Open the archived conversation.",
         genericTitle: "Chat reopen request",
         genericBody: "A partner asked to reopen an archived chat.",
-        url: "/admin/chat",
+        url: `/admin/chat/thread/${thread.id}`,
       });
     }
     res.json(updated);
@@ -2887,6 +2888,7 @@ export async function registerRoutes(
   // surfaced to partners or students) ----------
   // Shared Staff Room: every admin reads the same feed.
   app.get("/api/admin/staff-chat/room/messages", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
+    readAdminConversationNotices(req.user!.id,"/admin/chat/room/main");
     const messages = await storage.listStaffRoomMessages();
     await storage.markStaffRoomRead(req.user!.id);
     res.json(messages.map(redactDeletedMessage));
@@ -2913,8 +2915,9 @@ export async function registerRoutes(
       genericTitle: "New message in Staff Room",
       genericBody: "Tap to view.",
       previewTitle: `${req.user!.name} \u2014 Staff Room`,
-      previewBody: msg.body.slice(0, 140) || "Sent an attachment.",
-      url: "/#/admin/chat",
+      inboxTitle: `Staff Room: ${req.user!.name}`,
+      previewBody: "Open the Staff Room to reply.",
+      url: "/#/admin/chat/room/main",
     }).catch((err) => console.error("[push] staff room notify failed:", err));
     res.json(msg);
   });
@@ -2992,6 +2995,7 @@ export async function registerRoutes(
     if (thread.adminAId !== req.user!.id && thread.adminBId !== req.user!.id) return res.status(403).json({ message: "Forbidden" });
     const messages = await storage.listStaffDmMessages(threadId);
     await storage.markStaffDmThreadRead(threadId, req.user!.id);
+    readAdminConversationNotices(req.user!.id,`/admin/chat/dm/${threadId}`);
     res.json(messages.map(redactDeletedMessage));
   });
 
@@ -3021,8 +3025,9 @@ export async function registerRoutes(
       genericTitle: "New direct message",
       genericBody: "Tap to view.",
       previewTitle: req.user!.name,
-      previewBody: msg.body.slice(0, 140) || "Sent an attachment.",
-      url: "/#/admin/chat",
+      inboxTitle: `Staff message from ${req.user!.name}`,
+      previewBody: "Open this direct conversation to reply.",
+      url: `/#/admin/chat/dm/${threadId}`,
     }).catch((err) => console.error("[push] staff dm notify failed:", err));
     res.json(msg);
   });

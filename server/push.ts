@@ -106,6 +106,9 @@ export interface NotifyContent {
   // Shown for "preview" style -- the real content, e.g.
   // `Dr. Moreira just opened a new Community thread called "..."`.
   previewTitle: string;
+  // Authenticated inbox only. Never copied into the lock-screen payload.
+  inboxTitle?: string;
+  inboxBody?: string;
   previewBody: string;
   url?: string | null;
 }
@@ -147,7 +150,8 @@ export async function notifyUsers(
         const route = user.role === "admin" && url === "/community" ? "/admin/community" : url;
         url = `/#${route}`;
       }
-      const id = addNotice({ userId, category, title: content.genericTitle, body: content.genericBody,
+      if(user.role==="admin" && url.startsWith("/#/admin/chat/"))url=`/admin${url}`;
+      const id = addNotice({ userId, category, title: content.inboxTitle || content.genericTitle, body: content.inboxBody || content.genericBody,
         url, threadId: content.threadId, messageId: content.messageId, createdAt: Date.now() });
       const badgeCount = notificationSummary(userId).count;
 

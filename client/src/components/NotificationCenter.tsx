@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { setPendingThreadId } from "@/lib/chatNav";
+import { adminChatDestination, adminChatPath } from "@shared/adminChatTarget";
 
-type Notice = { id: string; title: string; body: string; url: string; critical: boolean; createdAt: number };
+type Notice = { id: string; title: string; body: string; url: string; threadId?: number; critical: boolean; createdAt: number };
 type Summary = { count: number; criticalCount: number; firstCritical?: Notice; items: Notice[] };
 type BadgeNavigator = Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
 const OPEN_NOTIFICATIONS = "MAHA_OPEN_NOTIFICATIONS";
@@ -20,8 +21,11 @@ function useNotifications() {
     queryFn: async () => (await apiRequest("GET", "/api/notifications")).json(),
     enabled: !!user && !user.impersonating, refetchInterval: 15000, refetchOnWindowFocus: true });
 }
-function destination(url: string) {
+function destination(url: string, threadId?: number) {
   const target = new URL(url, window.location.href);
+  if(target.origin !== location.origin) return "/";
+  const chat = adminChatDestination(target) || (threadId && target.hash==="#/admin/chat" ? adminChatPath("thread",threadId) : null);
+  if(chat) return chat;
   const thread=Number(target.searchParams.get("thread"));
   if(target.hash==="#/chat" && Number.isSafeInteger(thread) && thread>0) {setPendingThreadId(thread);return "/chat";}
   return target.hash.startsWith("#/") ? target.hash.slice(1) + target.search : "/";
@@ -67,12 +71,13 @@ export function NotificationBell() {
     return () => worker?.removeEventListener("message", onMessage);
   }, [queryClient]);
   async function review(item: Notice) {
+    // Open immediately even if acknowledging the bell is slow or offline.
+    setOpen(false); navigate(destination(item.url, item.threadId));
     try {
       // Referrals stay highlighted until their actual detail opens.
       if (!item.critical) await apiRequest("POST", "/api/notifications/read", { ids: [item.id] });
       await queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
-      setOpen(false); navigate(destination(item.url));
-    } catch { toast({ title: "Could not open notification. Please try again.", variant: "destructive" }); }
+    } catch { toast({ title: "Could not update the unread notification.", variant: "destructive" }); }
   }
   if (user?.impersonating) return null;
   return <>
@@ -113,6 +118,13 @@ export function NotificationAttentionBanner() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
   if (user?.impersonating || !data?.count) return null;
+  const conversations=new Map<string, Notice>();
+  if(user?.role==="admin") for(const item of data.items||[]) {
+    const url=new URL(item.url,location.href);
+    const path=url.origin===location.origin && (adminChatDestination(url) ||
+      (url.hash==="#/admin/chat"&&item.threadId ? adminChatPath("thread",item.threadId) : null));
+    if(path&&!conversations.has(path))conversations.set(path,item);
+  }
   if (user?.notifyEnhancedVisibility === false) {
     if (!data.criticalCount || !data.firstCritical) return null;
     return <div role="alert" className="mx-4 my-2 rounded-lg border-2 border-destructive/70 bg-destructive/10 p-3 flex flex-wrap items-center gap-3 shrink-0"
@@ -142,6 +154,9 @@ export function NotificationAttentionBanner() {
       </p> : <p className="text-xs">Stays here until you review or mark alerts as read.</p>}
     </div>
     <div className="flex flex-wrap gap-2">
+      {Array.from(conversations).slice(0,3).map(([path,item])=>
+        <Button variant="outline" size="sm" key={path} onClick={()=>navigate(path)}
+          className="min-h-10 max-w-full"><span className="truncate">Open: {item.title}</span></Button>)}
       {!!data.criticalCount && data.firstCritical && <Button size="sm"
         className="bg-red-700 text-white hover:bg-red-800 min-h-10"
         onClick={() => navigate(destination(data.firstCritical!.url))}
