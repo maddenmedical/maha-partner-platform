@@ -33,7 +33,7 @@ import type { Course, Video } from "@shared/schema";
 import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
-import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices } from "./notificationStore";
+import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices, ownAdminChatTarget } from "./notificationStore";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
@@ -3702,6 +3702,13 @@ export async function registerRoutes(
   app.get("/api/notifications", requireAuth, async (req: AuthedRequest, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.json(notificationSummary(req.user!.id));
+  });
+  app.get("/api/admin/notification-target/:noticeId",requireAuth,requireRole("admin"),(req:AuthedRequest,res)=>{
+    res.set("Cache-Control","private, no-store");
+    const id=String(req.params.noticeId);
+    const path=/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id) && ownAdminChatTarget(req.user!.id,id);
+    if(!path||req.impersonatedBy)return res.status(404).json({message:"This notification is unavailable for this account."});
+    res.json({path});
   });
   app.post("/api/notifications/read", requireAuth, async (req: AuthedRequest, res) => {
     const ids = req.body?.ids;

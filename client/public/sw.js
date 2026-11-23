@@ -1,5 +1,5 @@
 // Always badge via WorkerNavigator, not ServiceWorkerRegistration.
-self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 self.addEventListener("push", event => {
   let payload = {};
@@ -28,11 +28,13 @@ self.addEventListener("push", event => {
     if (Number.isFinite(count) && count >= 0 && "setAppBadge" in self.navigator) {
       try { await self.navigator.setAppBadge(Math.floor(count)); } catch {}
     }
+    const launch=adminTapURL(payload.url,payload.tag);
     await self.registration.showNotification(payload.title || "MAHA Partner Platform", {
       body: payload.body || "Open MAHA to review your new notification.",
       icon: "./icon-192.png", badge: "./icon-192.png", tag: payload.tag,
       requireInteraction: !!payload.requireInteraction, silent: !!payload.silent,
       ...(payload.priority === "high" && !payload.silent ? { vibrate: [250, 100, 250] } : {}),
+      ...(launch?{navigate:launch}:{}), // Native activation where available; legacy agents ignore this option.
       data: { url: payload.url || "./" },
     });
     for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
@@ -40,7 +42,45 @@ self.addEventListener("push", event => {
     }
   })());
 });
+function adminTapURL(path,id){
+  if(typeof id!=="string"||!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id))return null;
+  if(typeof path!=="string"||!/^\/admin\/#\/admin\/chat\/(?:(?:thread|dm)\/[1-9]\d*|room\/main|invitation\/[\da-f-]{36})$/i.test(path))return null;
+  return new URL(`/admin/open-alert/${id}`,self.registration.scope).href;
+}
+async function rememberAdminTap(id){
+  // Only a tap writes. No message, sender name, credentials or private
+  // conversation ID are stored. The signed-in server resolves ownership.
+  const cache=await caches.open("maha-admin-tap-v1"),now=Date.now();
+  for(const key of await cache.keys()){
+    const ts=Number(new URL(key.url).pathname.split("/").at(-2));
+    if(!Number.isFinite(ts)||now-ts>300000)await cache.delete(key);
+  }
+  await cache.put(new URL(`/admin/.tap/${now}/${id}`,self.registration.scope),new Response("1"));
+}
+async function activateAdminTap(url,id){
+  // Use transient activation immediately, before disk access, app startup,
+  // network requests, window enumeration, or navigating a suspended client.
+  const open=(async()=>self.clients.openWindow(url))().catch(()=>null);
+  const saved=rememberAdminTap(id).catch(()=>{});
+  try{
+    const opened=await open;
+    if(opened && opened.url===url)return;
+    const visible=await self.clients.matchAll({type:"window",includeUncontrolled:true});
+    const eligible=c=>{try{const u=new URL(c.url);return u.origin===self.location.origin&&u.pathname.startsWith("/admin/")&&!/^#\/(?:continue-chat|guest-chat)\//.test(u.hash);}catch{return false;}};
+    const client=opened&&eligible(opened)?opened:visible.find(eligible);
+    if(client){
+      try{await client.focus();}catch{}
+      await saved;
+      try{client.postMessage({type:"MAHA_ADMIN_TAP",id});}catch{}
+    }
+  } finally {await saved;}
+}
 self.addEventListener("notificationclick", event => {
+  const launch=adminTapURL(event.notification.data?.url,event.notification.tag);
+  if(launch){
+    event.waitUntil(activateAdminTap(launch,event.notification.tag).finally(()=>event.notification.close()));
+    return;
+  }
   event.notification.close();
   event.waitUntil((async () => {
     const target = new URL(event.notification.data?.url || "./", self.registration.scope);

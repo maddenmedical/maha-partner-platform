@@ -2,6 +2,15 @@ import crypto from "node:crypto";
 import { and, eq, isNull, desc, sql, inArray } from "drizzle-orm";
 import { appNotifications } from "@shared/schema";
 import { db } from "./storage";
+import { adminChatDestination } from "@shared/adminChatTarget";
+
+export function ownAdminChatTarget(userId:number,noticeId:string){
+  const n=db.select({url:appNotifications.url}).from(appNotifications).where(and(
+    eq(appNotifications.id,noticeId),eq(appNotifications.userId,userId),
+    inArray(appNotifications.category,["staff","chat"]))).get();
+  if(!n?.url.startsWith("/admin/#/admin/chat/"))return null;
+  return adminChatDestination(new URL(n.url,"https://maha.invalid"));
+}
 
 type NewNotice = Omit<typeof appNotifications.$inferInsert, "id"> & { id?: string };
 export function addNotice(input: NewNotice) {

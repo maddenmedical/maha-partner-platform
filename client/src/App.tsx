@@ -45,6 +45,8 @@ import AdminVideos from "@/pages/admin/AdminVideos";
 import AdminInstitute from "@/pages/admin/AdminInstitute";
 import AdminChatInbox, { AdminAlertConversation } from "@/pages/admin/AdminChatInbox";
 import { adminChatDestination } from "@shared/adminChatTarget";
+import { launchNotice } from "@/lib/adminAlertLaunch";
+import { AdminAlertLaunch } from "@/components/AdminAlertLaunch";
 import AdminCommunity from "@/pages/admin/AdminCommunity";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminPartners from "@/pages/admin/AdminPartners";
@@ -253,6 +255,8 @@ function RootRouter() {
     );
   }
 
+  const notice=launchNotice();
+  if(notice)return user?<AdminAlertLaunch id={notice}/>:<Login/>;
   if (!user) {
     return (
       <Switch>

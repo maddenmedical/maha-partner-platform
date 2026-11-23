@@ -1,6 +1,9 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import {watchAdminAlertLaunch} from "@/lib/adminAlertLaunch";
+
+watchAdminAlertLaunch();
 
 if (!window.location.hash) {
   window.location.hash = "#/";
@@ -13,7 +16,7 @@ createRoot(document.getElementById("root")!).render(<App />);
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     try {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
+      navigator.serviceWorker.register("/sw.js",{updateViaCache:"none"}).catch(() => {
         // Non-fatal: push simply stays unavailable if registration fails.
       });
     } catch {
