@@ -36,6 +36,7 @@ import { getVapidPublicKey, notifyUsers } from "./push";
 import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices, ownAdminChatTarget } from "./notificationStore";
 import { unreadMembers, unreadSummary, recordInboxRead } from "./adminInbox";
 import {registerWidget} from "./widget";
+import {registerWidgetInstaller} from "./widgetInstaller";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
@@ -533,6 +534,7 @@ export async function registerRoutes(
 ): Promise<Server> {
   registerGuestChatRoutes(app, requireAuth, requireRole("admin"), getOptionalUser, setSessionCookie);
   registerWidget(app,requireAuth,requireRole("admin"));
+  registerWidgetInstaller(app,requireAuth,requireRole("admin"));
   app.get("/api/health", (_req, res) => {
     try {
       sqliteDb.prepare("SELECT 1").get();

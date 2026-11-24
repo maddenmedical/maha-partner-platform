@@ -1001,6 +1001,7 @@ function StaffChatDetail({ selection, onClose, showBackButton }: { selection: Ex
                 key={m.id}
                 message={m}
                 isMe={m.senderId === user?.id}
+                installerDm={selection.kind==="dm"?selection.threadId:undefined}
                 isAdmin
                 hideFlag
                 hideReactions

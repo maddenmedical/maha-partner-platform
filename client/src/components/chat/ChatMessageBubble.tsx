@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { mentionTokenRegex } from "@/lib/chatMentions";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TierBadge } from "@/components/TierBadge";
+import {PILOT_APK_NAME,PILOT_APK_MIME,pilotDownloadPath} from "@shared/widgetInstaller";
 import type { ChatMessage } from "@shared/schema";
 import {chatAuthorLabel,chatAuthorName,isMahaAuthor} from "./authorPresentation";
 
@@ -30,7 +31,31 @@ const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 // Splits a message body around @{{id|label}} mention tokens (see
 // chatMentions.ts) and renders each as a clickable jump-to-thread chip
 // inline with the surrounding text.
-function renderMessageBody(body: string, onNavigateToThread?: (id: number) => void, linkify = false) {
+function WidgetDownloadLink({path}:{path:string}){
+  const [error,setError]=useState("");
+  return <><a href={path} download={PILOT_APK_NAME} className="font-semibold underline" onClick={async e=>{
+    e.preventDefault();e.stopPropagation();setError("");
+    try{
+      // Fetch inside the signed-in MAHA page. The OS download manager receives
+      // bytes only, and never needs a session cookie from a second browser.
+      const r=await fetch(path,{credentials:"same-origin",cache:"no-store",redirect:"error"});
+      if(!r.ok||r.headers.get("content-type")?.split(";")[0]!==PILOT_APK_MIME)throw Error();
+      const bytes=await r.blob();const url=URL.createObjectURL(bytes);
+      const save=document.createElement("a");save.href=url;save.download=PILOT_APK_NAME;
+      document.body.appendChild(save);save.click();save.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch{setError("This private download is unavailable for this MAHA session.");}
+  }}>Download MAHA Chat Widget for Android</a>{error&&<span role="alert"> {error}</span>}</>;
+}
+function renderMessageBody(body: string, onNavigateToThread?: (id: number) => void, linkify = false, installerDm?:number):React.ReactNode {
+  // Only this exact same-origin URL inside its own staff DM becomes a download.
+  // Use an in-scope first-party link, never a third-party or another DM's URL.
+  if(installerDm){
+    const path=pilotDownloadPath(installerDm),url=window.location.origin+path;
+    const lines=body.split("\n");
+    if(lines.some(s=>s.trim()===url))return lines.map((line,i)=><span key={i}>{i>0?"\n":""}{line.trim()===url?
+      <WidgetDownloadLink path={path}/>
+      :renderMessageBody(line,onNavigateToThread,false)}</span>);
+  }
   if (linkify) return body.split(/(https?:\/\/[^\s<>]+)/g).map((part, i) =>
     /^https?:\/\//i.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline break-all">{part}</a> : part);
   const re = mentionTokenRegex();
@@ -127,9 +152,10 @@ interface ChatMessageBubbleProps {
   compact?: boolean;
   disableMp3?: boolean;
   linkify?: boolean;
+  installerDm?:number;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify,installerDm }: ChatMessageBubbleProps) {
   const gold=isMahaAuthor(m);
   const author=chatAuthorLabel(m,isMe);
   const { toast } = useToast();
@@ -448,7 +474,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           ) : (
             m.body && (
               <span className="whitespace-pre-wrap break-words">
-                {renderMessageBody(m.body, onNavigateToThread, linkify)}
+                {renderMessageBody(m.body, onNavigateToThread, linkify,installerDm)}
                 {!!m.editedAt && <span className={cn("text-xs italic ml-1", gold ? "text-primary-foreground/90" : "text-muted-foreground")}>(edited)</span>}
               </span>
             )
