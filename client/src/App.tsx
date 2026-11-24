@@ -47,6 +47,7 @@ import AdminChatInbox, { AdminAlertConversation } from "@/pages/admin/AdminChatI
 import { adminChatDestination } from "@shared/adminChatTarget";
 import { launchNotice } from "@/lib/adminAlertLaunch";
 import { AdminAlertLaunch } from "@/components/AdminAlertLaunch";
+import {AdminWidget,widgetLocation} from "@/components/AdminWidget";
 import AdminCommunity from "@/pages/admin/AdminCommunity";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminPartners from "@/pages/admin/AdminPartners";
@@ -256,6 +257,8 @@ function RootRouter() {
   }
 
   const notice=launchNotice();
+  const widget=widgetLocation(location.pathname);
+  if(widget)return user?<AdminWidget {...widget}/>:<Login/>;
   if(notice)return user?<AdminAlertLaunch id={notice}/>:<Login/>;
   if (!user) {
     return (

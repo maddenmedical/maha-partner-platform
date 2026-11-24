@@ -1022,6 +1022,11 @@ export const adminInboxReads = sqliteTable("admin_inbox_reads",{
   id:text("id").primaryKey(),adminId:integer("admin_id").notNull(),
   conversation:text("conversation").notNull(),messageId:integer("message_id").notNull(),
 });
+// Device id is SHA-256 of the native 256-bit snapshot token. Never a session.
+export const adminWidgetDevices=sqliteTable("admin_widget_devices",{
+  id:text("id").primaryKey(),adminId:integer("admin_id").notNull(),createdAt:integer("created_at").notNull(),
+  revokedAt:integer("revoked_at"),peopleHash:text("people_hash"),
+});
 export const guestChatMessages = sqliteTable("guest_chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   inviteId: text("invite_id").notNull(),

@@ -563,6 +563,7 @@ export default function Account() {
             <Bell className="h-5 w-5 text-primary mt-0.5 shrink-0" />
             <div>
               <h2 className="text-sm font-semibold">Notifications</h2>
+              {user?.role==="admin"&&!user.impersonating&&<a href="/admin/widget-settings" className="text-sm underline">Manage Android chat widgets</a>}
               <p className="text-sm text-muted-foreground mt-0.5">
                 Choose how you want to hear about each type of update. These settings are just for you.
               </p>

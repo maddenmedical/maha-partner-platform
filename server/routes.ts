@@ -34,7 +34,8 @@ import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
 import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices, ownAdminChatTarget } from "./notificationStore";
-import { inboxInvitations, memberReadCursors, memberUnread, recordInboxRead } from "./adminInbox";
+import { unreadMembers, unreadSummary, recordInboxRead } from "./adminInbox";
+import {registerWidget} from "./widget";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
@@ -531,6 +532,7 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   registerGuestChatRoutes(app, requireAuth, requireRole("admin"), getOptionalUser, setSessionCookie);
+  registerWidget(app,requireAuth,requireRole("admin"));
   app.get("/api/health", (_req, res) => {
     try {
       sqliteDb.prepare("SELECT 1").get();
@@ -1904,23 +1906,15 @@ export async function registerRoutes(
   // parallel "since last dashboard visit" timestamp, so a count here always
   // matches what that section's own badge/list already shows.
   app.get("/api/admin/dashboard-summary", requireAuth, requireRole("admin"), async (req: AuthedRequest, res) => {
-    const [pendingUsers, referrals, orders, threads, communityUnreadCount, newEnrollments] = await Promise.all([
+    const [pendingUsers, referrals, orders, communityUnreadCount, newEnrollments] = await Promise.all([
       storage.listUsersByRoleStatus(undefined, "pending"),
       storage.listAllReferrals(),
       storage.listAllOrders(),
-      storage.listThreads(),
       storage.countUnreadCommunityTopicsForUser(req.user!.id),
       storage.countUnseenCompletedCoursePurchases(),
     ]);
 
-    let unreadChatThreads = inboxInvitations(req.user!.id).filter(x=>x.unread).length;
-    const reads=memberReadCursors(req.user!.id);
-    for (const t of threads) {
-      const messages = await storage.listMessagesForThread(t.id);
-      if (memberUnread(t.id,t.adminLastReadAt,messages,reads)) {
-        unreadChatThreads++;
-      }
-    }
+    const unreadChatThreads=unreadSummary(req.user!.id).count;
 
     res.json({
       pendingApprovals: pendingUsers.length,
@@ -2579,14 +2573,14 @@ export async function registerRoutes(
 
   app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (req:AuthedRequest, res) => {
     const threads = await storage.listThreads();
-    const reads=memberReadCursors(req.user!.id);
+    const reads=new Set(unreadMembers(req.user!.id).map(row=>row.id));
     const linked=new Map((sqliteDb.prepare("SELECT linked_thread_id AS thread,id FROM guest_chat_invites WHERE linked_thread_id IS NOT NULL").all() as {thread:number;id:string}[]).map(x=>[x.thread,x.id]));
     const withUser = await Promise.all(
       threads.map(async (t) => {
         const user = await storage.getUser(t.userId);
         const messages = await storage.listMessagesForThread(t.id);
         const last = messages[messages.length - 1];
-        const unread=memberUnread(t.id,t.adminLastReadAt,messages,reads);
+        const unread=reads.has(t.id);
         return {
           ...t,
           ...(linked.has(t.id)?{sourceInvitationId:linked.get(t.id)}:{}),

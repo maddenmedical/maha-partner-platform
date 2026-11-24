@@ -1,28 +1,39 @@
 import {sqliteDb} from "./storage";
-type Message={id:number;senderRole:string;deletedAt?:number|null;createdAt:number};
 export function recordInboxRead(adminId:number,conversation:string,messageId:number){
   if(!messageId)return;
   sqliteDb.prepare(`INSERT INTO admin_inbox_reads(id,admin_id,conversation,message_id) VALUES(?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET message_id=excluded.message_id WHERE excluded.message_id>admin_inbox_reads.message_id`)
     .run(`${adminId}:${conversation}`,adminId,conversation,messageId);
 }
-export function memberReadCursors(adminId:number){
-  const list=sqliteDb.prepare("SELECT conversation,message_id AS cursor FROM admin_inbox_reads WHERE admin_id=?").all(adminId) as {conversation:string;cursor:number}[];
-  return new Map(list.map(r=>[r.conversation,r.cursor]));
+// Inbox, Home, and paired widget share these exact per-admin predicates.
+export function unreadMembers(admin:number){
+  return sqliteDb.prepare(`SELECT t.id,MAX(m.created_at) at FROM chat_threads t
+    JOIN chat_messages m ON m.thread_id=t.id LEFT JOIN admin_inbox_reads r ON r.id=?||t.id
+    WHERE m.sender_role!='admin' AND m.deleted_at IS NULL AND
+    (CASE WHEN r.message_id IS NULL THEN m.created_at>COALESCE(t.admin_last_read_at,0) ELSE m.id>r.message_id END)
+    GROUP BY t.id`).all(`${admin}:thread:`) as {id:number;at:number}[];
 }
-export function memberUnread(id:number,legacyReadAt:number|null,messages:Message[],reads:Map<string,number>){
-  const cursor=reads.get(`thread:${id}`);
-  return messages.some(m=>m.senderRole!=="admin"&&!m.deletedAt&&
-    (cursor===undefined ? m.createdAt>(legacyReadAt||0) : m.id>cursor));
+const eligibleInvite="i.linked_thread_id IS NULL AND i.revoked_at IS NULL AND i.declined_at IS NULL";
+const newGuestMessage="m.sender_role='guest' AND m.id>COALESCE(r.message_id,0)";
+export function unreadRows(admin:number){
+  const guests=sqliteDb.prepare(`SELECT i.id,MAX(m.created_at) at FROM guest_chat_invites i
+    JOIN guest_chat_messages m ON m.invite_id=i.id AND m.deleted_at IS NULL
+    LEFT JOIN admin_inbox_reads r ON r.id=?||i.id
+    WHERE ${eligibleInvite} AND ${newGuestMessage} GROUP BY i.id`).all(`${admin}:invite:`) as {id:string;at:number}[];
+  return [...unreadMembers(admin).map(r=>({at:r.at,path:`/admin/chat/thread/${r.id}`})),
+    ...guests.map(r=>({at:r.at,path:`/admin/chat/invitation/${r.id}`}))].sort((a,b)=>b.at-a.at||a.path.localeCompare(b.path));
+}
+export function unreadSummary(admin:number){
+  const rows=unreadRows(admin);return {count:rows.length,latestAt:rows[0]?.at??null,path:rows[0]?.path??"/admin/chat"};
 }
 export function inboxInvitations(adminId:number){
   // No transcript, invitation token, topic, phone, email or attachment data.
   const list=sqliteDb.prepare(`SELECT i.id, i.label, MAX(COALESCE(i.opened_at,i.created_at),MAX(COALESCE(m.created_at,i.created_at))) AS lastMessageAt,
-    MAX(CASE WHEN m.sender_role='guest' THEN m.id ELSE 0 END)>COALESCE(r.message_id,0) AS unread
+    MAX(CASE WHEN ${newGuestMessage} THEN 1 ELSE 0 END) AS unread
     FROM guest_chat_invites i
     LEFT JOIN guest_chat_messages m ON m.invite_id=i.id AND m.deleted_at IS NULL
     LEFT JOIN admin_inbox_reads r ON r.id=?||i.id
-    WHERE i.linked_thread_id IS NULL AND i.revoked_at IS NULL AND i.declined_at IS NULL
+    WHERE ${eligibleInvite}
     GROUP BY i.id HAVING i.opened_at IS NOT NULL OR MAX(CASE WHEN m.sender_role='guest' THEN 1 ELSE 0 END)>0
     ORDER BY lastMessageAt DESC,i.id`).all(`${adminId}:invite:`) as {id:string;label:string;lastMessageAt:number;unread:number}[];
   return list.map(x=>{
