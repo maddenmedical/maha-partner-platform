@@ -94,7 +94,6 @@ export interface QuotedMessage {
 }
 
 interface ChatMessageBubbleProps {
-  community?:boolean;
   message: ChatMessageWithMeta;
   isMe: boolean;
   onToggleFlag: (id: number) => void;
@@ -130,8 +129,8 @@ interface ChatMessageBubbleProps {
   linkify?: boolean;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify,community=false }: ChatMessageBubbleProps) {
-  const gold=isMahaAuthor(m)||(community&&isMe);
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify }: ChatMessageBubbleProps) {
+  const gold=isMahaAuthor(m);
   const author=chatAuthorLabel(m,isMe);
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -260,7 +259,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           This message was deleted{isAdmin && m.deletedByName ? ` by ${m.deletedByName}` : ""}.
         </div>
         <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
-          {community?(isMe?"You":m.senderName):author}
+          {author}
           <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
           · {format(new Date(m.createdAt), "MMM d, HH:mm")}
         </span>
@@ -274,7 +273,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
       data-testid={`message-${m.id}`}
     >
       <div className="flex max-w-full min-w-0 items-start gap-1">
-        {!isMe && !compact && <UserAvatar photoUrl={m.senderPhotoUrl} name={community?m.senderName:chatAuthorName(m)} size="sm" className="mt-1" />}
+        {!isMe && !compact && <UserAvatar photoUrl={m.senderPhotoUrl} name={chatAuthorName(m)} size="sm" className="mt-1" />}
         {!isMe && !hideReactions && !compact && (
           <div className="hidden sm:block">
             <ReactionTrigger messageId={m.id} onReact={onReact} order="before" />
@@ -300,7 +299,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           onPointerCancel={handleBubblePointerCancelMerged}
           onContextMenu={(e) => e.preventDefault()}
         >
-          {!community&&<span className="text-xs font-semibold" data-testid={`author-${m.id}`}>{author}</span>}
+          <span className="text-xs font-semibold" data-testid={`author-${m.id}`}>{author}</span>
           {quoted && (
             <div
               className={cn(
@@ -670,9 +669,8 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
       )}
 
       <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
-        {community&&(isMe ? "You" : m.senderName)}
         <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
-        {community?"· ":""}{format(new Date(m.createdAt), "MMM d, HH:mm")}
+        {format(new Date(m.createdAt), "MMM d, HH:mm")}
       </span>
     </div>
   );

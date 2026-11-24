@@ -101,5 +101,18 @@ try{
  const darkContrast=await check(partner,"I will ask",names[1]+" · MAHA",true,false);
  await check(partner,"I will wait",names[3]+" (you)",false,true);
  console.log(`PASS dark theme: gold ${darkContrast.toFixed(2)}:1`);
+ const enabled=await fetch(base+"/api/admin/community/enabled",{method:"PATCH",headers:{cookie:"sid=author-1","content-type":"application/json"},body:JSON.stringify({enabled:true})});
+ assert.ok(enabled.ok);
+ const {topic}=await api("/api/community/topics",1,{title:"Clinical coordination",body:"Team post from the coordinator."});
+ await api(`/api/community/topics/${topic.id}/messages`,2,{body:"Second clinician reply."});
+ await api(`/api/community/topics/${topic.id}/messages`,3,{body:"I will ask our coordinator."});
+ for (const [id,p] of [[1,a],[2,peer],[3,partner]] as const){
+   await p.goto(base+(id===3?"/#/chat/community":"/admin/#/admin/community"));
+   await p.getByTestId(`button-topic-${topic.id}`).click();
+   await check(p,"Team post from",names[1]+(id===1?" (you)":"")+" · MAHA",true,id===1);
+   await check(p,"Second clinician reply",names[2]+(id===2?" (you)":"")+" · MAHA",true,id===2);
+   await check(p,"I will ask our",names[3]+(id===3?" (you)":""),false,id===3);
+ }
+ console.log("PASS Community: clinician, second admin and partner posts viewed by each reader; named amber only for MAHA, neutral partner even when own, role-independent alignment.");
  console.log(`PASS personal/shared guest, transferred personal/shared history, three readers, registered partner, staff room/DM, unknown metadata, own controls and contrast (gold ${contrast.toFixed(2)}:1)`);
 }finally{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

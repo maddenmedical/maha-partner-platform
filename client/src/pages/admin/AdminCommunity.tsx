@@ -581,7 +581,7 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
         ) : (
           messages.filter((m) => !search.trim() || m.body.toLowerCase().includes(search.trim().toLowerCase())).map((m) => (
             <div key={m.id} className="group/msg relative pt-4">
-              <ChatMessageBubble community
+              <ChatMessageBubble
                 message={toBubbleMessage(m)}
                 isMe={m.senderRole === "admin" && m.senderId === user?.id}
                 hideFlag
