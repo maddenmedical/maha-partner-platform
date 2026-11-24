@@ -33,6 +33,7 @@ import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { AdminNewChat } from "@/components/chat/AdminNewChat";
 import { AdminChatInvites } from "@/components/chat/AdminChatInvites";
+import {useInboxInvitations, type InboxInvitation} from "@/hooks/use-inbox-invitations";
 import { InvitationConversation, useInvitationFilters } from "@/components/chat/InvitationConversation";
 import { adminChatDestination } from "@shared/adminChatTarget";
 import { navigate as navigateToChat } from "wouter/use-hash-location";
@@ -43,6 +44,7 @@ import { threadMentionLabel, referralMentionLabel, type MentionCandidate } from 
 import type { Referral, User } from "@shared/schema";
 
 interface ThreadRow {
+  sourceInvitationId?:string;
   id: number;
   userId: number;
   userRole: "partner" | "student";
@@ -114,6 +116,7 @@ export default function AdminChatInbox() {
     queryKey: ["/api/admin/chat/threads"],
     refetchInterval: 5000,
   });
+  const invitations=useInboxInvitations();
 
   const archiveThreadMutation = useMutation({
     mutationFn: ({ id, archived }: { id: number; archived: boolean }) =>
@@ -140,6 +143,11 @@ export default function AdminChatInbox() {
   const activeThreads = (threads || []).filter((t) => !t.archivedAt);
   const archivedThreads = (threads || []).filter((t) => t.archivedAt);
   const visibleThreads = view === "archived" ? archivedThreads : activeThreads;
+  const linked=new Set(threads?.map(t=>t.sourceInvitationId).filter(Boolean));
+  const entries=([
+    ...visibleThreads.map(t=>({type:"member" as const,row:t,time:t.lastMessageAt||t.createdAt})),
+    ...(view==="active"?(invitations.data||[]).filter(i=>!linked.has(i.id)).map(i=>({type:"guest" as const,row:i,time:i.lastMessageAt})):[]),
+  ]).sort((a,b)=>b.time-a.time||String(a.row.id).localeCompare(String(b.row.id)));
   const reactivationRequestCount = archivedThreads.filter((t) => t.reactivationRequestedAt).length;
 
   useEffect(() => {
@@ -215,24 +223,22 @@ export default function AdminChatInbox() {
         </div>
         {view === "team" ? (
           <StaffChatSidebar onSelect={setStaffSelection} selected={staffSelection} />
-        ) : isLoading ? (
+        ) : !entries.length&&(isLoading||(view==="active"&&invitations.isLoading)) ? (
           <>
             <Skeleton className="h-16 rounded-lg skeleton-shimmer" />
             <Skeleton className="h-16 rounded-lg skeleton-shimmer" />
           </>
-        ) : !threads || threads.length === 0 ? (
-          <EmptyState icon={MessageSquare} title="No conversations" description="Partner and student messages will appear here." />
-        ) : visibleThreads.length === 0 ? (
+        ) : entries.length === 0 ? (
           <EmptyState
             icon={view === "archived" ? Archive : MessageSquare}
             title={view === "archived" ? "No archived chats" : "No active chats"}
-            description={view === "archived" ? "Chats you archive will show up here." : "Every chat is archived. Switch to the Archived tab to see them."}
+            description={view === "archived" ? "Chats you archive will show up here." : "Partner, student and invitation conversations will appear here."}
           />
         ) : (
-          visibleThreads
-            .slice()
-            .sort((a, b) => (b.lastMessageAt || b.createdAt) - (a.lastMessageAt || a.createdAt))
-            .map((t) => (
+          entries.map(entry=>{
+            if(entry.type==="guest")return <InvitedInboxRow key={`invite:${entry.row.id}`} row={entry.row}/>;
+            const t=entry.row;
+            return (
             <div
               key={t.id}
               role="button"
@@ -316,8 +322,9 @@ export default function AdminChatInbox() {
                 </span>
               )}
             </div>
-          ))
+          );})
         )}
+        {view==="active"&&invitations.isError&&<p role="alert" className="text-sm">Invitation chats could not refresh. <button className="underline" onClick={()=>void invitations.refetch()}>Retry</button></p>}
       </div>
 
       <div className="flex-1 min-w-0 hidden sm:flex">
@@ -374,6 +381,18 @@ export default function AdminChatInbox() {
       </AlertDialog>
     </div>
   );
+}
+
+function InvitedInboxRow({row}:{row:InboxInvitation}){
+  return <button type="button" data-testid={`inbox-invitation-${row.id}`} onClick={()=>navigateToChat(`/admin/chat/invitation/${row.id}`)}
+    className={cn("w-full text-left rounded-lg border p-3 hover-elevate active-elevate-2",row.unread?"border-primary/50 bg-primary/5":"border-card-border bg-card")}>
+    <span className="flex items-center gap-2 min-w-0">
+      <UserAvatar name={row.label} size="sm" className="shrink-0"/>
+      <span className={cn("min-w-0 flex-1 truncate text-base",row.unread?"font-semibold":"font-medium")}>{row.label}</span>
+      {row.unread&&<Badge className="shrink-0" data-testid="invitation-unread">Unread</Badge>}
+    </span>
+    <span className="block mt-1 ml-8 text-sm text-muted-foreground">Invitation chat</span>
+  </button>;
 }
 
 function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: { thread: ThreadRow; allThreads?: ThreadRow[]; onSelectSurvivor: (id: number) => void; onCloseThread: () => void }) {

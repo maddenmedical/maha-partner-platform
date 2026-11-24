@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
+import {useInboxInvitations} from "@/hooks/use-inbox-invitations";
 import { apiRequest } from "@/lib/queryClient";
 import { MahaLogo, ThemeToggleIcon } from "@/components/MahaLogo";
 import type { Referral, Order, User } from "@shared/schema";
@@ -139,17 +140,18 @@ function AdminSidebar() {
 
   // Unread markers (Item 10): a small badge pill per nav item showing what
   // still needs attention. Referrals/orders reuse their existing status
-  // field ('New' / 'Requested' = not yet triaged); chat reuses the
-  // adminLastReadAt-derived `unread` flag from the threads endpoint.
+  // field ('New' / 'Requested' = not yet triaged); chat flags are personal.
   const { data: referrals } = useQuery<Referral[]>({ queryKey: ["/api/admin/referrals"], refetchInterval: 15000 });
   const { data: orders } = useQuery<Order[]>({ queryKey: ["/api/admin/orders"], refetchInterval: 15000 });
-  const { data: threads } = useQuery<{ unread?: boolean }[]>({ queryKey: ["/api/admin/chat/threads"], refetchInterval: 15000 });
+  const { data: threads } = useQuery<{ unread?: boolean; sourceInvitationId?:string }[]>({ queryKey: ["/api/admin/chat/threads"], refetchInterval: 15000 });
+  const {data:invited}=useInboxInvitations();
+  const linkedInvitations=new Set(threads?.map(t=>t.sourceInvitationId).filter(Boolean));
   const { data: communityUnread } = useQuery<{ count: number }>({ queryKey: ["/api/community/unread-count"], refetchInterval: 15000 });
 
   const badgeCounts: Record<string, number> = {
     "/admin/referrals": referrals?.filter((r) => r.status === "New").length ?? 0,
     "/admin/orders": orders?.filter((o) => o.status === "Requested").length ?? 0,
-    "/admin/chat": threads?.filter((t) => t.unread).length ?? 0,
+    "/admin/chat": (threads?.filter(t=>t.unread).length??0)+(invited?.filter(i=>i.unread&&!linkedInvitations.has(i.id)).length??0),
     "/admin/community": communityUnread?.count ?? 0,
   };
 

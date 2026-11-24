@@ -1016,6 +1016,12 @@ export const guestChatRecoveries = sqliteTable("guest_chat_recoveries", {
   approvedAt: integer("approved_at"),
   consumedAt: integer("consumed_at"),
 });
+// Per-reader monotonic message cursor. A text primary key also works with
+// the conservative automatic SQLite migration used by existing deployments.
+export const adminInboxReads = sqliteTable("admin_inbox_reads",{
+  id:text("id").primaryKey(),adminId:integer("admin_id").notNull(),
+  conversation:text("conversation").notNull(),messageId:integer("message_id").notNull(),
+});
 export const guestChatMessages = sqliteTable("guest_chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   inviteId: text("invite_id").notNull(),

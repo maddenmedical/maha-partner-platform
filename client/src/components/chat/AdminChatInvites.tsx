@@ -34,7 +34,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
     return () => cancelAnimationFrame(frame);
   }, [create, selected?.id, url]);
   const queryClient = useQueryClient();
-  const invites = useQuery<Invitation[]>({ queryKey: ["/api/admin/guest-chats"], refetchInterval: 5000 });
+  const invites = useQuery<Invitation[]>({ queryKey: ["/api/admin/guest-chats"], enabled:open, staleTime:0, refetchInterval: 5000 });
   const recipients = useQuery<AdminChatRecipient[]>({ queryKey: ["/api/admin/chat/recipients"], enabled: open });
   const fresh = invites.data?.find(i => i.id === selected?.id) || selected;
   const refresh = async () => { await queryClient.invalidateQueries({ queryKey: ["/api/admin/guest-chats"] }); };
@@ -44,7 +44,6 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
     finally { setBusy(false); }
   }
   const filtered = recipients.data?.filter(p => `${p.name} ${p.email} ${p.businessName || ""}`.toLowerCase().includes(search.toLowerCase())) || [];
-  const unread = invites.data?.filter(i => i.unread && !i.linkedThreadId).length || 0;
   const choosePartner = <div className="space-y-2">
     <Label htmlFor="invite-partner-search">Find an existing partner (optional)</Label>
     <Input id="invite-partner-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, clinic or email" />
@@ -56,7 +55,7 @@ export function AdminChatInvites({ onOpenChat }: { onOpenChat: (id: number) => v
       </div>}
   </div>;
   return <Dialog open={open} onOpenChange={setOpen}>
-    <Button variant="outline" className="min-h-11" onClick={() => setOpen(true)}>Chat invitations{unread > 0 ? ` (${unread} new)` : ""}</Button>
+    <Button variant="outline" className="min-h-11" onClick={() => setOpen(true)}>Chat invitations</Button>
     <DialogContent ref={dialogRef} tabIndex={-1} className={selected&&!create&&!url?"chat-invite-modal":"w-[calc(100%-2rem)] max-w-2xl max-h-[90dvh] overflow-y-auto rounded-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-10"}>
       <DialogHeader className={selected&&!create&&!url?"sr-only":""}><DialogTitle>Chat invitations</DialogTitle><DialogDescription>Move a WhatsApp conversation into MAHA. New guests chat first and keep their conversation by verifying their account.</DialogDescription></DialogHeader>
       {url ? <div className="space-y-4">

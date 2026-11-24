@@ -14,6 +14,7 @@ import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { sendEmail } from "./email";
 import { notifyUsers } from "./push";
 import { readAdminConversationNotices } from "./notificationStore";
+import { recordInboxRead, inboxInvitations, carryInvitationReads } from "./adminInbox";
 import {clearGuestPush,enrollGuest,notifyGuest} from "./guestPush";
 import {activeGuest} from "./guestAccess";
 
@@ -206,6 +207,7 @@ function linkChat(inviteId: string, userId: number, linkedBy: number | null = nu
       }).returning().get();
       mapping.set(message.id, transferred.id);
     }
+    carryInvitationReads(invite.id,thread.id,mapping);
     for (const message of transcript) if (message.replyToMessageId) {
       db.update(chatMessages).set({ replyToMessageId: mapping.get(message.replyToMessageId) ?? null })
         .where(eq(chatMessages.id, mapping.get(message.id)!)).run();
@@ -368,16 +370,20 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
     if (!message.deletedAt) db.update(messages).set({ deletedAt: Date.now(), deletedByName: req.user.name }).where(eq(messages.id, message.id)).run();
     res.json({ ok: true });
   }));
-  app.get("/api/admin/guest-chats", ...admin, safe(async (_req, res) => {
+  app.get("/api/admin/chat/inbox-invitations", ...admin, safe(async (req,res)=>{
+    res.set("Cache-Control","private, no-store").json(inboxInvitations(req.user.id));
+  }));
+  app.get("/api/admin/guest-chats", ...admin, safe(async (req, res) => {
+    const pending=new Set(inboxInvitations(req.user.id).filter(i=>i.unread).map(i=>i.id));
     const list = db.select().from(invites).orderBy(desc(invites.createdAt)).all();
-    res.json(list.map(i => {const { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt, adminReadAt }=i;
+    res.json(list.map(i => {const { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt }=i;
       const conversation = rows(id); const last = conversation.at(-1);
       return { id, label, topic, createdAt, intendedUserId, linkedUserId, linkedThreadId, declinedAt, revokedAt, openedAt, expiresAt,
         linkSharing:sharing(i),
         ...(i.personalNoticeVersion===1?{pageOnly:true}:{}),...(sharing(i)&&i.sharedNoticeAt?{sharedNotice:true}:{}),
         canRemind: activeGuest(i) && last?.senderRole==="admin" && !last.deletedAt && conversation.some(m=>m.senderRole==="guest"),
         guestAccessEnded: !!openedAt && !activeGuest(i) && !sharing(i) && !(i.personalNoticeVersion===1&&i.sessionHash),
-        unread: !!last && last.senderRole === "guest" && last.createdAt > (adminReadAt ?? 0), messageCount: conversation.length };
+        unread: pending.has(id), messageCount: conversation.length };
     }));
   }));
   app.post("/api/admin/guest-chats/:id/link-sharing",...admin,safe(async(req,res)=>{
@@ -413,9 +419,10 @@ export function registerGuestChatRoutes(app: Express, requireAuth: RequestHandle
   }));
   app.get("/api/admin/guest-chats/:id", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);
-    db.update(invites).set({ adminReadAt: Date.now() }).where(eq(invites.id, invite.id)).run();
+    const transcript=present(invite.id,actor(req,true),true);
+    recordInboxRead(req.user.id,`invite:${invite.id}`,transcript.reduce((n,m)=>Math.max(n,m.id),0));
     readAdminConversationNotices(req.user.id,`/admin/chat/invitation/${invite.id}`);
-    res.json({ messages: present(invite.id, actor(req, true), true), linkedThreadId: invite.linkedThreadId });
+    res.json({ messages: transcript, linkedThreadId: invite.linkedThreadId });
   }));
   app.post("/api/admin/guest-chats/:id/reply", ...admin, safe(async (req, res) => {
     const invite = find(req.params.id);

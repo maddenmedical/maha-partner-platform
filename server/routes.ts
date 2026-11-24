@@ -34,6 +34,7 @@ import { CURRENT_LEGAL_VERSION } from "@shared/legalVersion";
 import { adminRecordKinds, type AdminRecordKind } from "@shared/adminRecordControls";
 import { getVapidPublicKey, notifyUsers } from "./push";
 import { notificationSummary, readNotices, readReferralNotice, readChatNotices, readAdminConversationNotices, ownAdminChatTarget } from "./notificationStore";
+import { inboxInvitations, memberReadCursors, memberUnread, recordInboxRead } from "./adminInbox";
 import { queueReferralAlerts, deliverReferralAlerts } from "./referralAlerts";
 import { buildCaseDiscussionIcs } from "./ical";
 import { registerGuestChatRoutes } from "./guestChat";
@@ -1912,11 +1913,11 @@ export async function registerRoutes(
       storage.countUnseenCompletedCoursePurchases(),
     ]);
 
-    let unreadChatThreads = 0;
+    let unreadChatThreads = inboxInvitations(req.user!.id).filter(x=>x.unread).length;
+    const reads=memberReadCursors(req.user!.id);
     for (const t of threads) {
       const messages = await storage.listMessagesForThread(t.id);
-      const last = messages[messages.length - 1];
-      if (last && last.senderRole !== "admin" && last.createdAt > (t.adminLastReadAt ?? 0)) {
+      if (memberUnread(t.id,t.adminLastReadAt,messages,reads)) {
         unreadChatThreads++;
       }
     }
@@ -2576,19 +2577,19 @@ export async function registerRoutes(
     res.json(results);
   });
 
-  app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (_req, res) => {
+  app.get("/api/admin/chat/threads", requireAuth, requireRole("admin"), async (req:AuthedRequest, res) => {
     const threads = await storage.listThreads();
+    const reads=memberReadCursors(req.user!.id);
+    const linked=new Map((sqliteDb.prepare("SELECT linked_thread_id AS thread,id FROM guest_chat_invites WHERE linked_thread_id IS NOT NULL").all() as {thread:number;id:string}[]).map(x=>[x.thread,x.id]));
     const withUser = await Promise.all(
       threads.map(async (t) => {
         const user = await storage.getUser(t.userId);
         const messages = await storage.listMessagesForThread(t.id);
         const last = messages[messages.length - 1];
-        // Unread-for-admin (Item 10): most recent message came from the
-        // partner/student owner and is newer than any admin's last open of
-        // this thread. Any admin opening it clears it for the whole team.
-        const unread = !!last && last.senderRole !== "admin" && last.createdAt > (t.adminLastReadAt ?? 0);
+        const unread=memberUnread(t.id,t.adminLastReadAt,messages,reads);
         return {
           ...t,
+          ...(linked.has(t.id)?{sourceInvitationId:linked.get(t.id)}:{}),
           userName: user?.name,
           userEmail: user?.email,
           userPhotoUrl: user?.photoUrl,
@@ -2690,8 +2691,9 @@ export async function registerRoutes(
     const messages = await storage.listMessagesForThread(threadId);
     const flaggedIds = new Set(await storage.getFlaggedMessageIdsForUser(req.user!.id, threadId));
     const reactionsByMessage = await reactionSummariesForThread(threadId, req.user!.id);
-    // Opening the thread clears the unread marker for the whole admin team (Item 10).
-    await storage.updateThread(threadId, { adminLastReadAt: Date.now() });
+    // Preserve historical shared timestamp as a fixed legacy baseline; new
+    // reads are personal and record only the messages actually returned.
+    recordInboxRead(req.user!.id,`thread:${threadId}`,messages.reduce((n,m)=>Math.max(n,m.id),0));
     readChatNotices(req.user!.id, threadId, messages.map(m => m.id));
     res.json(messages.map((m) => redactDeletedMessage({ ...m, flaggedByMe: flaggedIds.has(m.id), reactions: reactionsByMessage.get(m.id) ?? [] })));
   });
