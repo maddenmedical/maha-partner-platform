@@ -421,6 +421,7 @@ export default function AdminCommunity() {
 }
 
 function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: () => void }) {
+  const {user}=useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -580,9 +581,9 @@ function TopicDetail({ topic, onCloseTopic }: { topic: TopicRow; onCloseTopic: (
         ) : (
           messages.filter((m) => !search.trim() || m.body.toLowerCase().includes(search.trim().toLowerCase())).map((m) => (
             <div key={m.id} className="group/msg relative pt-4">
-              <ChatMessageBubble
+              <ChatMessageBubble community
                 message={toBubbleMessage(m)}
-                isMe={m.senderRole === "admin"}
+                isMe={m.senderRole === "admin" && m.senderId === user?.id}
                 hideFlag
                 hideReactions
                 onToggleFlag={() => {}}

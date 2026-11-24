@@ -15,6 +15,7 @@ import { mentionTokenRegex } from "@/lib/chatMentions";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TierBadge } from "@/components/TierBadge";
 import type { ChatMessage } from "@shared/schema";
+import {chatAuthorLabel,chatAuthorName,isMahaAuthor} from "./authorPresentation";
 
 // Long-press threshold before the mobile action sheet opens, and the max
 // finger movement (px) still counted as a "hold" rather than a scroll/drag
@@ -69,6 +70,7 @@ export interface Reaction {
 
 export interface ChatMessageWithMeta extends ChatMessage {
   sharedAuthor?:boolean;
+  unverifiedGuestHistory?:boolean;
   mineBySharedBrowser?:boolean;
   flaggedByMe?: boolean;
   reactions?: Reaction[];
@@ -92,6 +94,7 @@ export interface QuotedMessage {
 }
 
 interface ChatMessageBubbleProps {
+  community?:boolean;
   message: ChatMessageWithMeta;
   isMe: boolean;
   onToggleFlag: (id: number) => void;
@@ -127,7 +130,9 @@ interface ChatMessageBubbleProps {
   linkify?: boolean;
 }
 
-export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isAdmin, onCreateTodo, onDelete, onEdit, onNavigateToThread, onReply, quoted, hideFlag, hideReactions, compact, disableMp3, linkify,community=false }: ChatMessageBubbleProps) {
+  const gold=isMahaAuthor(m)||(community&&isMe);
+  const author=chatAuthorLabel(m,isMe);
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(m.body || "");
@@ -251,11 +256,11 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         className={cn("group flex flex-col max-w-[80%]", isMe ? "self-end items-end" : "self-start items-start")}
         data-testid={`message-${m.id}`}
       >
-        <div className="rounded-lg px-3 py-2 text-base italic text-muted-foreground bg-muted/50 border border-dashed border-border">
+        <div data-testid={`bubble-${m.id}`} className={cn("rounded-lg px-3 py-2 text-base italic border border-dashed",gold?"bg-primary text-primary-foreground border-primary":"text-muted-foreground bg-muted/50 border-border")}>
           This message was deleted{isAdmin && m.deletedByName ? ` by ${m.deletedByName}` : ""}.
         </div>
         <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
-          {isMe ? "You" : m.senderName}
+          {community?(isMe?"You":m.senderName):author}
           <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
           · {format(new Date(m.createdAt), "MMM d, HH:mm")}
         </span>
@@ -269,7 +274,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
       data-testid={`message-${m.id}`}
     >
       <div className="flex max-w-full min-w-0 items-start gap-1">
-        {!isMe && !compact && <UserAvatar photoUrl={m.senderPhotoUrl} name={m.senderName} size="sm" className="mt-1" />}
+        {!isMe && !compact && <UserAvatar photoUrl={m.senderPhotoUrl} name={community?m.senderName:chatAuthorName(m)} size="sm" className="mt-1" />}
         {!isMe && !hideReactions && !compact && (
           <div className="hidden sm:block">
             <ReactionTrigger messageId={m.id} onReact={onReact} order="before" />
@@ -285,8 +290,9 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
         <div
           className={cn(
             "rounded-lg px-3 py-2 text-base flex min-w-0 flex-col gap-1.5 touch-manipulation [overflow-wrap:anywhere]",
-            isMe ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
+            gold ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
           )}
+          data-testid={`bubble-${m.id}`}
           onPointerDown={handleBubblePointerDownMerged}
           onPointerMove={handleBubblePointerMove}
           onPointerUp={handleBubblePointerUpMerged}
@@ -294,16 +300,17 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
           onPointerCancel={handleBubblePointerCancelMerged}
           onContextMenu={(e) => e.preventDefault()}
         >
+          {!community&&<span className="text-xs font-semibold" data-testid={`author-${m.id}`}>{author}</span>}
           {quoted && (
             <div
               className={cn(
                 "flex flex-col gap-0.5 rounded-md border-l-2 px-2 py-1 text-sm",
-                isMe ? "border-primary-foreground/40 bg-primary-foreground/10" : "border-primary bg-background/60"
+                gold ? "border-primary-foreground/40 bg-primary-foreground/10" : "border-primary bg-background/60"
               )}
               data-testid={`quoted-message-${m.id}`}
             >
-              <span className={cn("font-medium", isMe ? "text-primary-foreground/90" : "text-primary")}>{quoted.senderName}</span>
-              <span className={cn("truncate", isMe ? "text-primary-foreground/70" : "text-muted-foreground")}>{quoted.snippet}</span>
+              <span className={cn("font-medium", gold ? "text-primary-foreground" : "text-foreground")}>{quoted.senderName}</span>
+              <span className={cn("truncate", gold ? "text-primary-foreground/90" : "text-muted-foreground")}>{quoted.snippet}</span>
             </div>
           )}
           {attachmentSrc && m.attachmentType === "image" && (
@@ -376,7 +383,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
                   aria-label="Download as MP3"
                   className={cn(
                     "shrink-0 rounded-md p-1 hover-elevate active-elevate-2",
-                    isMe ? "text-primary-foreground/80" : "text-muted-foreground"
+                    gold ? "text-primary-foreground/90" : "text-muted-foreground"
                   )}
                   data-testid={`button-download-mp3-${m.id}`}
                 >
@@ -391,7 +398,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
               onClick={handleOpenAttachment}
               className={cn(
                 "flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover-elevate active-elevate-2",
-                isMe ? "bg-primary-foreground/10" : "bg-background"
+                gold ? "bg-primary-foreground/10" : "bg-background"
               )}
               data-testid={`document-attachment-${m.id}`}
             >
@@ -414,14 +421,14 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
                   }
                 }}
                 rows={2}
-                className={cn("text-base resize-none", isMe ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/60" : "bg-background")}
+                className={cn("text-base resize-none", gold ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/80" : "bg-background")}
                 data-testid={`textarea-edit-message-${m.id}`}
               />
               <div className="flex items-center gap-1.5 self-end">
                 <button
                   type="button"
                   onClick={() => setIsEditing(false)}
-                  className={cn("rounded-md p-1 hover-elevate active-elevate-2", isMe ? "text-primary-foreground/80" : "text-muted-foreground")}
+                  className={cn("rounded-md p-1 hover-elevate active-elevate-2", gold ? "text-primary-foreground/90" : "text-muted-foreground")}
                   aria-label="Cancel edit"
                   data-testid={`button-cancel-edit-${m.id}`}
                 >
@@ -431,7 +438,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
                   type="button"
                   onClick={saveEdit}
                   disabled={saving || !editValue.trim()}
-                  className={cn("rounded-md p-1 hover-elevate active-elevate-2 disabled:opacity-50", isMe ? "text-primary-foreground/80" : "text-muted-foreground")}
+                  className={cn("rounded-md p-1 hover-elevate active-elevate-2 disabled:opacity-50", gold ? "text-primary-foreground/90" : "text-muted-foreground")}
                   aria-label="Save edit"
                   data-testid={`button-save-edit-${m.id}`}
                 >
@@ -443,7 +450,7 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
             m.body && (
               <span className="whitespace-pre-wrap break-words">
                 {renderMessageBody(m.body, onNavigateToThread, linkify)}
-                {!!m.editedAt && <span className={cn("text-xs italic ml-1", isMe ? "text-primary-foreground/70" : "text-muted-foreground")}>(edited)</span>}
+                {!!m.editedAt && <span className={cn("text-xs italic ml-1", gold ? "text-primary-foreground/90" : "text-muted-foreground")}>(edited)</span>}
               </span>
             )
           )}
@@ -663,9 +670,9 @@ export function ChatMessageBubble({ message: m, isMe, onToggleFlag, onReact, isA
       )}
 
       <span className="text-sm text-muted-foreground mt-1 px-1 inline-flex items-center gap-1">
-        {isMe ? "You" : m.senderName}
+        {community&&(isMe ? "You" : m.senderName)}
         <TierBadge tierKey={m.senderTierKey} tierLabel={m.senderTierLabel} />
-        · {format(new Date(m.createdAt), "MMM d, HH:mm")}
+        {community?"· ":""}{format(new Date(m.createdAt), "MMM d, HH:mm")}
       </span>
     </div>
   );

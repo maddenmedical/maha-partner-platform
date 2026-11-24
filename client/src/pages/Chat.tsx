@@ -17,6 +17,7 @@ import {
 import { MessageSquare, Loader2, Plus, Stethoscope, Search, Star, ClipboardPlus, ArrowLeft, Archive, Undo2, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { consumePendingThreadId, takeInvitationDraft } from "@/lib/chatNav";
+import {chatAuthorName} from "@/components/chat/authorPresentation";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import {ChatTools,useChatViewport} from "@/components/chat/ChatFrame";
 import {InvitationInstall} from "@/components/chat/InvitationInstall";
@@ -554,7 +555,7 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText,onBack }: { thread:
           </div>
         ) : (
           filteredMessages.map((m) => {
-            const isMe = m.senderId === user?.id && m.senderRole === user?.role;
+            const isMe = !m.unverifiedGuestHistory && m.senderId === user?.id && m.senderRole === user?.role;
             const quotedSource = m.replyToMessageId != null ? messagesById.get(m.replyToMessageId) : null;
             return (
               <ChatMessageBubble
@@ -565,7 +566,7 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText,onBack }: { thread:
                 onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
                 onNavigateToThread={onSelectSurvivor}
                 onReply={(id) => setReplyingToId(id)}
-                quoted={quotedSource ? { senderName: quotedSource.senderName, snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
+                quoted={quotedSource ? { senderName: chatAuthorName(quotedSource), snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
               />
             );
           })
@@ -583,7 +584,7 @@ function ThreadDetail({ thread, onSelectSurvivor,initialText,onBack }: { thread:
         testIdPrefix="chat"
         mentionThreads={mentionCandidates}
         onResolveMention={resolvePartnerMention}
-        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
+        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: chatAuthorName(replyingToMessage), snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
         onCancelReply={() => setReplyingToId(null)}
       />
 

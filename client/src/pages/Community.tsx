@@ -435,7 +435,7 @@ function TopicDetail({ topic }: { topic: TopicRow }) {
           filteredMessages.map((m) => {
             const isMe = m.senderId === user?.id && m.senderRole === user?.role;
             return (
-              <ChatMessageBubble
+              <ChatMessageBubble community
                 key={m.id}
                 message={toBubbleMessage(m)}
                 isMe={isMe}

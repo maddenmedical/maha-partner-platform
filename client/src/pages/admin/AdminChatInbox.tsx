@@ -33,6 +33,7 @@ import { ReferralLinkPanel } from "@/components/chat/ReferralLinkPanel";
 import { CrossChatSearch } from "@/components/chat/CrossChatSearch";
 import { AdminNewChat } from "@/components/chat/AdminNewChat";
 import { AdminChatInvites } from "@/components/chat/AdminChatInvites";
+import {chatAuthorName} from "@/components/chat/authorPresentation";
 import {useInboxInvitations, type InboxInvitation} from "@/hooks/use-inbox-invitations";
 import { InvitationConversation, useInvitationFilters } from "@/components/chat/InvitationConversation";
 import { adminChatDestination } from "@shared/adminChatTarget";
@@ -628,16 +629,16 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
               <ChatMessageBubble
                 key={m.id}
                 message={m}
-                isMe={m.senderRole === "admin"}
+                isMe={m.senderRole === "admin" && m.senderId === user?.id}
                 onToggleFlag={(id) => flagMutation.mutate(id)}
                 onReact={(id, emoji) => reactMutation.mutate({ id, emoji })}
                 isAdmin
                 onCreateTodo={(id) => setTodoMessageId(id)}
                 onDelete={(id) => setDeleteMessageId(id)}
-                onEdit={m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
+                onEdit={m.senderRole==="admin" && m.senderId === user?.id ? (id, body) => editMutation.mutateAsync({ id, body }) : undefined}
                 onNavigateToThread={onSelectSurvivor}
                 onReply={(id) => setReplyingToId(id)}
-                quoted={quotedSource ? { senderName: quotedSource.senderName, snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
+                quoted={quotedSource ? { senderName: chatAuthorName(quotedSource), snippet: quotedSource.deletedAt ? "Message deleted" : (quotedSource.body || "Attachment") } : m.replyToMessageId ? { senderName: "", snippet: "Original message unavailable" } : null}
               />
             );
           })
@@ -654,7 +655,7 @@ function ThreadDetail({ thread, allThreads, onSelectSurvivor, onCloseThread }: {
         testIdPrefix="admin-chat"
         mentionThreads={allMentionCandidates}
         onResolveMention={resolveAdminMention}
-        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: replyingToMessage.senderName, snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
+        replyingTo={replyingToMessage ? { id: replyingToMessage.id, senderName: chatAuthorName(replyingToMessage), snippet: replyingToMessage.deletedAt ? "Message deleted" : (replyingToMessage.body || "Attachment") } : null}
         onCancelReply={() => setReplyingToId(null)}
       />
 

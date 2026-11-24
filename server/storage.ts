@@ -6,7 +6,7 @@ import {
   webauthnCredentials, productResources, adminTodos,
   appSettings, communityTopics, communityMessages, communityMessageReads,
   standingEntries, standingRewards, clinics, adminPinnedMembers, impersonationLog, adminRecordAudit,
-  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages, chatReminderDeliveries, adminChatStarts,
+  staffRoomMessages, staffRoomReads, staffDmThreads, staffDmMessages, chatReminderDeliveries, adminChatStarts, guestChatInvites,
 } from "@shared/schema";
 import type {
   User, InsertUser, Session, InsertSession, Product, InsertProduct, PriceTier, InsertPriceTier,
@@ -1471,6 +1471,11 @@ export class DatabaseStorage implements IStorage {
   // sender's latest uploaded photo, including for messages sent before they
   // had one set.
   async listMessagesForThread(threadId: number) {
+    // linkChat creates a NEW member thread and copies the invitation history.
+    // Its personal guest rows carry the later account ID for thread access,
+    // not as proof that the guest was that account holder. Presentation only.
+    const transfer=db.select({at:guestChatInvites.linkedAt}).from(guestChatInvites)
+      .where(eq(guestChatInvites.linkedThreadId,threadId)).get();
     const rows = db
       .select({
         id: chatMessages.id,
@@ -1494,7 +1499,8 @@ export class DatabaseStorage implements IStorage {
       .where(eq(chatMessages.threadId, threadId))
       .orderBy(chatMessages.createdAt)
       .all();
-    return this.enrichVideoAttachments(rows);
+    return this.enrichVideoAttachments(rows.map(m=>transfer?.at && m.senderRole==="partner" && m.createdAt<=transfer.at
+      ? {...m,unverifiedGuestHistory:true,senderPhotoUrl:null} : m));
   }
   // Video attachments (chat only) go through the instant-send pipeline:
   // the message row itself never stores thumbnail/processing state --

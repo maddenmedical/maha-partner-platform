@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {chatAuthorLabel} from "./authorPresentation";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -93,9 +94,9 @@ export function InvitationConversation({ inviteId, admin = false, shared=false, 
           onReact={(id, emoji) => toggle(`/messages/${id}/reaction`, { emoji })}
           onReply={readOnly ? undefined : id => {
             const target = messages.find(item => item.id === id);
-            if (target) setReplying({ id, senderName: own(target) ? "You" : target.senderName, snippet: snippet(target).slice(0, 160) });
+            if (target) setReplying({ id, senderName: chatAuthorLabel(target,own(target)), snippet: snippet(target).slice(0, 160) });
           }}
-          quoted={original ? { senderName: own(original) ? "You" : original.senderName, snippet: snippet(original).slice(0, 160) } : null}
+          quoted={original ? { senderName: chatAuthorLabel(original,own(original)), snippet: snippet(original).slice(0, 160) } : null}
           onEdit={admin && isMe && !readOnly ? (id, body) => change("PATCH", `/messages/${id}`, { body }) : undefined}
           onDelete={admin && !readOnly ? setDeleting : undefined} />;
       })}
