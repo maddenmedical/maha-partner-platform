@@ -34,6 +34,11 @@ try {
   assert.equal((await submit({...individual,email:"not an address"})).status,400);
   assert.equal((await submit({...individual,role:"admin"})).status,400);
   for(let i=0;i<2;i++) assert.equal((await submit(individual)).status,201);
+  // Questions 2 and 3 are optional: empty answers are accepted and stored as "".
+  const skipped={requestKey:randomUUID(),attendance:"individual",groupSize:null,experience:"",goals:"",email:"skip@example.invalid"};
+  assert.equal((await submit(skipped)).status,201);
+  const {experience:_e,goals:_g,...omitted}={...skipped,requestKey:randomUUID(),email:"omit@example.invalid"};
+  assert.equal((await submit(omitted)).status,201);
   const ctx=await browser.newContext({viewport:{width:375,height:812},serviceWorkers:"block"});
   await ctx.route("**/*",route=>route.request().url().startsWith(base)?route.continue():route.abort());
   const page=await ctx.newPage(); const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
@@ -52,7 +57,7 @@ try {
   await page.getByText("Your enquiry is with the Institute team.").waitFor();
   assert.equal(await page.getByRole("link",{name:"register separately"}).getAttribute("href"),"#/register");
   const response=await read(inbox,sessions[0]);assert.equal(response.status,200);assert.match(response.headers.get("cache-control")!,/no-store/);
-  const {items}=await response.json();assert.equal(items.length,2);assert.equal(items[0].groupSize,6);assert.equal(items[1].groupSize,null);assert.equal(items[0].requestKey,undefined);
+  const {items}=await response.json();assert.equal(items.length,4);assert.equal(items[0].groupSize,6);assert.equal(items[1].groupSize,null);assert.equal(items[1].experience,"");assert.equal(items[0].requestKey,undefined);
   assert.equal((sqliteDb.prepare("select count(*) n from users").get() as {n:number}).n,3);
   await ctx.addCookies([{name:"sid",value:sessions[0],url:base}]);await page.setViewportSize({width:1280,height:900});await page.goto(base+"/#/admin/institute");await page.reload();
   await page.getByRole("tab",{name:"Enquiries"}).click();await page.getByText("Team of 6 · Group pricing").waitFor();

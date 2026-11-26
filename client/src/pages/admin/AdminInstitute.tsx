@@ -55,7 +55,7 @@ function EnquiriesTab() {
       q.data.items.map(r => <Card key={r.id}><CardContent className="p-4 space-y-3 break-words">
         <p className="text-xs text-muted-foreground">{format(new Date(r.createdAt),"dd MMM yyyy, HH:mm")}</p>
         <h3 className="font-medium">{r.attendance === "team" ? `Team of ${r.groupSize} · Group pricing` : "Individual training"}</h3>
-        <dl className="space-y-2 text-sm">{[["Clinical experience", r.experience], ["Learning goals", r.goals], ["Reply email", r.email]].map(([label,value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="whitespace-pre-wrap">{value}</dd></div>)}</dl>
+        <dl className="space-y-2 text-sm">{[["Clinical experience", r.experience], ["Learning goals", r.goals], ["Reply email", r.email]].map(([label,value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className={value ? "whitespace-pre-wrap" : "text-muted-foreground italic"}>{value || "Not answered"}</dd></div>)}</dl>
         <Button asChild variant="outline" size="sm"><a href={`mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent("Your MAHA Institute training enquiry")}`}>Draft offer by email</a></Button>
       </CardContent></Card>)}
     {q.data?.hasMore && <Button variant="outline" onClick={() => setBefore(q.data.items[q.data.items.length-1].id)}>Older enquiries</Button>}

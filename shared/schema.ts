@@ -17,8 +17,9 @@ export const instituteEnquiryInput = z.object({
   requestKey: z.string().uuid(),
   attendance: z.enum(["individual", "team"]),
   groupSize: z.number().int().min(2).max(9999).nullable(),
-  experience: z.string().trim().min(1).max(600),
-  goals: z.string().trim().min(1).max(1000),
+  // Questions 2 and 3 are optional on the public form; empty answers are stored as "".
+  experience: z.string().trim().max(600).default(""),
+  goals: z.string().trim().max(1000).default(""),
   email: z.string().trim().email().max(254),
 }).strict().refine(v => (v.attendance === "team") === (v.groupSize !== null));
 export type InstituteEnquirySummary = Omit<typeof instituteEnquiries.$inferSelect, "requestKey">;
